@@ -529,8 +529,10 @@ impl<A: Clone> Ui<A> {
                 .any(|(anchor, _)| self.tree.node_at(*anchor) == Some(node))
         });
         let mut dismissed = false;
-        for (_, popup) in open {
-            let held = self.tree.nodes[popup].rect.contains(pointer)
+        for (anchor, popup) in open {
+            let on_anchor = pressed.is_some_and(|node| self.tree.node_at(anchor) == Some(node));
+            let held = on_anchor
+                || self.tree.nodes[popup].rect.contains(pointer)
                 || pressed.is_some_and(|node| is_inside(&self.tree, popup, node));
             if held {
                 inside = true;
@@ -679,11 +681,7 @@ impl<A: Clone> Ui<A> {
                 field.style,
             ),
             Content::DragValue(drag) => (
-                format!(
-                    "{:.*}",
-                    drag.decimals,
-                    crate::widget::slider::clean_zero(drag.value, drag.decimals)
-                ),
+                clean_zero_text(drag.value),
                 false,
                 true,
                 crate::text::TextStyle::new(drag.font, self.theme.palette.on_surface),
@@ -868,13 +866,15 @@ impl<A: Clone> Ui<A> {
         let Some(node) = self.edit else {
             return;
         };
+        let preedit = self.preedit.clone().unwrap_or_default();
         let text = self.tree.nodes[node]
             .runtime
             .edit
             .take()
-            .map_or_else(String::new, |edit| edit.text().to_string());
+            .map_or_else(String::new, |edit| edit.composed(&preedit));
         self.edit = None;
         self.input.clear_preedit();
+        self.preedit = None;
         self.touch(node);
         let current = match &self.tree.nodes[node].content {
             Content::DragValue(drag) => Some(drag.value),
@@ -1061,6 +1061,14 @@ impl<A: Clone> Ui<A> {
             }
             _ => false,
         }
+    }
+}
+
+fn clean_zero_text(value: f32) -> String {
+    if value == 0.0 {
+        String::from("0")
+    } else {
+        value.to_string()
     }
 }
 

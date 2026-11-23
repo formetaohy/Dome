@@ -123,7 +123,10 @@ pub(super) struct Removed {
 
 impl Removed {
     pub(super) fn gpu(&self) -> bool {
-        !self.materials.is_empty() || !self.meshes.is_empty() || !self.environments.is_empty()
+        !self.images.is_empty()
+            || !self.materials.is_empty()
+            || !self.meshes.is_empty()
+            || !self.environments.is_empty()
     }
 }
 

@@ -1,10 +1,11 @@
 use crate::island::{SLEEP_ANGULAR, SLEEP_LINEAR};
+use crate::node::{NONE, Node};
 use crate::part::Part;
-use dome_ecs::{Entity, LocalTransform, World};
+use crate::{Collider, Joint};
+use dome_ecs::{Entity, LocalTransform, Parent, World, children, world_transform};
 use dome_math::{Aabb, Mat3, Quat, Transform, Vec3};
 
 const DEFAULT_MASS: f32 = 1.0;
-const BROAD_MARGIN: f32 = 0.02;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BodyKind {
@@ -254,69 +255,275 @@ impl Velocity {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct LastPose(pub Transform);
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Nodes {
+    Stable,
+    Moved,
+    Invalid,
+}
 
 pub(crate) struct Body {
     pub entity: Entity,
     pub rigid: RigidBody,
+    pub published: Option<RigidBody>,
     pub has_body: bool,
+    pub nodes: Vec<Node>,
     pub parts: Vec<Part>,
     pub position: Vec3,
     pub rotation: Quat,
     pub center_offset: Vec3,
     pub transform: Transform,
+    pub local: Transform,
+    pub parent: Option<Entity>,
     pub frame: Option<Transform>,
     pub carried: Velocity,
+    pub travel: Travel,
     pub inverse_mass: f32,
     pub inverse_inertia: Mat3,
+    pub proxy: Option<usize>,
+    pub bounds: Option<Aabb>,
     local_inverse_inertia: Mat3,
 }
 
 impl Body {
-    pub(crate) fn new(
-        entity: Entity,
-        rigid: Option<RigidBody>,
-        mut parts: Vec<Part>,
-        transform: Transform,
-        frame: Option<Transform>,
-        carried: Velocity,
-    ) -> Self {
-        let has_body = rigid.is_some();
-        let rigid = rigid.unwrap_or_else(|| RigidBody::new(BodyKind::Static));
-        assert!(
-            rigid.kind != BodyKind::Dynamic || !parts.is_empty(),
-            "the dynamic body of entity {} holds no collider",
-            entity.index(),
-        );
-        let rotation = transform.rotation.normalize();
-        let dynamic = rigid.kind == BodyKind::Dynamic;
-        let (center_offset, local_inverse_inertia) = if dynamic {
-            let (center, inverse) = mass_properties(&parts, rigid.mass);
-            for part in &mut parts {
-                part.offset -= center;
-            }
-            (center, inverse)
-        } else {
-            (Vec3::ZERO, Mat3::from_diagonal(Vec3::ZERO))
+    pub(crate) fn assemble(world: &World, entity: Entity) -> Self {
+        let rigid = world.get::<RigidBody>(entity).copied();
+        let parent = world.get::<Parent>(entity).map(Parent::entity);
+        let frame = parent.map(|held| {
+            assert!(
+                !under_body(world, held),
+                "the body of entity {} sits under another body",
+                entity.index(),
+            );
+            world_transform(world, held)
+        });
+        let local = local_transform(world, entity);
+        let transform = match frame {
+            Some(frame) => frame.compose(local),
+            None => local,
         };
         let mut body = Self {
             entity,
-            rigid,
-            has_body,
-            parts,
-            position: transform.translation + rotation.rotate_vec3(center_offset),
-            rotation,
-            center_offset,
+            has_body: rigid.is_some(),
+            rigid: rigid.unwrap_or_else(|| RigidBody::new(BodyKind::Static)),
+            published: rigid,
+            nodes: Vec::new(),
+            parts: Vec::new(),
+            position: transform.translation,
+            rotation: transform.rotation.normalize(),
+            center_offset: Vec3::ZERO,
             transform,
+            local,
+            parent,
             frame,
-            carried,
-            inverse_mass: if dynamic { 1.0 / rigid.mass } else { 0.0 },
+            carried: Velocity::STILL,
+            travel: Travel::STILL,
+            inverse_mass: 0.0,
             inverse_inertia: Mat3::from_diagonal(Vec3::ZERO),
-            local_inverse_inertia,
+            proxy: None,
+            bounds: None,
+            local_inverse_inertia: Mat3::from_diagonal(Vec3::ZERO),
         };
-        body.turn(rotation);
+        body.rebuild(world);
         body
+    }
+
+    pub(crate) fn rebuild(&mut self, world: &World) {
+        self.nodes.clear();
+        self.parts.clear();
+        let root_scale = self.transform.scale;
+        let mut stack = vec![(self.entity, NONE, 0usize)];
+        while let Some((entity, parent, depth)) = stack.pop() {
+            assert!(
+                depth <= world.len(),
+                "the body of entity {} closes its hierarchy into a cycle",
+                self.entity.index(),
+            );
+            if entity != self.entity {
+                assert!(
+                    !world.contains::<RigidBody>(entity),
+                    "the body of entity {} holds the body of entity {}",
+                    self.entity.index(),
+                    entity.index(),
+                );
+                assert!(
+                    !world.contains::<Joint>(entity),
+                    "the body of entity {} holds the joint of entity {}",
+                    self.entity.index(),
+                    entity.index(),
+                );
+            }
+            let local = if entity == self.entity {
+                self.local
+            } else {
+                world
+                    .get::<LocalTransform>(entity)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "the node of entity {} holds no local transform",
+                            entity.index(),
+                        )
+                    })
+                    .0
+            };
+            let relative = match parent {
+                NONE => Transform::IDENTITY,
+                parent => self.nodes[parent as usize].relative.compose(local),
+            };
+            let at = self.nodes.len() as u32;
+            self.nodes.push(Node::new(entity, local, relative, parent));
+            if let Some(collider) = world.get::<Collider>(entity) {
+                let part = self.parts.len() as u32;
+                self.parts
+                    .push(Part::new(entity, collider.clone(), relative, root_scale));
+                self.nodes[at as usize].part = part;
+            }
+            for child in children(world, entity) {
+                stack.push((*child, at, depth + 1));
+            }
+        }
+        self.derive();
+        self.place();
+    }
+
+    fn derive(&mut self) {
+        let dynamic = self.rigid.kind == BodyKind::Dynamic;
+        if dynamic {
+            assert!(
+                !self.parts.is_empty(),
+                "the dynamic body of entity {} holds no collider",
+                self.entity.index(),
+            );
+            let (center, inverse) = mass_properties(&self.parts, self.rigid.mass);
+            self.center_offset = center;
+            self.local_inverse_inertia = inverse;
+            for part in &mut self.parts {
+                part.offset -= center;
+            }
+        } else {
+            self.center_offset = Vec3::ZERO;
+            self.local_inverse_inertia = Mat3::from_diagonal(Vec3::ZERO);
+        }
+        self.inverse_mass = if dynamic { 1.0 / self.rigid.mass } else { 0.0 };
+        self.turn(self.rotation);
+    }
+
+    fn place(&mut self) {
+        let rotation = self.transform.rotation.normalize();
+        self.rotation = rotation;
+        if self.rigid.kind != BodyKind::Static {
+            self.position = self.transform.translation + rotation.rotate_vec3(self.center_offset);
+        }
+        self.turn(rotation);
+    }
+
+    pub(crate) fn refresh(&mut self, world: &World, delta: f32) -> bool {
+        let rigid = world.get::<RigidBody>(self.entity).copied();
+        let mut rebuilt = false;
+        if rigid != self.published {
+            self.has_body = rigid.is_some();
+            let held = rigid.unwrap_or_else(|| RigidBody::new(BodyKind::Static));
+            rebuilt = held.mass != self.rigid.mass || held.kind != self.rigid.kind;
+            self.rigid = held;
+        }
+        let parent = world.get::<Parent>(self.entity).map(Parent::entity);
+        if parent != self.parent {
+            if let Some(held) = parent {
+                assert!(
+                    !under_body(world, held),
+                    "the body of entity {} sits under another body",
+                    self.entity.index(),
+                );
+            }
+            self.parent = parent;
+        }
+        let frame = self.parent.map(|held| world_transform(world, held));
+        let local = local_transform(world, self.entity);
+        let transform = match frame {
+            Some(frame) => frame.compose(local),
+            None => local,
+        };
+        if transform != self.transform || local != self.local {
+            rebuilt |= transform.scale != self.transform.scale;
+            self.carried = Velocity::of(self.transform, transform, delta);
+            self.transform = transform;
+            self.local = local;
+            let rotation = transform.rotation.normalize();
+            self.position = transform.translation + rotation.rotate_vec3(self.center_offset);
+            self.rotation = rotation;
+            self.turn(rotation);
+        }
+        self.frame = frame;
+        match self.nodes_changed(world) {
+            Nodes::Invalid => rebuilt = true,
+            Nodes::Moved => rebuilt |= self.recompose(),
+            Nodes::Stable => {}
+        }
+        let rotation = self.rotation.normalize();
+        if rotation != self.rotation {
+            self.turn(rotation);
+        }
+        for at in 0..self.parts.len() {
+            let entity = self.parts[at].entity;
+            match world.get::<Collider>(entity) {
+                Some(collider) => {
+                    if *collider != self.parts[at].collider {
+                        rebuilt = true;
+                    }
+                }
+                None => rebuilt = true,
+            }
+        }
+        rebuilt
+    }
+
+    fn nodes_changed(&mut self, world: &World) -> Nodes {
+        let mut changed = false;
+        for at in 0..self.nodes.len() {
+            let entity = self.nodes[at].entity;
+            let parent = self.nodes[at].parent;
+            if parent != NONE {
+                if !world.is_alive(entity) {
+                    return Nodes::Invalid;
+                }
+                let expected = self.nodes[parent as usize].entity;
+                if world.get::<Parent>(entity).map(Parent::entity) != Some(expected) {
+                    return Nodes::Invalid;
+                }
+            }
+            let local = if parent == NONE {
+                self.local
+            } else {
+                match world.get::<LocalTransform>(entity) {
+                    Some(held) => held.0,
+                    None => return Nodes::Invalid,
+                }
+            };
+            if local != self.nodes[at].local {
+                self.nodes[at].local = local;
+                changed = true;
+            }
+        }
+        if changed { Nodes::Moved } else { Nodes::Stable }
+    }
+
+    fn recompose(&mut self) -> bool {
+        for at in 0..self.nodes.len() {
+            let parent = self.nodes[at].parent;
+            let local = self.nodes[at].local;
+            self.nodes[at].relative = match parent {
+                NONE => Transform::IDENTITY,
+                parent => self.nodes[parent as usize].relative.compose(local),
+            };
+        }
+        let mut changed = false;
+        for at in 0..self.nodes.len() {
+            let part = self.nodes[at].part;
+            if part != NONE && self.parts[part as usize].relative != self.nodes[at].relative {
+                changed = true;
+            }
+        }
+        changed
     }
 
     fn turn(&mut self, rotation: Quat) {
@@ -325,20 +532,23 @@ impl Body {
         self.inverse_inertia = matrix * self.local_inverse_inertia * matrix.transpose();
     }
 
+    pub(crate) fn root_held(&self, world: &World) -> bool {
+        world.contains::<RigidBody>(self.entity)
+            || world.contains::<Collider>(self.entity)
+            || world.contains::<Joint>(self.entity)
+    }
+
     pub(crate) fn aabb(&self) -> Option<Aabb> {
         self.parts
             .iter()
             .map(|part| part.aabb(self.position, self.rotation))
             .reduce(Aabb::union)
-            .map(|aabb| Aabb {
-                min: aabb.min - Vec3::splat(BROAD_MARGIN),
-                max: aabb.max + Vec3::splat(BROAD_MARGIN),
-            })
     }
 
-    pub(crate) fn swept_aabb(&self, delta: f32) -> Option<(Aabb, Travel)> {
+    pub(crate) fn swept_aabb(&mut self, delta: f32) -> Option<(Aabb, Travel)> {
         let aabb = self.aabb()?;
         if self.rigid.kind == BodyKind::Static {
+            self.travel = Travel::STILL;
             return Some((aabb, Travel::STILL));
         }
         let reach = aabb.half_extents().length();
@@ -347,6 +557,7 @@ impl Body {
             linear: velocity.linear * delta,
             angular: velocity.angular.length() * reach * delta,
         };
+        self.travel = travel;
         let margin = travel.linear.abs() + Vec3::splat(travel.angular);
         Some((Aabb::new(aabb.min - margin, aabb.max + margin), travel))
     }
@@ -400,15 +611,24 @@ impl Body {
     }
 
     pub(crate) fn apply_impulse(&mut self, offset: Vec3, impulse: Vec3) {
+        if self.rigid.kind == BodyKind::Static {
+            return;
+        }
         self.rigid.linear_velocity += impulse * self.inverse_mass;
         self.rigid.angular_velocity += self.inverse_inertia.mul_vec3(offset.cross(impulse));
     }
 
     pub(crate) fn apply_angular_impulse(&mut self, impulse: Vec3) {
+        if self.rigid.kind == BodyKind::Static {
+            return;
+        }
         self.rigid.angular_velocity += self.inverse_inertia.mul_vec3(impulse);
     }
 
     pub(crate) fn apply_position_impulse(&mut self, offset: Vec3, impulse: Vec3) {
+        if self.rigid.kind == BodyKind::Static {
+            return;
+        }
         self.position += impulse * self.inverse_mass;
         let turned = integrate_rotation(
             self.rotation,
@@ -418,6 +638,9 @@ impl Body {
     }
 
     pub(crate) fn apply_angular_position_impulse(&mut self, impulse: Vec3) {
+        if self.rigid.kind == BodyKind::Static {
+            return;
+        }
         let turned = integrate_rotation(self.rotation, self.inverse_inertia.mul_vec3(impulse));
         self.turn(turned);
     }
@@ -457,28 +680,79 @@ impl Body {
         self.rigid.sleep_time = 0.0;
     }
 
-    pub(crate) fn sync(&self, world: &mut World) {
-        if self.has_body {
+    pub(crate) fn sync(&mut self, world: &mut World) {
+        if self.has_body && self.published != Some(self.rigid) {
             world.insert(self.entity, self.rigid);
         }
-        if self.has_body && self.rigid.kind != BodyKind::Static {
-            let mut transform = self.transform;
-            transform.translation = self.position - self.rotation.rotate_vec3(self.center_offset);
-            transform.rotation = self.rotation;
-            let local = match self.frame {
-                Some(frame) => frame.decompose(transform),
-                None => transform,
-            };
-            world.insert(self.entity, LastPose(transform));
+        self.published = self.has_body.then_some(self.rigid);
+        if !self.has_body || self.rigid.kind == BodyKind::Static {
+            return;
+        }
+        let mut transform = self.transform;
+        transform.translation = self.position - self.rotation.rotate_vec3(self.center_offset);
+        transform.rotation = self.rotation;
+        let local = match self.frame {
+            Some(frame) => frame.decompose(transform),
+            None => transform,
+        };
+        if world.get::<LocalTransform>(self.entity) != Some(&LocalTransform(local)) {
             world.insert(self.entity, LocalTransform(local));
+        }
+        if world.get::<Transform>(self.entity) != Some(&transform) {
             world.insert(self.entity, transform);
-            for part in &self.parts {
-                if part.entity != self.entity {
-                    world.insert(part.entity, transform.compose(part.relative));
-                }
+        }
+        for part in &self.parts {
+            if part.entity == self.entity {
+                continue;
+            }
+            let held = transform.compose(part.relative);
+            if world.get::<Transform>(part.entity) != Some(&held) {
+                world.insert(part.entity, held);
             }
         }
+        self.transform = transform;
+        self.local = local;
     }
+}
+
+fn local_transform(world: &World, entity: Entity) -> Transform {
+    match world.get::<LocalTransform>(entity) {
+        Some(held) => held.0,
+        None => {
+            assert!(
+                world.get::<Parent>(entity).is_none(),
+                "the body of entity {} follows a parent but holds no local transform",
+                entity.index(),
+            );
+            world.get::<Transform>(entity).copied().unwrap_or_else(|| {
+                panic!(
+                    "the body of entity {} holds no local transform",
+                    entity.index()
+                )
+            })
+        }
+    }
+}
+
+pub(crate) fn under_body(world: &World, entity: Entity) -> bool {
+    let mut ancestor = world.get::<Parent>(entity).map(Parent::entity);
+    let mut steps = 0;
+    while let Some(held) = ancestor {
+        steps += 1;
+        assert!(
+            steps <= world.len(),
+            "the node of entity {} closes its hierarchy into a cycle",
+            entity.index(),
+        );
+        if world.contains::<RigidBody>(held)
+            || world.contains::<Joint>(held)
+            || world.contains::<Collider>(held)
+        {
+            return true;
+        }
+        ancestor = world.get::<Parent>(held).map(Parent::entity);
+    }
+    false
 }
 
 fn mass_properties(parts: &[Part], mass: f32) -> (Vec3, Mat3) {

@@ -216,7 +216,11 @@ impl Commit {
             }
         }
         for id in &self.prepared.removed.images {
-            library.images.remove(id);
+            if let Some(record) = library.images.remove(id)
+                && !library.synchronous
+            {
+                library.retired_images.push(record.image);
+            }
             library.textures.retain(|(held, ..), _| held != id);
         }
         for id in &self.prepared.changed_images {

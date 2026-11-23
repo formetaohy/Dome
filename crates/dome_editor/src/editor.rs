@@ -261,6 +261,7 @@ impl Editor {
 
     fn reload(&mut self) {
         self.finish_drag();
+        self.commit();
         self.finish_property();
         let registry = self.scene.schema_arc();
         let loaded = catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry)));
@@ -291,12 +292,16 @@ impl Editor {
                 return;
             }
             let registry = self.scene.schema_arc();
+            self.finish_drag();
+            self.commit();
+            self.finish_property();
             match catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry))) {
                 Ok(scene) => {
                     self.scene = scene;
                     self.drag = None;
                     self.property = None;
                     self.history.reset();
+                    self.dirty = false;
                     self.conflict = false;
                     self.clamp();
                     self.refresh_preview();
@@ -412,12 +417,14 @@ impl Editor {
             .edit(|edit| edit.set_property(&target, &path, &value))
         {
             Ok((_, delta)) => {
+                if !delta.is_empty() {
+                    self.dirty = true;
+                }
                 self.property = Some(PropertyState {
                     target: target.clone(),
                     path,
                     delta: Some(delta),
                 });
-                self.dirty = true;
                 self.apply_edit(&target);
             }
             Err(error) => {

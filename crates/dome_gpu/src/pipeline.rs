@@ -145,6 +145,13 @@ impl PipelineHandle {
                 .count() as u32
                 <= device.limits().max_storage_buffers_per_shader_stage
         );
+        let workgroup = program.workgroup_size();
+        assert!(
+            workgroup <= device.limits().max_compute_workgroup_size_x
+                && workgroup <= device.limits().max_compute_invocations_per_workgroup,
+            "the kernel {} dispatches {workgroup} invocations the device cannot run",
+            program.label(),
+        );
         let native = device.native().create_pipeline(&program);
         let handle = Self {
             slot: Arc::new(Slot {

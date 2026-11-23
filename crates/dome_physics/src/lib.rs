@@ -1,7 +1,6 @@
 mod assembly;
 mod body;
 mod box_contact;
-mod broadphase;
 mod cache;
 mod collider;
 mod contact;
@@ -14,6 +13,7 @@ mod joint;
 mod joint_solver;
 mod mesh;
 mod mesh_contact;
+mod node;
 mod part;
 mod query;
 mod segment;
@@ -21,6 +21,8 @@ mod shape;
 mod solid;
 mod solver;
 mod step;
+mod table;
+mod tree;
 mod triangle_contact;
 
 pub use body::{BodyKind, RigidBody};

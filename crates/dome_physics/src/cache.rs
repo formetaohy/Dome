@@ -14,8 +14,8 @@ pub(crate) struct CachedPoint {
 }
 
 impl ContactCache {
-    pub(crate) fn pairs(&self) -> impl Iterator<Item = (Entity, Entity)> + '_ {
-        self.points.keys().map(|held| (held.0, held.1))
+    pub(crate) fn clear(&mut self) {
+        self.points.clear();
     }
 
     pub(crate) fn take(

@@ -44,6 +44,7 @@ pub struct Library {
     commit: Option<commit::Commit>,
     retired_meshes: Vec<Mesh>,
     retired_materials: Vec<Material>,
+    retired_images: Vec<ImageTexture>,
     synchronous: bool,
 }
 
@@ -156,6 +157,7 @@ impl Library {
             commit: None,
             retired_meshes: Vec::new(),
             retired_materials: Vec::new(),
+            retired_images: Vec::new(),
             synchronous: false,
         }
     }
@@ -229,7 +231,10 @@ impl Library {
     }
 
     pub fn release(&mut self, renderer: &mut Renderer) {
-        if self.retired_meshes.is_empty() && self.retired_materials.is_empty() {
+        if self.retired_meshes.is_empty()
+            && self.retired_materials.is_empty()
+            && self.retired_images.is_empty()
+        {
             return;
         }
         renderer.idle();
@@ -239,6 +244,7 @@ impl Library {
         for material in self.retired_materials.drain(..) {
             renderer.remove_material(material);
         }
+        self.retired_images.clear();
     }
 
     pub fn loading(&self) -> bool {

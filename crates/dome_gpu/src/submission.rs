@@ -368,6 +368,10 @@ impl Submission {
             "a texture readback requires a copy destination"
         );
         assert!(
+            texture.usages().contains(TextureUsages::COPY_SRC),
+            "a texture readback requires a copy source"
+        );
+        assert!(
             target_offset.is_multiple_of(512),
             "a texture readback starts on a 512 byte boundary"
         );

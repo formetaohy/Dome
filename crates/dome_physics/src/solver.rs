@@ -24,6 +24,8 @@ pub(crate) struct ContactPoint {
     feature: u64,
     local_first: Vec3,
     local_second: Vec3,
+    offset_first: Vec3,
+    offset_second: Vec3,
     normal_local_first: Vec3,
     separation: f32,
     tangent: [Vec3; 2],
@@ -84,6 +86,8 @@ pub(crate) fn contact(
                 feature: point.feature,
                 local_first,
                 local_second,
+                offset_first: Vec3::ZERO,
+                offset_second: Vec3::ZERO,
                 normal_local_first,
                 separation: point.separation,
                 tangent,
@@ -118,6 +122,8 @@ pub(crate) fn prepare(bodies: &[Body], contacts: &mut [Contact], delta: f32) {
         for point in &mut contact.points {
             let offset_first = first.rotation.rotate_vec3(point.local_first);
             let offset_second = second.rotation.rotate_vec3(point.local_second);
+            point.offset_first = offset_first;
+            point.offset_second = offset_second;
             point.normal_mass = effective_mass(first, second, offset_first, offset_second, normal);
             for axis in 0..2 {
                 point.tangent_mass[axis] = effective_mass(
@@ -171,10 +177,8 @@ pub(crate) fn warm_start(bodies: &mut [Body], contacts: &[Contact]) {
                 continue;
             }
             let (first, second) = pair_mut(bodies, contact.first, contact.second);
-            let offset_first = first.rotation.rotate_vec3(point.local_first);
-            let offset_second = second.rotation.rotate_vec3(point.local_second);
-            first.apply_impulse(offset_first, -impulse);
-            second.apply_impulse(offset_second, impulse);
+            first.apply_impulse(point.offset_first, -impulse);
+            second.apply_impulse(point.offset_second, impulse);
         }
     }
 }
@@ -191,8 +195,8 @@ pub(crate) fn solve_velocity(bodies: &mut [Body], contacts: &mut [Contact]) {
                 continue;
             }
             let (first, second) = pair_mut(bodies, contact.first, contact.second);
-            let offset_first = first.rotation.rotate_vec3(point.local_first);
-            let offset_second = second.rotation.rotate_vec3(point.local_second);
+            let offset_first = point.offset_first;
+            let offset_second = point.offset_second;
             for axis in 0..2 {
                 let tangent = point.tangent[axis];
                 let relative =
@@ -276,22 +280,23 @@ pub(crate) fn effective_mass(
     offset_second: Vec3,
     axis: Vec3,
 ) -> f32 {
-    let first_axis = offset_first.cross(axis);
-    let second_axis = offset_second.cross(axis);
-    let mass = first.inverse_mass
-        + second.inverse_mass
-        + axis.dot(
+    let mut mass = first.inverse_mass + second.inverse_mass;
+    if first.movable() {
+        mass += axis.dot(
             first
                 .inverse_inertia
-                .mul_vec3(first_axis)
+                .mul_vec3(offset_first.cross(axis))
                 .cross(offset_first),
-        )
-        + axis.dot(
+        );
+    }
+    if second.movable() {
+        mass += axis.dot(
             second
                 .inverse_inertia
-                .mul_vec3(second_axis)
+                .mul_vec3(offset_second.cross(axis))
                 .cross(offset_second),
         );
+    }
     if mass > 0.0 { 1.0 / mass } else { 0.0 }
 }
 

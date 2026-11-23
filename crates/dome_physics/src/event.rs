@@ -1,5 +1,4 @@
 use dome_ecs::Entity;
-use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CollisionPhase {
@@ -16,7 +15,7 @@ impl CollisionPhase {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CollisionEvent {
     pub first: Entity,
     pub second: Entity,
@@ -26,7 +25,7 @@ pub struct CollisionEvent {
 
 #[derive(Default)]
 pub struct Collisions {
-    active: BTreeMap<(Entity, Entity), bool>,
+    active: Vec<(Entity, Entity, bool)>,
     events: Vec<CollisionEvent>,
 }
 
@@ -35,31 +34,51 @@ impl Collisions {
         &self.events
     }
 
-    pub(crate) fn settle(&mut self, active: BTreeMap<(Entity, Entity), bool>) {
+    pub(crate) fn touching(&self) -> &[(Entity, Entity, bool)] {
+        &self.active
+    }
+
+    pub(crate) fn settle(&mut self, touched: &[(Entity, Entity, bool)]) {
         self.events.clear();
-        let pairs = active
-            .keys()
-            .chain(self.active.keys())
-            .copied()
-            .collect::<BTreeSet<_>>();
-        for (first, second) in pairs {
-            let pair = (first, second);
-            let phase = match (active.get(&pair), self.active.get(&pair)) {
-                (Some(_), None) => CollisionPhase::Begin,
-                (None, Some(_)) => CollisionPhase::End,
-                _ => continue,
+        let previous = std::mem::take(&mut self.active);
+        let (mut at, mut was) = (0, 0);
+        while at < touched.len() || was < previous.len() {
+            let held = touched.get(at);
+            let before = previous.get(was);
+            let (pair, phase, sensor) = match (held, before) {
+                (Some(held), Some(before)) => {
+                    let left = (held.0, held.1);
+                    let right = (before.0, before.1);
+                    match left.cmp(&right) {
+                        std::cmp::Ordering::Less => (left, Some(CollisionPhase::Begin), held.2),
+                        std::cmp::Ordering::Greater => (right, Some(CollisionPhase::End), before.2),
+                        std::cmp::Ordering::Equal => {
+                            at += 1;
+                            was += 1;
+                            continue;
+                        }
+                    }
+                }
+                (Some(held), None) => ((held.0, held.1), Some(CollisionPhase::Begin), held.2),
+                (None, Some(before)) => ((before.0, before.1), Some(CollisionPhase::End), before.2),
+                (None, None) => break,
             };
-            let sensor = *active
-                .get(&pair)
-                .or_else(|| self.active.get(&pair))
-                .expect("a settled pair touches a side of the step");
-            self.events.push(CollisionEvent {
-                first,
-                second,
-                phase,
-                sensor,
-            });
+            if held.is_some_and(|held| (held.0, held.1) == pair) {
+                at += 1;
+            } else {
+                was += 1;
+            }
+            if let Some(phase) = phase {
+                self.events.push(CollisionEvent {
+                    first: pair.0,
+                    second: pair.1,
+                    phase,
+                    sensor,
+                });
+            }
         }
-        self.active = active;
+        self.active = previous;
+        self.active.clear();
+        self.active.extend_from_slice(touched);
     }
 }

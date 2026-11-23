@@ -317,8 +317,14 @@ impl Pending {
             self.dst_stage |= next.stage;
             self.dst_access |= next.access;
             self.touched = true;
+            *held = next;
+            return;
         }
-        *held = next;
+        *held = Access {
+            stage: held.stage | next.stage,
+            access: held.access | next.access,
+            written: false,
+        };
     }
 
     fn transition(

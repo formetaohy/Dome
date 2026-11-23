@@ -728,6 +728,7 @@ fn clip_out<A>(tree: &mut Tree<A>, id: NodeId) {
     }
     tree.nodes[id].on_screen = false;
     tree.hits = true;
+    tree.focus = true;
     tree.modal = true;
     for index in 0..tree.nodes[id].children.len() {
         let child = tree.nodes[id].children[index];

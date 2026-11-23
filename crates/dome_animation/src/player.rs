@@ -58,10 +58,10 @@ impl AnimationPlayer {
         );
         let primary = self.primary;
         if duration == 0.0 {
-            self.layers.remove(primary);
+            self.layers.clear();
             self.layers
                 .push(AnimationLayer::new(source, 0.0, speed, looped, true, 1.0));
-            self.primary = self.layers.len() - 1;
+            self.primary = 0;
             return;
         }
         self.layers[primary].fade_to(0.0, duration);
