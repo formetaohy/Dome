@@ -47,6 +47,7 @@ pub use input::{
 };
 pub use motion::{Animated, Motion, Spring};
 pub use paint::{Clip, Instance, Painter};
+pub use popover::popup;
 pub use renderer::Renderer;
 pub use scroll::Window;
 pub use style::{Border, Fill, State, Surface};

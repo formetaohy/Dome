@@ -146,6 +146,10 @@ impl<'a, A> BuildContext<'a, A> {
         widget::segmented_fill(&self.copy(), options, selected)
     }
 
+    pub fn icon_segmented<'e>(&self, options: &[(Icon, &str)], selected: usize) -> Element<'e, A> {
+        widget::icon_segmented(&self.copy(), options, selected)
+    }
+
     pub fn tabs<'e>(&self, options: &[&str], selected: usize) -> Element<'e, A> {
         widget::tabs(&self.copy(), options, selected)
     }

@@ -198,24 +198,17 @@ pub(super) fn paint_field(
     painter.push_clip(inner, Corners::ZERO);
     let style = field.style;
     if let Some(edit) = &runtime.edit {
-        let text = edit.text();
-        let caret = edit.caret();
-        let anchor = edit.anchor();
-        let before = prefix(text, caret);
-        let caret_x = if before.is_empty() {
-            0.0
-        } else {
-            painter.measure(before, style).x
-        };
-        let preedit = info.preedit.filter(|composed| !composed.is_empty());
-        let preedit_width = preedit.map_or(0.0, |composed| painter.measure(composed, style).x);
-        let mut offset = shift(caret_x, preedit_width, inner.width());
         if field.multiline {
+            let text = edit.text();
+            let caret = edit.caret();
+            let anchor = edit.anchor();
+            let preedit = info.preedit.filter(|composed| !composed.is_empty());
+            let preedit_width = preedit.map_or(0.0, |composed| painter.measure(composed, style).x);
             let line_height = style.font.leading.max(style.font.size * 1.28);
             let chars: Vec<char> = text.chars().collect();
             let spans = line_spans(&chars);
             let (_, line_x) = caret_xy(painter, style, &chars, &spans, caret);
-            offset = shift(line_x, preedit_width, inner.width());
+            let offset = shift(line_x, preedit_width, inner.width());
             let selection = anchor.min(caret)..anchor.max(caret);
             if selection.start != selection.end {
                 for (index, (start, end)) in spans.iter().enumerate() {
@@ -281,51 +274,15 @@ pub(super) fn paint_field(
             painter.pop_clip(clip);
             return Some(caret_rect);
         }
-        let selection = anchor.min(caret)..anchor.max(caret);
-        if selection.start != selection.end {
-            let left = text_width(painter, style, prefix(text, selection.start));
-            let right = text_width(painter, style, prefix(text, selection.end));
-            painter.rect(
-                Rect::from_min_size(
-                    Vec2::new(inner.min.x + left - offset, inner.min.y + 2.0),
-                    Vec2::new(right - left, inner.height() - 4.0),
-                ),
-                Corners::ZERO,
-                palette.primary.with_alpha(0.28),
-            );
-        }
-        let layout = painter.layout(text, style, 0.0);
-        let origin = Vec2::new(
-            inner.min.x - offset,
-            inner.min.y + (inner.height() - layout.size.y) * 0.5,
+        let caret_rect = paint_single_line_edit(
+            edit,
+            inner,
+            style,
+            palette.primary,
+            info.preedit,
+            info.time,
+            painter,
         );
-        painter.text(&layout, origin, style.color);
-        if let Some(composed) = preedit {
-            let composed = painter.layout(composed, style, 0.0);
-            let origin = Vec2::new(
-                inner.min.x + caret_x - offset,
-                inner.min.y + (inner.height() - composed.size.y) * 0.5,
-            );
-            painter.text(&composed, origin, style.color);
-            painter.rect(
-                Rect::from_min_size(
-                    Vec2::new(origin.x, origin.y + composed.size.y - 1.0),
-                    Vec2::new(composed.size.x, 1.0),
-                ),
-                Corners::ZERO,
-                palette.primary.with_alpha(0.8),
-            );
-        }
-        let caret_rect = Rect::from_min_size(
-            Vec2::new(
-                inner.min.x + caret_x + preedit_width - offset,
-                inner.min.y + 2.0,
-            ),
-            Vec2::new(1.6, inner.height() - 4.0),
-        );
-        if edit.caret_visible(info.time) {
-            painter.rect(caret_rect, Corners::ZERO, palette.primary);
-        }
         painter.pop_clip(clip);
         Some(caret_rect)
     } else {
@@ -339,6 +296,75 @@ pub(super) fn paint_field(
         painter.pop_clip(clip);
         None
     }
+}
+
+pub(crate) fn paint_single_line_edit(
+    edit: &Edit,
+    inner: Rect,
+    style: TextStyle,
+    accent: crate::color::Color,
+    preedit: Option<&str>,
+    time: f32,
+    painter: &mut Painter,
+) -> Rect {
+    let text = edit.text();
+    let caret = edit.caret();
+    let anchor = edit.anchor();
+    let before = prefix(text, caret);
+    let caret_x = if before.is_empty() {
+        0.0
+    } else {
+        painter.measure(before, style).x
+    };
+    let preedit = preedit.filter(|composed| !composed.is_empty());
+    let preedit_width = preedit.map_or(0.0, |composed| painter.measure(composed, style).x);
+    let offset = shift(caret_x, preedit_width, inner.width());
+    let selection = anchor.min(caret)..anchor.max(caret);
+    if selection.start != selection.end {
+        let left = text_width(painter, style, prefix(text, selection.start));
+        let right = text_width(painter, style, prefix(text, selection.end));
+        painter.rect(
+            Rect::from_min_size(
+                Vec2::new(inner.min.x + left - offset, inner.min.y + 2.0),
+                Vec2::new(right - left, inner.height() - 4.0),
+            ),
+            Corners::ZERO,
+            accent.with_alpha(0.28),
+        );
+    }
+    let layout = painter.layout(text, style, 0.0);
+    let origin = Vec2::new(
+        inner.min.x - offset,
+        inner.min.y + (inner.height() - layout.size.y) * 0.5,
+    );
+    painter.text(&layout, origin, style.color);
+    if let Some(composed) = preedit {
+        let composed = painter.layout(composed, style, 0.0);
+        let origin = Vec2::new(
+            inner.min.x + caret_x - offset,
+            inner.min.y + (inner.height() - composed.size.y) * 0.5,
+        );
+        painter.text(&composed, origin, style.color);
+        painter.rect(
+            Rect::from_min_size(
+                Vec2::new(origin.x, origin.y + composed.size.y - 1.0),
+                Vec2::new(composed.size.x, 1.0),
+            ),
+            Corners::ZERO,
+            accent.with_alpha(0.8),
+        );
+    }
+    let caret_rect = Rect::from_min_size(
+        Vec2::new(
+            inner.min.x + caret_x + preedit_width - offset,
+            inner.min.y + 2.0,
+        ),
+        Vec2::new(1.6, inner.height() - 4.0),
+    );
+    if edit.caret_visible(time) {
+        painter.rect(caret_rect, Corners::ZERO, accent);
+    }
+    caret_rect
 }
 
 fn line_spans(chars: &[char]) -> Vec<(usize, usize)> {

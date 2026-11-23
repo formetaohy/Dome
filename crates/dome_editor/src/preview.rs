@@ -1,6 +1,6 @@
+use crate::action::Action;
 use crate::camera;
 use crate::debug;
-use crate::message::Message;
 use dome_asset::{Library, Refresh};
 use dome_ecs::{Entity, World, propagate};
 use dome_gpu::{
@@ -190,7 +190,7 @@ impl Preview {
         }
     }
 
-    pub(crate) fn register_textures(&self, ui: &mut Ui<Message>, scene: &Scene) {
+    pub(crate) fn register_textures(&self, ui: &mut Ui<Action>, scene: &Scene) {
         let Some(library) = &self.library else {
             return;
         };

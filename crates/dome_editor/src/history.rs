@@ -10,6 +10,14 @@ pub(crate) struct History {
 }
 
 impl History {
+    pub(crate) fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub(crate) fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
     pub(crate) fn reset(&mut self) {
         self.undo.clear();
         self.redo.clear();

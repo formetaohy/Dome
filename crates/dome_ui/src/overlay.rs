@@ -14,11 +14,21 @@ impl<A: Clone> Ui<A> {
             self.tooltip = None;
             return;
         };
-        if self.tree.nodes[node].tooltip.is_none() {
+        let label = self.tree.nodes[node].tooltip.as_deref().or_else(|| {
+            match &self.tree.nodes[node].content {
+                crate::element::Content::Segment(segment) => segment
+                    .tooltips
+                    .get(self.tree.nodes[node].runtime.thumb as usize)
+                    .map(String::as_str)
+                    .filter(|text| !text.is_empty()),
+                _ => None,
+            }
+        });
+        let Some(label) = label else {
             self.hovered_since = Some((node, self.time));
             self.tooltip = None;
             return;
-        }
+        };
         let since = match self.hovered_since {
             Some((id, since)) if id == node => since,
             _ => {
@@ -33,18 +43,14 @@ impl<A: Clone> Ui<A> {
             self.wake(remaining);
             return;
         }
-        let text = self.tree.nodes[node]
-            .tooltip
-            .as_deref()
-            .expect("the hovered node carries a tooltip");
         if self
             .tooltip
             .as_ref()
-            .is_some_and(|(held, shown)| *held == node && shown == text)
+            .is_some_and(|(held, shown)| *held == node && shown == label)
         {
             return;
         }
-        self.tooltip = Some((node, text.to_string()));
+        self.tooltip = Some((node, label.to_string()));
     }
 
     pub(crate) fn paint_overlays(&mut self) {

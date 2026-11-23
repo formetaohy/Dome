@@ -1,4 +1,3 @@
-use dome_asset::Import;
 use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -6,10 +5,11 @@ use std::process::{Child, Command as Process};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dome_asset::Watch;
+use dome_animation::{Comparison, Parameter};
+use dome_asset::{Import, Watch};
 use dome_gpu::{GpuContext, GpuRequest, Submission, WindowHandle};
 use dome_math::{Quat, Rect, Transform, Vec2, Vec3};
-use dome_scene::{Delta, Node, Scene, Shape, Target, Value};
+use dome_scene::{Atmosphere, Delta, Node, ReferenceKind, Scene, Shape, Target, Value};
 use dome_schema::Registry;
 use dome_ui::InputKey as Key;
 use dome_window::{
@@ -17,16 +17,15 @@ use dome_window::{
     run as run_window,
 };
 
+use crate::action::{Action, AssetKind, NodeKind, ParameterKind, PathDialog, PathKind, Sheet, Tab};
 use crate::camera::{self, Orbit};
 use crate::gizmo::{self, Grip, Mode, Space};
 use crate::history::History;
-use crate::message::Message;
-use crate::panel::Panels;
 use crate::preview::Preview;
 use crate::session::Session;
-use crate::shell::{self, View};
+use crate::stage::{self, State};
 
-const SCENE_CLEAR: [f32; 4] = [0.055, 0.068, 0.095, 1.0];
+const SCENE_CLEAR: [f32; 4] = [0.035, 0.043, 0.063, 1.0];
 
 pub struct EditorConfig {
     pub window: WindowConfig,
@@ -38,7 +37,7 @@ pub struct EditorConfig {
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
-            window: WindowConfig::new("Dome Editor", 1440, 900),
+            window: WindowConfig::new("Dome", 1440, 900),
             scene: PathBuf::from("scene.toml"),
             registry: Arc::new(Registry::default()),
             debug: false,
@@ -71,15 +70,20 @@ pub struct Editor {
     path: PathBuf,
     selected: Option<Target>,
     dirty: bool,
-    status: String,
+    titled_dirty: Option<bool>,
     error: Option<String>,
     child: Option<Child>,
     orbit: Orbit,
     mode: Mode,
     space: Space,
     debug: bool,
-    panels: Panels,
-    collapsed: HashSet<String>,
+    outliner_open: bool,
+    inspector_open: bool,
+    tab: Tab,
+    collapsed_branches: HashSet<String>,
+    collapsed_sections: HashSet<String>,
+    dialog: Option<PathDialog>,
+    recent_paths: [String; 5],
     session: Option<Session>,
     history: History,
     drag: Option<DragState>,
@@ -88,8 +92,6 @@ pub struct Editor {
     primary: bool,
     viewport: Rect,
     pointer: Vec2,
-    import_path: String,
-    prefab_path: String,
     watch: Watch,
     modifiers: ModifiersState,
     origin: Instant,
@@ -120,19 +122,20 @@ impl Editor {
             path,
             selected,
             dirty: !exists,
-            status: if exists {
-                String::from("Loaded")
-            } else {
-                String::from("New scene")
-            },
+            titled_dirty: None,
             error: None,
             child: None,
             orbit: Orbit::default(),
             mode: Mode::Translate,
             space: Space::World,
             debug: config.debug,
-            panels: Panels::default(),
-            collapsed: HashSet::new(),
+            outliner_open: true,
+            inspector_open: true,
+            tab: Tab::Scene,
+            collapsed_branches: HashSet::new(),
+            collapsed_sections: HashSet::new(),
+            dialog: None,
+            recent_paths: Default::default(),
             session: None,
             history: History::default(),
             drag: None,
@@ -141,8 +144,6 @@ impl Editor {
             primary: false,
             viewport: Rect::ZERO,
             pointer: Vec2::ZERO,
-            import_path: String::new(),
-            prefab_path: String::new(),
             watch,
             modifiers: ModifiersState::default(),
             origin: Instant::now(),
@@ -170,7 +171,24 @@ impl Editor {
         let mut preview = Preview::new(&context, &self.scene, Arc::clone(&self.registry));
         preview.set_debug(self.debug);
         self.session = Some(Session::new(context, surface, preview, &self.scene));
-        window.set_title(&format!("Dome Editor - {}", self.path.display()));
+        self.sync_title(window);
+    }
+
+    fn sync_title(&mut self, window: &Window) {
+        if self.titled_dirty == Some(self.dirty) {
+            return;
+        }
+        self.titled_dirty = Some(self.dirty);
+        let name = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("scene.toml");
+        if self.dirty {
+            window.set_title(&format!("Dome — {name} •"));
+        } else {
+            window.set_title(&format!("Dome — {name}"));
+        }
     }
 
     fn selected_node(&self) -> Option<usize> {
@@ -204,23 +222,23 @@ impl Editor {
     }
 
     fn save(&mut self) {
+        self.finish_drag();
+        self.finish_property();
         self.scene.save(&self.path);
         self.rewatch();
         self.dirty = false;
-        self.status = format!("Saved {}", self.path.display());
     }
 
     fn reload(&mut self) {
+        self.finish_drag();
+        self.finish_property();
         let registry = self.scene.schema_arc();
         let loaded = catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry)));
         match loaded {
             Ok(scene) => {
                 self.scene = scene;
-                self.drag = None;
-                self.property = None;
                 self.history.reset();
                 self.dirty = false;
-                self.status = format!("Reloaded {}", self.path.display());
                 self.rewatch();
                 self.clamp();
                 self.refresh_preview();
@@ -244,7 +262,6 @@ impl Editor {
                 self.property = None;
                 self.history.reset();
                 self.dirty = false;
-                self.status = String::from("Reloaded from disk");
                 self.clamp();
                 self.refresh_preview();
             }
@@ -308,7 +325,6 @@ impl Editor {
         self.finish_property();
         if self.history.undo(&mut self.scene) {
             self.dirty = true;
-            self.status = String::from("Undo");
             self.clamp();
             self.refresh_preview();
         }
@@ -319,7 +335,6 @@ impl Editor {
         self.finish_property();
         if self.history.redo(&mut self.scene) {
             self.dirty = true;
-            self.status = String::from("Redo");
             self.clamp();
             self.refresh_preview();
         }
@@ -401,14 +416,12 @@ impl Editor {
             .spawn()
             .unwrap_or_else(|error| panic!("the editor starts its player: {error}"));
         self.child = Some(child);
-        self.status = String::from("Playing");
     }
 
     fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
-            self.status = String::from("Stopped");
         }
     }
 
@@ -419,45 +432,48 @@ impl Editor {
             .is_some_and(|child| child.try_wait().ok().flatten().is_some());
         if exited {
             self.child = None;
-            self.status = String::from("Player exited");
         }
     }
 
-    fn add_node(&mut self, kind: &str) {
-        if !matches!(kind, "mesh" | "camera" | "sun" | "lamp" | "empty" | "probe") {
-            self.error = Some(format!("the editor adds no {kind}"));
-            return;
-        }
-        let parent = match &self.selected {
-            Some(Target::Node(id)) if self.scene.node_index(id).is_some() => Some(id.clone()),
-            _ => None,
+    fn parent_for_insert(&self) -> Option<String> {
+        let Target::Node(id) = self.selected.as_ref()? else {
+            return None;
         };
+        let index = self.scene.node_index(id)?;
+        self.scene.structurally_editable(index).then(|| id.clone())
+    }
+
+    fn create_node(&mut self, kind: NodeKind) {
+        let parent = self.parent_for_insert();
+        let base = kind.base_id();
         let inserted = self.scene.edit(|edit| {
-            if kind == "mesh" {
+            if kind == NodeKind::Mesh {
                 if edit.meshes().is_empty() {
-                    let id = unique_asset(edit, "mesh", "cube");
+                    let id = unique_asset(edit, ReferenceKind::Mesh, "cube");
                     edit.add_mesh(&id, Shape::Cube)?;
                 }
                 if edit.materials().is_empty() {
-                    let id = unique_asset(edit, "material", "grey");
+                    let id = unique_asset(edit, ReferenceKind::Material, "grey");
                     edit.add_material(&id)?;
                 }
             }
             let mut node = match kind {
-                "mesh" => crate::default::mesh(&edit.meshes()[0].id, &edit.materials()[0].id),
-                "camera" => crate::default::camera(),
-                "sun" => crate::default::sun(),
-                "lamp" => crate::default::lamp(),
-                "probe" => {
-                    let id = unique_asset(edit, "environment", "probe");
+                NodeKind::Mesh => {
+                    crate::default::mesh(&edit.meshes()[0].id, &edit.materials()[0].id)
+                }
+                NodeKind::Camera => crate::default::camera(),
+                NodeKind::Sun => crate::default::sun(),
+                NodeKind::PointLight => crate::default::lamp(),
+                NodeKind::Probe => {
+                    let id = unique_asset(edit, ReferenceKind::Environment, "probe");
                     edit.add_capture_environment(&id)?;
                     crate::default::probe(&id)
                 }
-                _ => Node::new(""),
+                NodeKind::Empty => Node::new(""),
             };
             node.id = match &parent {
-                Some(parent) => edit.child_id(parent, kind),
-                None => unique_node(edit, kind),
+                Some(parent) => edit.child_id(parent, base),
+                None => unique_node(edit, base),
             };
             match &parent {
                 Some(parent) => edit.insert_child(parent, node),
@@ -468,221 +484,452 @@ impl Editor {
             Ok((target, delta)) => {
                 self.record(delta);
                 self.selected = Some(target);
-                self.status = format!("Added {kind}");
+                self.tab = Tab::Scene;
                 self.refresh_preview();
             }
             Err(error) => self.error = Some(error),
         }
     }
 
-    fn add_asset(&mut self, kind: &str) {
-        let import = self.import_path.clone();
+    fn create_asset(&mut self, kind: AssetKind) {
         let created = self.scene.edit(|edit| match kind {
-            "mesh" => {
-                let id = unique_asset(edit, "mesh", "mesh");
+            AssetKind::Mesh => {
+                let id = unique_asset(edit, ReferenceKind::Mesh, "mesh");
                 edit.add_mesh(&id, Shape::Cube)
             }
-            "material" => {
-                let id = unique_asset(edit, "material", "material");
+            AssetKind::Material => {
+                let id = unique_asset(edit, ReferenceKind::Material, "material");
                 edit.add_material(&id)
             }
-            "graph" => {
-                let id = unique_asset(edit, "graph", "graph");
+            AssetKind::Atmosphere => {
+                let id = unique_asset(edit, ReferenceKind::Environment, "sky");
+                edit.add_atmosphere(&id, Atmosphere::default())
+            }
+            AssetKind::Graph => {
+                let id = unique_asset(edit, ReferenceKind::Graph, "graph");
                 edit.add_graph(&id)
             }
-            "image" => {
-                let id = unique_asset(edit, "image", "image");
-                edit.add_image(&id, &import)
-            }
-            "sound" => {
-                let id = unique_asset(edit, "sound", "sound");
-                edit.add_sound(&id, &import)
-            }
-            "environment" => {
-                let id = unique_asset(edit, "environment", "environment");
-                edit.add_environment(&id, &import)
-            }
-            other => Err(format!("the editor adds no {other} asset")),
         });
         match created {
             Ok((target, delta)) => {
                 self.record(delta);
                 self.selected = Some(target);
-                self.status = format!("Added {kind}");
+                self.tab = Tab::Asset;
                 self.refresh_preview();
             }
             Err(error) => self.error = Some(error),
         }
     }
 
-    fn import_model(&mut self, path: &str) {
-        if path.is_empty() {
-            self.error = Some(String::from("the editor imports no path"));
-            return;
-        }
-        let id = model_id(&self.scene, path);
-        match self.scene.edit(|edit| edit.import_model(&id, path, None)) {
-            Ok((target, delta)) => {
-                self.record(delta);
-                self.selected = Some(target);
-                self.status = format!("Imported {path}");
-                self.refresh_preview();
-            }
-            Err(error) => self.error = Some(error),
-        }
-    }
-
-    fn add_instance(&mut self, path: &str) {
-        if path.is_empty() {
-            self.error = Some(String::from("the editor instantiates no path"));
-            return;
-        }
-        let name = PathBuf::from(path)
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .map(|name| {
-                name.chars()
-                    .filter(|held| held.is_ascii_alphanumeric() || *held == '_' || *held == '-')
-                    .collect::<String>()
-            })
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| String::from("prefab"));
-        let parent = match &self.selected {
-            Some(Target::Node(id)) if self.scene.node_index(id).is_some() => Some(id.clone()),
-            _ => None,
-        };
-        let inserted = self.scene.edit(|edit| {
-            let id = match &parent {
-                Some(parent) => edit.child_id(parent, &name),
-                None => unique_node(edit, &name),
-            };
-            match &parent {
-                Some(parent) => edit.insert_child(parent, Node::instance(&id, path)),
-                None => edit.add_instance(&id, path),
-            }
+    fn open_dialog(&mut self, kind: PathKind) {
+        let slot = path_slot(kind);
+        self.dialog = Some(PathDialog {
+            kind,
+            input: self.recent_paths[slot].clone(),
+            focus: true,
+            invalid: false,
         });
-        match inserted {
-            Ok((target, delta)) => {
+    }
+
+    fn submit_dialog(&mut self, override_input: Option<String>) {
+        let Some(mut dialog) = self.dialog.clone() else {
+            return;
+        };
+        if let Some(input) = override_input {
+            dialog.input = input;
+        }
+        let trimmed = dialog.input.trim().to_string();
+        let slot = path_slot(dialog.kind);
+        self.recent_paths[slot] = trimmed.clone();
+        if trimmed.is_empty() {
+            if let Some(held) = self.dialog.as_mut() {
+                held.focus = true;
+                held.invalid = true;
+            }
+            return;
+        }
+        let parent = self.parent_for_insert();
+        let outcome = match dialog.kind {
+            PathKind::Model => {
+                let id = stem_asset(&self.scene, ReferenceKind::Model, &trimmed, "model");
+                self.scene
+                    .edit(|edit| edit.import_model(&id, &trimmed, parent.as_deref()))
+                    .map(|(target, delta)| (target, delta, Tab::Scene))
+            }
+            PathKind::Prefab => {
+                let stem = sanitized_stem(&trimmed, "prefab");
+                self.scene
+                    .edit(|edit| {
+                        let id = match &parent {
+                            Some(parent) => edit.child_id(parent, &stem),
+                            None => unique_node(edit, &stem),
+                        };
+                        match &parent {
+                            Some(parent) => {
+                                edit.insert_child(parent, Node::instance(&id, &trimmed))
+                            }
+                            None => edit.add_instance(&id, &trimmed),
+                        }
+                    })
+                    .map(|(target, delta)| (target, delta, Tab::Scene))
+            }
+            PathKind::Image => {
+                let id = stem_asset(&self.scene, ReferenceKind::Image, &trimmed, "image");
+                self.scene
+                    .edit(|edit| edit.add_image(&id, &trimmed))
+                    .map(|(target, delta)| (target, delta, Tab::Asset))
+            }
+            PathKind::Sound => {
+                let id = stem_asset(&self.scene, ReferenceKind::Sound, &trimmed, "sound");
+                self.scene
+                    .edit(|edit| edit.add_sound(&id, &trimmed))
+                    .map(|(target, delta)| (target, delta, Tab::Asset))
+            }
+            PathKind::Panorama => {
+                let id = stem_asset(
+                    &self.scene,
+                    ReferenceKind::Environment,
+                    &trimmed,
+                    "environment",
+                );
+                self.scene
+                    .edit(|edit| edit.add_environment(&id, &trimmed))
+                    .map(|(target, delta)| (target, delta, Tab::Asset))
+            }
+        };
+        match outcome {
+            Ok((target, delta, tab)) => {
+                self.dialog = None;
                 self.record(delta);
                 self.selected = Some(target);
-                self.status = format!("Instantiated {path}");
+                self.tab = tab;
                 self.refresh_preview();
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => {
+                if let Some(held) = self.dialog.as_mut() {
+                    held.input = trimmed;
+                    held.focus = false;
+                    held.invalid = true;
+                }
+                self.error = Some(error);
+            }
         }
     }
 
-    fn remove(&mut self) {
+    fn remove_target(&mut self, target: Target) {
         self.finish_drag();
         self.finish_property();
-        let Some(target) = self.selected.clone() else {
-            return;
-        };
-        let parent = match &target {
-            Target::Node(id) => self
-                .scene
-                .node_index(id)
-                .and_then(|index| self.scene.parent_index(index))
-                .map(|index| Target::Node(self.scene.nodes()[index].id.clone())),
-            _ => None,
+        let fallback = if self.selected.as_ref() == Some(&target) {
+            match &target {
+                Target::Node(id) => self
+                    .scene
+                    .node_index(id)
+                    .and_then(|index| self.scene.parent_index(index))
+                    .map(|index| Target::Node(self.scene.nodes()[index].id.clone())),
+                _ => None,
+            }
+        } else {
+            self.selected.clone()
         };
         match self.scene.edit(|edit| edit.remove(&target)) {
             Ok(((), delta)) => {
                 self.record(delta);
-                self.selected = parent;
-                self.status = format!("Removed {target}");
+                self.selected = fallback.filter(|held| self.scene.holds(held));
                 self.refresh_preview();
             }
             Err(error) => self.error = Some(error),
         }
     }
 
-    fn apply(&mut self, message: Message) {
-        self.error = None;
-        match message {
-            Message::Save => self.save(),
-            Message::Reload => self.reload(),
-            Message::Undo => self.undo(),
-            Message::Redo => self.redo(),
-            Message::Play => self.play(),
-            Message::Stop => self.stop(),
-            Message::Mode(mode) => self.mode = mode,
-            Message::ToggleSpace => self.space = self.space.toggled(),
-            Message::Focus => {
+    fn toggle_hidden(&mut self, id: &str) {
+        self.finish_property();
+        let Some(index) = self.scene.node_index(id) else {
+            return;
+        };
+        let next = !self.scene.nodes()[index].has_component("hidden");
+        let target = Target::Node(String::from(id));
+        match self
+            .scene
+            .edit(|edit| edit.set_property(&target, "hidden", &Value::Bool(next)))
+        {
+            Ok((_, delta)) => {
+                self.record(delta);
+                self.apply_edit(&target);
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn unpack_prefab(&mut self, id: &str) {
+        self.finish_drag();
+        self.finish_property();
+        match self.scene.edit(|edit| edit.unpack(id)) {
+            Ok(((), delta)) => {
+                self.record(delta);
+                self.refresh_preview();
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn add_graph_state(&mut self, graph_id: &str) {
+        let Some(clip) = self.scene.animations().first().map(|a| a.id.clone()) else {
+            return;
+        };
+        let Some(graph) = self.scene.graph(graph_id) else {
+            return;
+        };
+        let mut index = graph.asset.states().len();
+        let state_id = loop {
+            let candidate = format!("state_{index}");
+            if graph.asset.state(&candidate).is_none() {
+                break candidate;
+            }
+            index += 1;
+        };
+        match self
+            .scene
+            .edit(|edit| edit.add_graph_state(graph_id, &state_id, &clip))
+        {
+            Ok(((), delta)) => {
+                self.record(delta);
+                self.refresh_preview();
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn add_graph_parameter(&mut self, graph_id: &str, kind: ParameterKind) {
+        let Some(graph) = self.scene.graph(graph_id) else {
+            return;
+        };
+        let mut index = graph.asset.parameters().len();
+        let name = loop {
+            let candidate = format!("param_{index}");
+            if graph.asset.parameter(&candidate).is_none() {
+                break candidate;
+            }
+            index += 1;
+        };
+        let default = match kind {
+            ParameterKind::Number => Parameter::Number(0.0),
+            ParameterKind::Boolean => Parameter::Boolean(false),
+        };
+        match self
+            .scene
+            .edit(|edit| edit.add_graph_parameter(graph_id, &name, default))
+        {
+            Ok(((), delta)) => {
+                self.record(delta);
+                self.refresh_preview();
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn add_graph_transition(&mut self, graph_id: &str) {
+        let Some(graph) = self.scene.graph(graph_id) else {
+            return;
+        };
+        let states = graph.asset.states();
+        if states.len() < 2 {
+            return;
+        }
+        let from = states[0].id().to_owned();
+        let to = states[1].id().to_owned();
+        match self
+            .scene
+            .edit(|edit| edit.add_graph_transition(graph_id, &from, &to, 0.2, 1.0))
+        {
+            Ok(((), delta)) => {
+                self.record(delta);
+                self.refresh_preview();
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn add_graph_condition(&mut self, graph_id: &str, transition: usize) {
+        let Some(graph) = self.scene.graph(graph_id) else {
+            return;
+        };
+        let Some(param) = graph.asset.parameters().first() else {
+            return;
+        };
+        let name = param.name().to_owned();
+        let (comparison, value) = match param.default() {
+            Parameter::Number(_) => (Comparison::Above, Parameter::Number(0.0)),
+            Parameter::Boolean(_) => (Comparison::Equal, Parameter::Boolean(true)),
+        };
+        match self
+            .scene
+            .edit(|edit| edit.add_graph_condition(graph_id, transition, &name, comparison, value))
+        {
+            Ok(((), delta)) => {
+                self.record(delta);
+                self.refresh_preview();
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn apply(&mut self, action: Action) {
+        if !matches!(action, Action::EditDialog(_) | Action::DismissError) {
+            self.error = None;
+        }
+        match action {
+            Action::Save => self.save(),
+            Action::Reload => self.reload(),
+            Action::Undo => self.undo(),
+            Action::Redo => self.redo(),
+            Action::Play => self.play(),
+            Action::Stop => self.stop(),
+            Action::Mode(mode) => self.mode = mode,
+            Action::ToggleSpace => self.space = self.space.toggled(),
+            Action::Focus => {
                 if let Some(index) = self.selected_node() {
                     self.orbit
                         .focus(self.scene.world_transform(index).translation);
-                    self.status = String::from("Focused");
                 }
             }
-            Message::Select(target) => {
+            Action::ToggleDebug => {
+                self.debug = !self.debug;
+                if let Some(session) = &mut self.session {
+                    session.preview.set_debug(self.debug);
+                }
+            }
+            Action::ToggleSheet(sheet) => match sheet {
+                Sheet::Outliner => self.outliner_open = !self.outliner_open,
+                Sheet::Inspector => self.inspector_open = !self.inspector_open,
+            },
+            Action::SelectTab(tab) => self.tab = tab,
+            Action::Select(target) => {
                 if self.scene.holds(&target) {
                     self.selected = Some(target);
                 }
             }
-            Message::AddNode(kind) => self.add_node(kind),
-            Message::AddAsset(kind) => self.add_asset(kind),
-            Message::Remove => self.remove(),
-            Message::AddComponent(target, name) => {
+            Action::CreateNode(kind) => self.create_node(kind),
+            Action::CreateAsset(kind) => self.create_asset(kind),
+            Action::OpenDialog(kind) => self.open_dialog(kind),
+            Action::EditDialog(text) => {
+                if let Some(dialog) = self.dialog.as_mut() {
+                    dialog.input = text;
+                    dialog.focus = false;
+                    dialog.invalid = false;
+                }
+            }
+            Action::SubmitPath(text) => self.submit_dialog(Some(text)),
+            Action::SubmitDialog => self.submit_dialog(None),
+            Action::CloseDialog => self.dialog = None,
+            Action::DismissError => self.error = None,
+            Action::RemoveTarget(target) => self.remove_target(target),
+            Action::RemoveSelected => {
+                if let Some(target) = self.selected.clone() {
+                    self.remove_target(target);
+                }
+            }
+            Action::ToggleHidden(id) => self.toggle_hidden(&id),
+            Action::UnpackPrefab(id) => self.unpack_prefab(&id),
+            Action::AddComponent(target, name) => {
                 match self
                     .scene
-                    .edit(|edit| edit.set_property(&target, &name, &Value::Bool(true)))
+                    .edit(|edit| edit.set_property(&target, name, &Value::Bool(true)))
                 {
                     Ok((_, delta)) => {
                         self.record(delta);
-                        self.status = format!("Added {name}");
+                        self.collapsed_sections.remove(&format!("{target}.{name}"));
                         self.refresh_preview();
                     }
                     Err(error) => self.error = Some(error),
                 }
             }
-            Message::RemoveComponent(target, name) => {
+            Action::RemoveComponent(target, name) => {
                 match self
                     .scene
-                    .edit(|edit| edit.set_property(&target, &name, &Value::Bool(false)))
+                    .edit(|edit| edit.set_property(&target, name, &Value::Bool(false)))
                 {
                     Ok((_, delta)) => {
                         self.record(delta);
-                        self.status = format!("Removed {name}");
                         self.refresh_preview();
                     }
                     Err(error) => self.error = Some(error),
                 }
             }
-            Message::Property {
+            Action::ToggleSection(id) => {
+                if !self.collapsed_sections.remove(&id) {
+                    self.collapsed_sections.insert(id);
+                }
+            }
+            Action::ToggleBranch(id) => {
+                if !self.collapsed_branches.remove(&id) {
+                    self.collapsed_branches.insert(id);
+                }
+            }
+            Action::Property {
                 target,
                 path,
                 value,
             } => self.property_edit(target, path, value),
-            Message::ImportPath(path) => self.import_path = path,
-            Message::Import => {
-                let path = self.import_path.clone();
-                self.import_model(&path);
-            }
-            Message::PrefabPath(path) => self.prefab_path = path,
-            Message::Instance => {
-                let path = self.prefab_path.clone();
-                self.add_instance(&path);
-            }
-            Message::Pane(pane) => self.panels.toggle(pane),
-            Message::Debug(enabled) => {
-                self.debug = enabled;
-                if let Some(session) = &mut self.session {
-                    session.preview.set_debug(enabled);
+            Action::AddGraphState(graph) => self.add_graph_state(&graph),
+            Action::RemoveGraphState(graph, state_id) => {
+                match self
+                    .scene
+                    .edit(|edit| edit.remove_graph_state(&graph, &state_id))
+                {
+                    Ok(((), delta)) => {
+                        self.record(delta);
+                        self.refresh_preview();
+                    }
+                    Err(error) => self.error = Some(error),
                 }
             }
-            Message::Expand(id) => {
-                self.collapsed.remove(&id);
+            Action::AddGraphParameter(graph, kind) => self.add_graph_parameter(&graph, kind),
+            Action::RemoveGraphParameter(graph, name) => {
+                match self
+                    .scene
+                    .edit(|edit| edit.remove_graph_parameter(&graph, &name))
+                {
+                    Ok(((), delta)) => {
+                        self.record(delta);
+                        self.refresh_preview();
+                    }
+                    Err(error) => self.error = Some(error),
+                }
             }
-            Message::Collapse(id) => {
-                self.collapsed.insert(id);
+            Action::AddGraphTransition(graph) => self.add_graph_transition(&graph),
+            Action::RemoveGraphTransition(graph, index) => {
+                match self
+                    .scene
+                    .edit(|edit| edit.remove_graph_transition(&graph, index))
+                {
+                    Ok(((), delta)) => {
+                        self.record(delta);
+                        self.refresh_preview();
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Action::AddGraphCondition(graph, transition) => {
+                self.add_graph_condition(&graph, transition);
+            }
+            Action::RemoveGraphCondition(graph, transition, index) => {
+                match self
+                    .scene
+                    .edit(|edit| edit.remove_graph_condition(&graph, transition, index))
+                {
+                    Ok(((), delta)) => {
+                        self.record(delta);
+                        self.refresh_preview();
+                    }
+                    Err(error) => self.error = Some(error),
+                }
             }
         }
     }
 
-    fn apply_messages(&mut self, messages: impl IntoIterator<Item = Message>) {
-        for message in messages {
-            self.apply(message);
+    fn apply_actions(&mut self, actions: impl IntoIterator<Item = Action>) {
+        for action in actions {
+            self.apply(action);
         }
         if !self.primary {
             self.finish_property();
@@ -699,7 +946,7 @@ impl Editor {
         let scale = window.scale_factor() as f32;
         let logical = Vec2::new(width as f32 / scale, height as f32 / scale);
         let time = self.origin.elapsed().as_secs_f64();
-        let messages = {
+        let actions = {
             let Some(session) = self.session.as_mut() else {
                 return Flow::Continue;
             };
@@ -708,40 +955,46 @@ impl Editor {
             session.preview.advance(real);
             session.ui.update(logical, scale, time)
         };
-        self.apply_messages(messages);
+        self.apply_actions(actions);
+        self.sync_title(window);
+
         let camera = self.orbit.view();
         let origin = self.selection_origin();
         let index = self.selected_node();
-        let basis = index.map_or([Vec3::X, Vec3::Y, Vec3::Z], |index| self.basis(index));
+        let basis = index.map_or([Vec3::X, Vec3::Y, Vec3::Z], |at| self.basis(at));
         self.update_hover();
-        let view = View {
+
+        let state = State {
             scene: &self.scene,
             selected: self.selected.as_ref(),
-            path: &self.path,
-            status: &self.status,
             dirty: self.dirty,
             playing: self.child.is_some(),
+            can_undo: self.history.can_undo(),
+            can_redo: self.history.can_redo(),
             mode: self.mode,
             space: self.space,
-            panels: self.panels,
             debug: self.debug,
-            import_path: &self.import_path,
-            prefab_path: &self.prefab_path,
-            collapsed: &self.collapsed,
+            outliner_open: self.outliner_open,
+            inspector_open: self.inspector_open,
+            tab: self.tab,
+            collapsed_branches: &self.collapsed_branches,
+            collapsed_sections: &self.collapsed_sections,
+            dialog: self.dialog.as_ref(),
+            error: self.error.as_deref(),
             camera,
             origin,
             basis,
             hover: self.hover,
             active: self.drag.as_ref().map(|drag| drag.drag.grip()),
-            error: self.error.as_deref(),
         };
+
         let viewport = {
             let Some(session) = self.session.as_mut() else {
                 return Flow::Continue;
             };
             let element = {
-                let ctx = session.ui.build();
-                shell::shell(&ctx, &view)
+                let mut ctx = session.ui.build();
+                stage::build(&mut ctx, &state)
             };
             session.ui.present(element);
             session.ui.bounds("viewport").unwrap_or_default()
@@ -750,6 +1003,7 @@ impl Editor {
         if viewport.is_empty() {
             return Flow::Continue;
         }
+
         let texture_width = (viewport.width() * scale).round().max(1.0) as u32;
         let texture_height = (viewport.height() * scale).round().max(1.0) as u32;
         let stale = self
@@ -787,24 +1041,35 @@ impl Editor {
         let Some(frame) = session.surface.acquire() else {
             return Flow::Continue;
         };
-        let Session {
-            context,
-            preview: _,
-            ui,
-            ..
-        } = session;
+        let Session { context, ui, .. } = session;
         let mut submission = Submission::new(context.device(), "dome editor");
         ui.render(&mut submission, frame.texture(), Some(scene));
         submission.present(frame);
         submission.submit(context.queue());
         Flow::Continue
     }
+
+    fn ui_claims_pointer(&self) -> bool {
+        self.dialog.is_some()
+            || self.session.as_ref().is_some_and(|session| {
+                session.ui.modal_open()
+                    || session.ui.popup_open_any()
+                    || session.ui.pointer_captured()
+                    || session.ui.pointer_over_chrome()
+                    || session.ui.pointer_over_widget_at(self.pointer)
+            })
+    }
+
     fn update_hover(&mut self) {
         let Some(index) = self.selected_node() else {
             self.hover = None;
             return;
         };
-        if !self.viewport.contains(self.pointer) || self.drag.is_some() {
+        if !self.viewport.contains(self.pointer)
+            || self.drag.is_some()
+            || self.camera_drag.is_some()
+            || self.ui_claims_pointer()
+        {
             self.hover = None;
             return;
         }
@@ -815,10 +1080,6 @@ impl Editor {
             self.mode,
         );
         self.hover = gizmo::hit(&handles, self.pointer);
-    }
-
-    fn pointer_viewport(&self) -> Option<Vec2> {
-        self.viewport.contains(self.pointer).then_some(self.pointer)
     }
 
     fn gizmo_point(&mut self, point: Vec2) {
@@ -846,9 +1107,10 @@ impl Editor {
     }
 
     fn press(&mut self, button: MouseButton, scale: f32) {
-        let Some(point) = self.pointer_viewport() else {
+        if !self.viewport.contains(self.pointer) || self.ui_claims_pointer() {
             return;
-        };
+        }
+        let point = self.pointer;
         match button {
             MouseButton::Left if self.modifiers.alt_key() => {
                 self.camera_drag = Some(MouseButton::Left);
@@ -911,9 +1173,6 @@ impl Editor {
     }
 
     fn moved(&mut self, delta: Vec2) {
-        let Some(point) = self.pointer_viewport() else {
-            return;
-        };
         if let Some(button) = self.camera_drag {
             match button {
                 MouseButton::Middle => self.orbit.pan(delta),
@@ -921,23 +1180,31 @@ impl Editor {
             }
             return;
         }
-        if self.drag.is_some() {
-            self.gizmo_point(point);
+        if self.drag.is_some() && !self.viewport.is_empty() {
+            self.gizmo_point(self.pointer);
         }
     }
 
     fn wheel(&mut self, delta: f32) {
-        if self.pointer_viewport().is_some() {
+        if self.viewport.contains(self.pointer) && !self.ui_claims_pointer() {
             self.orbit.zoom(delta);
         }
     }
 
     fn key(&mut self, key: Key, repeat: bool) {
-        if repeat
-            || self
-                .session
-                .as_ref()
-                .is_some_and(|session| session.ui.claims_key(key))
+        if repeat {
+            return;
+        }
+        if self.dialog.is_some() {
+            if key == Key::Escape {
+                self.apply(Action::CloseDialog);
+            }
+            return;
+        }
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.ui.claims_key(key))
         {
             return;
         }
@@ -947,28 +1214,30 @@ impl Editor {
     fn shortcut(&mut self, key: Key) {
         let command = self.modifiers.control_key() || self.modifiers.super_key();
         match key {
-            Key::Character('s') if command => self.apply(Message::Save),
+            Key::Character('s') if command => self.apply(Action::Save),
+            Key::Character('r') if command => self.apply(Action::Reload),
             Key::Character('z') if command => {
                 if self.modifiers.shift_key() {
-                    self.apply(Message::Redo);
+                    self.apply(Action::Redo);
                 } else {
-                    self.apply(Message::Undo);
+                    self.apply(Action::Undo);
                 }
             }
-            Key::Character('y') if command => self.apply(Message::Redo),
+            Key::Character('y') if command => self.apply(Action::Redo),
             Key::Function(5) => {
                 if self.child.is_some() {
-                    self.apply(Message::Stop);
+                    self.apply(Action::Stop);
                 } else {
-                    self.apply(Message::Play);
+                    self.apply(Action::Play);
                 }
             }
-            Key::Character('w') => self.apply(Message::Mode(Mode::Translate)),
-            Key::Character('e') => self.apply(Message::Mode(Mode::Rotate)),
-            Key::Character('r') => self.apply(Message::Mode(Mode::Scale)),
-            Key::Character('q') => self.apply(Message::ToggleSpace),
-            Key::Character('f') => self.apply(Message::Focus),
-            Key::Delete => self.apply(Message::Remove),
+            Key::Character('w') if !command => self.apply(Action::Mode(Mode::Translate)),
+            Key::Character('e') if !command => self.apply(Action::Mode(Mode::Rotate)),
+            Key::Character('r') if !command => self.apply(Action::Mode(Mode::Scale)),
+            Key::Character('q') if !command => self.apply(Action::ToggleSpace),
+            Key::Character('f') if !command => self.apply(Action::Focus),
+            Key::Delete => self.apply(Action::RemoveSelected),
+            Key::Escape if self.error.is_some() => self.apply(Action::DismissError),
             _ => {}
         }
     }
@@ -1033,6 +1302,7 @@ fn shortcut_key(code: KeyCode) -> Option<Key> {
         KeyCode::KeyY => Key::Character('y'),
         KeyCode::KeyZ => Key::Character('z'),
         KeyCode::Delete => Key::Delete,
+        KeyCode::Escape => Key::Escape,
         KeyCode::F5 => Key::Function(5),
         _ => return None,
     })
@@ -1049,8 +1319,17 @@ impl Handler for Editor {
 
     fn event(&mut self, window: &Window, event: Event) {
         let scale = window.scale_factor() as f32;
+        let viewport_captured = self.drag.is_some() || self.camera_drag.is_some();
         self.handle(&event, scale, window.size());
-        if let Some(session) = &mut self.session {
+        let forward_to_ui = !viewport_captured
+            || matches!(
+                event,
+                Event::Button { pressed: false, .. }
+                    | Event::Focused(false)
+                    | Event::CursorLeft
+                    | Event::Modifiers(_)
+            );
+        if forward_to_ui && let Some(session) = &mut self.session {
             session.ui.input_mut().window(&event, scale);
         }
     }
@@ -1074,6 +1353,16 @@ impl Drop for Editor {
     }
 }
 
+fn path_slot(kind: PathKind) -> usize {
+    match kind {
+        PathKind::Model => 0,
+        PathKind::Prefab => 1,
+        PathKind::Image => 2,
+        PathKind::Sound => 3,
+        PathKind::Panorama => 4,
+    }
+}
+
 fn unique_node(scene: &Scene, name: &str) -> String {
     let mut index = 0usize;
     loop {
@@ -1089,8 +1378,8 @@ fn unique_node(scene: &Scene, name: &str) -> String {
     }
 }
 
-fn model_id(scene: &Scene, path: &str) -> String {
-    let name = Path::new(path)
+fn sanitized_stem(path: &str, fallback: &str) -> String {
+    Path::new(path)
         .file_stem()
         .and_then(|name| name.to_str())
         .map(|name| {
@@ -1105,11 +1394,15 @@ fn model_id(scene: &Scene, path: &str) -> String {
                 .collect::<String>()
         })
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| String::from("model"));
-    unique_asset(scene, "model", &name)
+        .unwrap_or_else(|| String::from(fallback))
 }
 
-fn unique_asset(scene: &Scene, kind: &str, name: &str) -> String {
+fn stem_asset(scene: &Scene, kind: ReferenceKind, path: &str, fallback: &str) -> String {
+    let base = sanitized_stem(path, fallback);
+    unique_asset(scene, kind, &base)
+}
+
+fn unique_asset(scene: &Scene, kind: ReferenceKind, name: &str) -> String {
     let mut index = 0usize;
     loop {
         let candidate = if index == 0 {
@@ -1117,17 +1410,7 @@ fn unique_asset(scene: &Scene, kind: &str, name: &str) -> String {
         } else {
             format!("{name}_{index}")
         };
-        let held = match kind {
-            "mesh" => scene.mesh_index(&candidate).is_some(),
-            "material" => scene.material_index(&candidate).is_some(),
-            "image" => scene.image_index(&candidate).is_some(),
-            "model" => scene.model_index(&candidate).is_some(),
-            "sound" => scene.sound_index(&candidate).is_some(),
-            "environment" => scene.environment_index(&candidate).is_some(),
-            "graph" => scene.graph_index(&candidate).is_some(),
-            other => panic!("the editor names no asset {other}"),
-        };
-        if !held {
+        if !scene.holds_reference(kind, &candidate) {
             return candidate;
         }
         index += 1;
@@ -1277,13 +1560,13 @@ mod tests {
         let before = editor.scene.transform(index).translation;
 
         editor.handle(&button(true), 1.0, SIZE);
-        editor.apply_messages((1..=4).map(|step| Message::Property {
+        editor.apply_actions((1..=4).map(|step| Action::Property {
             target: target.clone(),
             path: String::from("transform.translation.x"),
             value: Value::Number(step as f32),
         }));
         editor.handle(&button(false), 1.0, SIZE);
-        editor.apply_messages(Vec::new());
+        editor.apply_actions(Vec::new());
         assert_eq!(editor.scene.transform(index).translation.x, 4.0);
 
         editor.undo();
@@ -1294,27 +1577,5 @@ mod tests {
         );
         editor.undo();
         assert_eq!(editor.scene.transform(index).translation, before);
-    }
-
-    #[test]
-    fn the_library_keeps_the_paths_its_actions_run() {
-        let mut editor = editor();
-        editor.apply(Message::ImportPath(String::from("models/missing.glb")));
-        assert_eq!(editor.import_path, "models/missing.glb");
-        editor.apply(Message::Import);
-        assert_eq!(
-            editor.import_path, "models/missing.glb",
-            "an import keeps the path it runs",
-        );
-        assert!(editor.error.is_some());
-
-        editor.apply(Message::PrefabPath(String::from("prefabs/missing.toml")));
-        assert_eq!(editor.prefab_path, "prefabs/missing.toml");
-        editor.apply(Message::Instance);
-        assert_eq!(
-            editor.prefab_path, "prefabs/missing.toml",
-            "an instance keeps the path it runs",
-        );
-        assert!(editor.error.is_some());
     }
 }

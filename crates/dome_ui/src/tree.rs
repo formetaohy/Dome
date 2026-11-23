@@ -308,12 +308,19 @@ impl<A> Tree<A> {
         }
         if let Some(edit) = self.nodes[id].runtime.edit.take() {
             let interaction = std::mem::replace(&mut self.nodes[id].interaction, Interaction::None);
-            if let Interaction::Field {
-                commit: Some(commit),
-                ..
-            } = interaction
-            {
-                reconciled.committed.push(commit(edit.text()));
+            match interaction {
+                Interaction::Field {
+                    commit: Some(commit),
+                    ..
+                } => reconciled.committed.push(commit(edit.text())),
+                Interaction::DragValue { action, .. } => {
+                    if let Ok(parsed) = edit.text().trim().parse::<f32>()
+                        && parsed.is_finite()
+                    {
+                        reconciled.committed.push(action(parsed));
+                    }
+                }
+                _ => {}
             }
         }
         let key = self.nodes[id].key;

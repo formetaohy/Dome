@@ -33,13 +33,6 @@ impl Space {
             Self::Local => Self::World,
         }
     }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::World => "World",
-            Self::Local => "Local",
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -58,11 +51,11 @@ impl Axis {
         }
     }
 
-    fn color(self) -> Color {
+    pub fn color(self) -> Color {
         match self {
-            Self::X => Color::new(0.92, 0.28, 0.32, 1.0),
-            Self::Y => Color::new(0.36, 0.86, 0.38, 1.0),
-            Self::Z => Color::new(0.32, 0.56, 0.96, 1.0),
+            Self::X => Color::bytes(255, 110, 118),
+            Self::Y => Color::bytes(109, 224, 142),
+            Self::Z => Color::bytes(116, 178, 255),
         }
     }
 }
@@ -283,7 +276,9 @@ pub fn hit(handles: &[Handle], point: Vec2) -> Option<Grip> {
 }
 
 pub fn paint(handles: &[Handle], hover: Option<Grip>, active: Option<Grip>, painter: &mut Painter) {
+    let mut origin = None;
     for handle in handles {
+        origin = Some(handle.center);
         let color = if Some(handle.grip) == active {
             Color::new(1.0, 0.94, 0.62, 1.0)
         } else if Some(handle.grip) == hover {
@@ -297,26 +292,37 @@ pub fn paint(handles: &[Handle], hover: Option<Grip>, active: Option<Grip>, pain
                 tip,
                 tip_half,
             } => {
-                painter.segment(*start, *tip, HALF * 2.0, color);
+                painter.segment(*start, *tip, HALF * 2.1, color);
                 painter.rect(
-                    Rect::from_center_size(*tip, Vec2::splat(*tip_half * 2.0)),
-                    Corners::all(1.5),
+                    Rect::from_center_size(*tip, Vec2::splat(*tip_half * 2.2)),
+                    Corners::all(3.0),
                     color,
                 );
             }
             Shape::Square { center, half } => {
                 painter.rect(
-                    Rect::from_center_size(*center, Vec2::splat(*half * 2.0)),
-                    Corners::all(1.5),
+                    Rect::from_center_size(*center, Vec2::splat(*half * 2.2)),
+                    Corners::all(3.5),
                     color,
                 );
             }
             Shape::Ring { points } => {
                 for pair in points.windows(2) {
-                    painter.segment(pair[0], pair[1], RING_HALF * 2.0, color);
+                    painter.segment(pair[0], pair[1], RING_HALF * 2.1, color);
                 }
             }
         }
+    }
+    if let Some(center) = origin
+        && !handles
+            .iter()
+            .any(|handle| matches!(handle.grip, Grip::Uniform))
+    {
+        painter.rect(
+            Rect::from_center_size(center, Vec2::splat(7.0)),
+            Corners::capsule(),
+            Color::bytes(236, 240, 248),
+        );
     }
 }
 

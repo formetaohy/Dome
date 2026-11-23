@@ -532,7 +532,10 @@ impl<A: Clone> Ui<A> {
             self.focus = Some(node);
             return;
         }
-        if matches!(self.tree.nodes[node].interaction, Interaction::Field { .. }) {
+        if matches!(
+            self.tree.nodes[node].interaction,
+            Interaction::Field { .. } | Interaction::DragValue { .. }
+        ) {
             if self.edit != Some(node) {
                 self.begin_edit(node, source);
             }
@@ -642,8 +645,19 @@ impl<A: Clone> Ui<A> {
         if self.edit != Some(node) {
             self.finish_edit(Finish::Write);
         }
-        let (value, multiline, select_all) = match &self.tree.nodes[node].content {
-            Content::Field(field) => (field.value.clone(), field.multiline, field.select_all),
+        let (value, multiline, select_all, style) = match &self.tree.nodes[node].content {
+            Content::Field(field) => (
+                field.value.clone(),
+                field.multiline,
+                field.select_all,
+                field.style,
+            ),
+            Content::DragValue(drag) => (
+                format!("{:.*}", drag.decimals, drag.value),
+                false,
+                true,
+                crate::text::TextStyle::new(drag.font, self.theme.palette.on_surface),
+            ),
             _ => return,
         };
         let key = self.tree.nodes[node].key;
@@ -655,17 +669,14 @@ impl<A: Clone> Ui<A> {
         if select_all {
             edit.select_all(self.time);
         } else if source == Source::Pointer {
-            let Content::Field(field) = &self.tree.nodes[node].content else {
-                return;
-            };
             let rect = self.tree.nodes[node].rect;
             let preedit = self.preedit.clone();
             let pointer = self.pointer;
             let caret = crate::widget::field::caret_at(
                 &edit,
                 preedit.as_deref(),
-                field.style,
-                field.multiline,
+                style,
+                multiline,
                 rect,
                 pointer,
                 &mut self.text,
@@ -682,10 +693,14 @@ impl<A: Clone> Ui<A> {
     }
 
     fn edit_press(&mut self, node: NodeId, at: Vec2) {
-        let Content::Field(field) = &self.tree.nodes[node].content else {
-            return;
+        let (style, multiline) = match &self.tree.nodes[node].content {
+            Content::Field(field) => (field.style, field.multiline),
+            Content::DragValue(drag) => (
+                crate::text::TextStyle::new(drag.font, self.theme.palette.on_surface),
+                false,
+            ),
+            _ => return,
         };
-        let (style, multiline) = (field.style, field.multiline);
         let rect = self.tree.nodes[node].rect;
         let extend = self.input.modifiers().shift;
         let time = self.time;
@@ -722,10 +737,14 @@ impl<A: Clone> Ui<A> {
         let Some(node) = self.edit else {
             return;
         };
-        let Content::Field(field) = &self.tree.nodes[node].content else {
-            return;
+        let (style, multiline) = match &self.tree.nodes[node].content {
+            Content::Field(field) => (field.style, field.multiline),
+            Content::DragValue(drag) => (
+                crate::text::TextStyle::new(drag.font, self.theme.palette.on_surface),
+                false,
+            ),
+            _ => return,
         };
-        let (style, multiline) = (field.style, field.multiline);
         let rect = self.tree.nodes[node].rect;
         let time = self.time;
         let preedit = self.preedit.clone();
@@ -808,6 +827,10 @@ impl<A: Clone> Ui<A> {
         self.edit = None;
         self.input.clear_preedit();
         self.touch(node);
+        let current = match &self.tree.nodes[node].content {
+            Content::DragValue(drag) => Some(drag.value),
+            _ => None,
+        };
         let action = match &self.tree.nodes[node].interaction {
             Interaction::Field {
                 commit,
@@ -820,6 +843,16 @@ impl<A: Clone> Ui<A> {
                     .map(|apply| apply(&text)),
                 Finish::Write => commit.as_ref().map(|apply| apply(&text)),
                 Finish::Cancel => cancel.as_ref().map(|apply| apply()),
+            },
+            Interaction::DragValue { action, .. } => match finish {
+                Finish::Submit | Finish::Write => text
+                    .trim()
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|parsed| parsed.is_finite())
+                    .filter(|parsed| current.is_none_or(|held| (*parsed - held).abs() > 1.0e-6))
+                    .map(action),
+                Finish::Cancel => None,
             },
             _ => None,
         };

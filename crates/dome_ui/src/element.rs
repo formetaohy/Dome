@@ -346,8 +346,10 @@ impl<'a, A> Element<'a, A> {
 
     pub fn width(mut self, width: Length) -> Self {
         self.layout.size.width = width;
-        if let Content::Button(button) = &mut self.content {
-            button.width = width;
+        match &mut self.content {
+            Content::Button(button) => button.width = width,
+            Content::DragValue(drag) => drag.width = width,
+            _ => {}
         }
         self
     }
@@ -472,7 +474,31 @@ impl<'a, A> Element<'a, A> {
         match &mut self.content {
             Content::Button(button) => button.corners = Some(corners),
             Content::IconButton(icon) => icon.corners = Some(corners),
+            Content::DragValue(drag) => drag.corners = Some(corners),
             _ => {}
+        }
+        self
+    }
+
+    pub fn filled(mut self, filled: bool) -> Self {
+        match &mut self.content {
+            Content::Button(button) => button.filled = Some(filled),
+            Content::IconButton(icon) => icon.filled = Some(filled),
+            _ => {}
+        }
+        self
+    }
+
+    pub fn accent(mut self, color: crate::color::Color) -> Self {
+        if let Content::DragValue(drag) = &mut self.content {
+            drag.accent = Some(color);
+        }
+        self
+    }
+
+    pub fn unit(mut self, unit: &str) -> Self {
+        if let Content::DragValue(drag) = &mut self.content {
+            drag.unit = (!unit.is_empty()).then(|| unit.to_string());
         }
         self
     }
@@ -563,6 +589,19 @@ impl<'a, A> Element<'a, A> {
         self.interaction = Interaction::Field {
             commit: None,
             submit: Some(Box::new(action)),
+            cancel: None,
+        };
+        self
+    }
+
+    pub fn on_field(
+        mut self,
+        commit: impl Fn(&str) -> A + 'static,
+        submit: impl Fn(&str) -> A + 'static,
+    ) -> Self {
+        self.interaction = Interaction::Field {
+            commit: Some(Box::new(commit)),
+            submit: Some(Box::new(submit)),
             cancel: None,
         };
         self

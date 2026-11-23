@@ -4,6 +4,7 @@ use crate::color::Color;
 use crate::content::{Content, SegmentContent, TabsContent};
 use crate::element::{Element, Layout, Length, Size};
 use crate::geometry::{Corners, Rect};
+use crate::icon::{self, Icon, IconStyle};
 use crate::motion::Motion;
 use crate::node::{Node, Runtime};
 use crate::paint::Painter;
@@ -14,6 +15,7 @@ use super::PaintInfo;
 
 const TABS_HEIGHT: f32 = 32.0;
 const CELL_PAD: f32 = 22.0;
+const ICON_CELL: f32 = 36.0;
 const GROUP_GAP: f32 = 2.0;
 
 pub fn segmented<'a, A>(theme: &Theme, options: &[&str], selected: usize) -> Element<'a, A> {
@@ -22,6 +24,29 @@ pub fn segmented<'a, A>(theme: &Theme, options: &[&str], selected: usize) -> Ele
 
 pub fn segmented_fill<'a, A>(theme: &Theme, options: &[&str], selected: usize) -> Element<'a, A> {
     segmented_core(theme, options, selected, true)
+}
+
+pub fn icon_segmented<'a, A>(
+    theme: &Theme,
+    options: &[(Icon, &str)],
+    selected: usize,
+) -> Element<'a, A> {
+    Element::new(Layout {
+        size: Size::new(Length::Auto, Length::Fixed(theme.metrics.control_height)),
+        ..Layout::row()
+    })
+    .with_content(Content::Segment(SegmentContent {
+        options: Vec::new(),
+        icons: options.iter().map(|(icon, _)| *icon).collect(),
+        tooltips: options
+            .iter()
+            .map(|(_, tooltip)| (*tooltip).to_string())
+            .collect(),
+        selected,
+        fill: false,
+        font: theme.font(Level::Label),
+        width: Length::Auto,
+    }))
 }
 
 fn segmented_core<'a, A>(
@@ -37,6 +62,8 @@ fn segmented_core<'a, A>(
     })
     .with_content(Content::Segment(SegmentContent {
         options: labels(options),
+        icons: Vec::new(),
+        tooltips: Vec::new(),
         selected,
         fill,
         font: theme.font(Level::Label),
@@ -66,7 +93,7 @@ pub(super) fn measure_segment(
     text: &mut crate::text::Text,
     theme: &Theme,
 ) -> Vec2 {
-    let count = segment.options.len();
+    let count = segment_len(segment);
     let gaps = if count > 1 {
         GROUP_GAP * (count - 1) as f32
     } else {
@@ -75,13 +102,25 @@ pub(super) fn measure_segment(
     let total = if segment.fill {
         available.x
     } else {
-        widths(&segment.options, segment.font, text)
-            .iter()
-            .sum::<f32>()
-            + gaps
+        segment_widths(segment, text).iter().sum::<f32>() + gaps
     };
     let _ = &segment.width;
     Vec2::new(total, theme.metrics.control_height)
+}
+
+fn segment_len(segment: &SegmentContent) -> usize {
+    segment.options.len().max(segment.icons.len())
+}
+
+fn segment_widths(segment: &SegmentContent, text: &mut crate::text::Text) -> Vec<f32> {
+    if segment.options.is_empty() {
+        return vec![ICON_CELL; segment.icons.len()];
+    }
+    let extra = if segment.icons.is_empty() { 0.0 } else { 20.0 };
+    widths(&segment.options, segment.font, text)
+        .into_iter()
+        .map(|width| width + extra)
+        .collect()
 }
 
 pub(super) fn measure_tabs(tabs: &TabsContent, available: Vec2) -> Vec2 {
@@ -148,7 +187,7 @@ fn cell_widths(content: &Content, rect: Rect, widths: &[f32]) -> Vec<Rect> {
 
 fn measure_widths(content: &Content, text: &mut crate::text::Text) -> Vec<f32> {
     match content {
-        Content::Segment(segment) => widths(&segment.options, segment.font, text),
+        Content::Segment(segment) => segment_widths(segment, text),
         Content::Tabs(tabs) => widths(&tabs.options, tabs.font, text),
         _ => Vec::new(),
     }
@@ -156,9 +195,7 @@ fn measure_widths(content: &Content, text: &mut crate::text::Text) -> Vec<f32> {
 
 pub(crate) fn selected(content: &Content) -> usize {
     match content {
-        Content::Segment(segment) => segment
-            .selected
-            .min(segment.options.len().saturating_sub(1)),
+        Content::Segment(segment) => segment.selected.min(segment_len(segment).saturating_sub(1)),
         Content::Tabs(tabs) => tabs.selected.min(tabs.options.len().saturating_sub(1)),
         _ => 0,
     }
@@ -166,7 +203,7 @@ pub(crate) fn selected(content: &Content) -> usize {
 
 pub(crate) fn options_len(content: &Content) -> usize {
     match content {
-        Content::Segment(segment) => segment.options.len(),
+        Content::Segment(segment) => segment_len(segment),
         Content::Tabs(tabs) => tabs.options.len(),
         _ => 0,
     }
@@ -308,11 +345,16 @@ pub(super) fn paint_segment(
     let palette = info.theme.palette;
     let metrics = info.theme.metrics;
     let style = TextStyle::new(segment.font, Color::WHITE);
-    let widths = segment
-        .options
-        .iter()
-        .map(|option| painter.measure(option, style).x + CELL_PAD)
-        .collect::<Vec<_>>();
+    let widths = if segment.options.is_empty() {
+        vec![ICON_CELL; segment.icons.len()]
+    } else {
+        let extra = if segment.icons.is_empty() { 0.0 } else { 20.0 };
+        segment
+            .options
+            .iter()
+            .map(|option| painter.measure(option, style).x + CELL_PAD + extra)
+            .collect::<Vec<_>>()
+    };
     let cells = cells(rect, &widths, segment.fill, false);
     let count = cells.len();
     let hovered_index = runtime.thumb as usize;
@@ -373,15 +415,47 @@ pub(super) fn paint_segment(
         } else {
             palette.on_surface_variant
         };
-        if let Some(option) = segment.options.get(index) {
-            painter.text_in(
-                *cell,
-                option,
-                TextStyle::new(style.font, color)
-                    .aligned(Align::Center)
-                    .truncating(),
-                Align::Center,
-            );
+        let icon_style = if active {
+            IconStyle::FILLED
+        } else {
+            IconStyle::REGULAR
+        };
+        match (segment.icons.get(index), segment.options.get(index)) {
+            (Some(symbol), None) => {
+                icon::paint(*symbol, painter, cell.center(), 17.0, color, icon_style);
+            }
+            (Some(symbol), Some(option)) => {
+                let text_w = painter.measure(option, style).x;
+                let total = 15.0 + 5.0 + text_w;
+                let left = cell.center().x - total * 0.5;
+                icon::paint(
+                    *symbol,
+                    painter,
+                    Vec2::new(left + 7.5, cell.center().y),
+                    15.0,
+                    color,
+                    icon_style,
+                );
+                painter.text_in(
+                    Rect::from_min_max(Vec2::new(left + 20.0, cell.min.y), cell.max),
+                    option,
+                    TextStyle::new(style.font, color)
+                        .aligned(Align::Start)
+                        .truncating(),
+                    Align::Center,
+                );
+            }
+            (None, Some(option)) => {
+                painter.text_in(
+                    *cell,
+                    option,
+                    TextStyle::new(style.font, color)
+                        .aligned(Align::Center)
+                        .truncating(),
+                    Align::Center,
+                );
+            }
+            (None, None) => {}
         }
     }
 }

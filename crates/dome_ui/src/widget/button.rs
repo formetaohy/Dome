@@ -41,6 +41,7 @@ pub fn button_width<'a, A>(
         role,
         font: theme.button_font(),
         symbol: None,
+        filled: None,
         inset: padding(theme),
         width,
         height: theme.metrics.control_height,
@@ -82,6 +83,7 @@ pub fn icon_button<'a, A>(symbol: Icon, size: f32, role: Role, tooltip: &str) ->
         size,
         role,
         corners: None,
+        filled: None,
     }))
     .tooltip(tooltip)
 }
@@ -159,13 +161,18 @@ pub(super) fn paint(button: &ButtonContent, painter: &mut Painter, info: &PaintI
             let content_w = icon + 6.0 + text_w;
             let start_x =
                 (body.center().x - content_w * 0.5 + optical).max(body.min.x + button.inset);
+            let icon_style = if button.filled.unwrap_or_else(|| active_role(button.role)) {
+                IconStyle::FILLED
+            } else {
+                IconStyle::REGULAR
+            };
             icon::paint(
                 symbol,
                 painter,
                 Vec2::new(start_x + icon * 0.5, body.center().y),
                 icon,
                 surface.text,
-                IconStyle::REGULAR,
+                icon_style,
             );
             painter.text_in(
                 Rect::from_min_max(
@@ -202,14 +209,26 @@ pub(super) fn paint_icon(content: &IconButtonContent, painter: &mut Painter, inf
     }
     painter.surface(body, surface);
     let optical = (surface.corners.top_left - surface.corners.top_right) * 0.11;
+    let icon_style = if content.filled.unwrap_or_else(|| active_role(content.role)) {
+        IconStyle::FILLED
+    } else {
+        IconStyle::REGULAR
+    };
     icon::paint(
         content.symbol,
         painter,
         body.center() + Vec2::new(optical, 0.0),
         (content.size * 0.55).clamp(14.0, 20.0),
         surface.text,
-        IconStyle::REGULAR,
+        icon_style,
     );
+}
+
+fn active_role(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Filled | Role::PrimaryContainer | Role::Tonal | Role::TertiaryContainer | Role::Error
+    )
 }
 
 fn surface(role: Role, info: &PaintInfo<'_>) -> Surface {

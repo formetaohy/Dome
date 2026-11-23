@@ -88,7 +88,10 @@ pub fn drag_value<'a, A>(theme: &Theme, value: f32, decimals: usize) -> Element<
         value,
         decimals,
         font: theme.font(Level::Monospace),
-        width: 68.0,
+        width: Length::Fixed(68.0),
+        corners: None,
+        accent: None,
+        unit: None,
     }))
 }
 
@@ -132,8 +135,15 @@ pub(super) fn measure_range(range: &RangeSliderContent, available: Vec2) -> Vec2
     Vec2::new(width, 28.0)
 }
 
-pub(super) fn measure_drag(drag: &DragValueContent, theme: &Theme) -> Vec2 {
-    Vec2::new(drag.width, theme.metrics.control_height)
+pub(super) fn measure_drag(drag: &DragValueContent, available: Vec2, theme: &Theme) -> Vec2 {
+    let width = match drag.width {
+        Length::Auto => 68.0,
+        Length::Fill => available.x,
+        Length::Fixed(value) => value,
+        Length::Minimum(minimum) => available.x.max(minimum),
+        Length::Maximum(maximum) => available.x.min(maximum),
+    };
+    Vec2::new(width, theme.metrics.control_height)
 }
 
 pub(crate) fn track(
@@ -464,23 +474,79 @@ pub(super) fn paint_range(
     }
 }
 
-pub(super) fn paint_drag(drag: &DragValueContent, painter: &mut Painter, info: &PaintInfo<'_>) {
-    let state = if info.press > 0.5 {
+pub(super) fn paint_drag(
+    drag: &DragValueContent,
+    runtime: &Runtime,
+    painter: &mut Painter,
+    info: &PaintInfo<'_>,
+) -> Option<Rect> {
+    let state = if !info.enabled {
+        crate::style::State::Disabled
+    } else if runtime.edit.is_some() {
+        crate::style::State::Selected
+    } else if info.press > 0.5 {
         crate::style::State::Pressed
     } else if info.hover > 0.5 {
         crate::style::State::Hover
     } else {
         crate::style::State::Rest
     };
-    let look = info.theme.surface(Role::Field, state);
+    let mut look = info.theme.surface(Role::Field, state);
+    if let Some(corners) = drag.corners {
+        let resolved = corners.resolved(info.rect.size());
+        let pressed = Corners::all(info.theme.metrics.corner_xs).resolved(info.rect.size());
+        look.corners = resolved.lerp(pressed, info.press);
+    }
     painter.surface(info.rect, look);
-    let text = format!("{:.*}", drag.decimals, drag.value);
+    let left_pad = if let Some(accent) = drag.accent {
+        let pill = Rect::from_center_size(
+            Vec2::new(info.rect.min.x + 6.5, info.rect.center().y),
+            Vec2::new(3.0, (info.rect.height() - 14.0).max(8.0)),
+        );
+        painter.rect(
+            pill,
+            Corners::capsule(),
+            accent.with_alpha(if info.enabled { 0.88 } else { 0.35 }),
+        );
+        13.0
+    } else {
+        7.0
+    };
+    let inner = Rect::from_min_max(
+        Vec2::new(info.rect.min.x + left_pad, info.rect.min.y + 4.0),
+        Vec2::new(info.rect.max.x - 7.0, info.rect.max.y - 4.0),
+    );
+    if inner.is_empty() {
+        return None;
+    }
+    if let Some(edit) = &runtime.edit {
+        let clip = painter.clip();
+        painter.push_clip(inner, Corners::ZERO);
+        let caret = super::field::paint_single_line_edit(
+            edit,
+            inner,
+            TextStyle::new(drag.font, look.text),
+            drag.accent.unwrap_or(info.theme.palette.primary),
+            info.preedit,
+            info.time,
+            painter,
+        );
+        painter.pop_clip(clip);
+        return Some(caret);
+    }
+    let text = match &drag.unit {
+        Some(unit) if inner.width() > 54.0 => format!("{:.*}{unit}", drag.decimals, drag.value),
+        _ => format!("{:.*}", drag.decimals, drag.value),
+    };
     painter.text_in(
-        info.rect.shrink2(Vec2::new(8.0, 0.0)),
+        inner,
         &text,
-        TextStyle::new(drag.font, look.text).aligned(Align::End),
+        TextStyle::new(drag.font, look.text)
+            .aligned(Align::End)
+            .truncating(),
         Align::Center,
     );
+    None
 }
 
 pub(super) fn paint_progress(

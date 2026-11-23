@@ -1,17 +1,18 @@
+mod action;
 mod camera;
+mod control;
 mod debug;
 mod default;
+mod dialog;
 mod editor;
 mod gizmo;
-mod hierarchy;
+mod graph;
 mod history;
 mod inspector;
-mod library;
-mod message;
-mod panel;
+mod outliner;
 mod preview;
 mod session;
-mod settings;
-mod shell;
+mod stage;
+mod toolbar;
 
 pub use editor::{EditorConfig, run};

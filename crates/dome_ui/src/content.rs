@@ -147,11 +147,15 @@ impl Content {
                 slider.width,
             ),
             Self::RangeSlider(range) => Geometry::Slider(None, false, range.width),
-            Self::Segment(segment) => {
-                Geometry::Segment(&segment.options, segment.font, segment.width, segment.fill)
-            }
+            Self::Segment(segment) => Geometry::Segment(
+                &segment.options,
+                &segment.icons,
+                segment.font,
+                segment.width,
+                segment.fill,
+            ),
             Self::Tabs(_) => Geometry::Fixed,
-            Self::DragValue(drag) => Geometry::Width(drag.width),
+            Self::DragValue(drag) => Geometry::Span(drag.width),
             Self::Field(_) => Geometry::Fixed,
             Self::MenuRow(_) => Geometry::Fixed,
             Self::ActionRow(_) => Geometry::Fixed,
@@ -175,7 +179,14 @@ pub(crate) enum Geometry<'a> {
     Row(bool),
     Label(&'a str, TypeStyle),
     Slider(Option<&'a str>, bool, crate::element::Length),
-    Segment(&'a [String], TypeStyle, crate::element::Length, bool),
+    Segment(
+        &'a [String],
+        &'a [Icon],
+        TypeStyle,
+        crate::element::Length,
+        bool,
+    ),
+    Span(crate::element::Length),
     Width(f32),
 }
 
@@ -199,6 +210,7 @@ pub struct ButtonContent {
     pub role: Role,
     pub font: TypeStyle,
     pub symbol: Option<Icon>,
+    pub filled: Option<bool>,
     pub inset: f32,
     pub width: crate::element::Length,
     pub height: f32,
@@ -211,6 +223,7 @@ pub struct IconButtonContent {
     pub size: f32,
     pub role: Role,
     pub corners: Option<Corners>,
+    pub filled: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -250,6 +263,8 @@ pub struct RangeSliderContent {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SegmentContent {
     pub options: Vec<String>,
+    pub icons: Vec<Icon>,
+    pub tooltips: Vec<String>,
     pub selected: usize,
     pub fill: bool,
     pub font: TypeStyle,
@@ -268,7 +283,10 @@ pub struct DragValueContent {
     pub value: f32,
     pub decimals: usize,
     pub font: TypeStyle,
-    pub width: f32,
+    pub width: crate::element::Length,
+    pub corners: Option<Corners>,
+    pub accent: Option<Color>,
+    pub unit: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

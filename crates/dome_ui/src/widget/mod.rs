@@ -33,7 +33,7 @@ pub use field::text_field;
 pub use icon::icon;
 pub use label::{badge, caption, color_swatch, labelled, spinner, weak};
 pub use menu::{action_row, disclosure_row, menu_row};
-pub use segment::{segmented, segmented_fill, tabs};
+pub use segment::{icon_segmented, segmented, segmented_fill, tabs};
 pub use slider::{drag_value, gradient_bar, progress, range_slider, slider_readout, slider_sized};
 pub use toggle::{checkbox, toggle, toggle_row};
 
@@ -76,7 +76,7 @@ pub(crate) fn measure(
             None,
         ),
         Content::Tabs(tabs) => (segment::measure_tabs(tabs, available), None),
-        Content::DragValue(drag) => (slider::measure_drag(drag, theme), None),
+        Content::DragValue(drag) => (slider::measure_drag(drag, available, theme), None),
         Content::Field(field) => (field::measure_field(field, layout, available), None),
         Content::Icon(content) => (icon::measure(content), None),
         Content::MenuRow(_) => (Vec2::new(available.x, menu::MENU_ROW), None),
@@ -86,7 +86,19 @@ pub(crate) fn measure(
         Content::Progress(progress) => (Vec2::new(progress.width, 10.0), None),
         Content::GradientBar(bar) => (Vec2::new(available.x, bar.height), None),
         Content::Labelled(_) => (Vec2::new(available.x, 22.0), None),
-        Content::ColorSwatch(swatch) => (Vec2::splat(swatch.size), None),
+        Content::ColorSwatch(swatch) => (
+            Vec2::new(
+                match layout.size.width {
+                    crate::element::Length::Auto => swatch.size,
+                    other => other.resolve(available.x),
+                },
+                match layout.size.height {
+                    crate::element::Length::Auto => swatch.size,
+                    other => other.resolve(available.y),
+                },
+            ),
+            None,
+        ),
         Content::ColorPicker(_) => (color::measure(), None),
         Content::Empty | Content::Canvas | Content::Text(_) => (
             Vec2::new(
@@ -148,10 +160,7 @@ pub(crate) fn paint(
             segment::paint_tabs(tabs, runtime, painter, info);
             None
         }
-        Content::DragValue(drag) => {
-            slider::paint_drag(drag, painter, info);
-            None
-        }
+        Content::DragValue(drag) => slider::paint_drag(drag, runtime, painter, info),
         Content::Field(field) => field::paint_field(field, runtime, painter, info),
         Content::Icon(content) => {
             icon::paint(content, painter, info);
