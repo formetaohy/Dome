@@ -225,7 +225,7 @@ impl<'m> Writer<'m> {
             }
             Type::Atomic(scalar) => format!("atomic_{}", scalar_name(*scalar)),
             Type::Image => "texture2d<float>".to_owned(),
-            Type::DepthImage => "depth2d<float>".to_owned(),
+            Type::DepthImage | Type::SampledDepth => "depth2d<float>".to_owned(),
             Type::Sampler => "sampler".to_owned(),
             Type::ComparisonSampler => "sampler".to_owned(),
             Type::Pointer { .. } => panic!("a Metal shader carries no device pointer type"),
@@ -455,7 +455,7 @@ impl<'m> Writer<'m> {
         let class = match self.module.global(index).space {
             Space::Storage => "buffer",
             Space::UniformConstant => match self.module.ty(self.module.global(index).ty) {
-                Type::Image | Type::DepthImage => "texture",
+                Type::Image | Type::DepthImage | Type::SampledDepth => "texture",
                 Type::Sampler | Type::ComparisonSampler => "sampler",
                 Type::Array { element, .. } => match self.module.ty(*element) {
                     Type::Image | Type::Sampler => "buffer",
@@ -484,7 +484,9 @@ impl<'m> Writer<'m> {
             .take(index as usize)
             .filter(|global| match (global.space, self.module.ty(global.ty)) {
                 (Space::Storage, _) => class == "buffer",
-                (Space::UniformConstant, Type::Image | Type::DepthImage) => class == "texture",
+                (Space::UniformConstant, Type::Image | Type::DepthImage | Type::SampledDepth) => {
+                    class == "texture"
+                }
                 (Space::UniformConstant, Type::Sampler | Type::ComparisonSampler) => {
                     class == "sampler"
                 }
@@ -740,15 +742,24 @@ impl<'m> Writer<'m> {
                 result,
             } => {
                 let target = self.target(*result);
+                let depth = matches!(
+                    self.module.ty(self.module.value_ty(*image)),
+                    Type::SampledDepth
+                );
                 let image = self.value(*image);
                 let sampler = self.value(*sampler);
                 let coordinates = self.value(*coordinates);
-                let text = match level {
+                let sampled = match level {
                     None => format!("{image}.sample({sampler}, {coordinates})"),
                     Some(level) => {
                         let level = self.value(*level);
                         format!("{image}.sample({sampler}, {coordinates}, level({level}))")
                     }
+                };
+                let text = if depth {
+                    format!("float4({sampled})")
+                } else {
+                    sampled
                 };
                 self.out.line(format!("{target} = {text};"));
             }

@@ -248,25 +248,6 @@ record!(TemporalRecord, TEMPORAL, "Temporal" {
     pad0: u32 => U32,
 });
 
-record!(HzbLevelRecord, HZB_LEVEL, "HzbLevel" {
-    offset: u32 => U32,
-    width: u32 => U32,
-    height: u32 => U32,
-    stride: u32 => U32,
-});
-
-record!(HzbStepRecord, HZB_STEP, "HzbStep" {
-    source_width: f32 => F32,
-    source_height: f32 => F32,
-    target_width: f32 => F32,
-    target_height: f32 => F32,
-    vertical: f32 => F32,
-    source_offset: u32 => U32,
-    source_stride: u32 => U32,
-    target_offset: u32 => U32,
-    target_stride: u32 => U32,
-});
-
 record!(LightRecord, LIGHT, "Light" {
     direction: Fvec4 => F32x4,
     radiance: Fvec4 => F32x4,

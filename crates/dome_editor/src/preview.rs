@@ -253,6 +253,22 @@ impl Preview {
         self.debug = debug;
     }
 
+    pub(crate) fn loading(&self) -> bool {
+        self.wanted.is_some()
+            || self.requested.is_some()
+            || self.library.as_ref().is_some_and(Library::loading)
+    }
+
+    pub(crate) fn capturing(&self) -> bool {
+        self.renderer.capturing()
+    }
+
+    pub(crate) fn playing(&self) -> bool {
+        self.world
+            .iter::<dome_animation::AnimationMachine>()
+            .any(|(_, machine)| machine.playing())
+    }
+
     pub(crate) fn render(&mut self, target: &Texture, clear: [f32; 4], highlight: Option<Entity>) {
         let lines = debug::viewport(&self.world, self.debug);
         self.world.insert_resource(lines);

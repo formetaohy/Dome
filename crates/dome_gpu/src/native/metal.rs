@@ -440,6 +440,7 @@ fn claim_group(native: &NativeGroup) {
 
 fn metal_format(format: TextureFormat) -> MTLPixelFormat {
     match format {
+        TextureFormat::R8Unorm => MTLPixelFormat::R8Unorm,
         TextureFormat::Rgba8Unorm => MTLPixelFormat::RGBA8Unorm,
         TextureFormat::Rgba8UnormSrgb => MTLPixelFormat::RGBA8Unorm_sRGB,
         TextureFormat::Bgra8Unorm => MTLPixelFormat::BGRA8Unorm,
@@ -1446,13 +1447,12 @@ impl Device {
                 Command::WriteTexture {
                     texture,
                     level,
+                    region,
                     bytes,
                 } => {
                     let texture = native_texture(texture.native());
-                    let width = (texture.width >> level).max(1);
-                    let height = (texture.height >> level).max(1);
                     let texel = u64::from(texture.format.bytes_per_texel());
-                    let row_bytes = (u64::from(width) * texel).div_ceil(256) * 256;
+                    let row_bytes = (u64::from(region.width) * texel).div_ceil(256) * 256;
                     let (staging, offset) = frame.stage(self, bytes, texel.max(TRANSFER_ALIGNMENT));
                     assert!(
                         offset.is_multiple_of(texel),
@@ -1464,16 +1464,20 @@ impl Device {
                             &staging.raw,
                             offset as usize,
                             row_bytes as usize,
-                            (row_bytes * u64::from(height)) as usize,
+                            (row_bytes * u64::from(region.height)) as usize,
                             MTLSize {
-                                width: width as usize,
-                                height: height as usize,
+                                width: region.width as usize,
+                                height: region.height as usize,
                                 depth: 1,
                             },
                             &texture.raw,
                             0,
                             *level as usize,
-                            MTLOrigin { x: 0, y: 0, z: 0 },
+                            MTLOrigin {
+                                x: region.x as usize,
+                                y: region.y as usize,
+                                z: 0,
+                            },
                         );
                     }
                     blit.endEncoding();

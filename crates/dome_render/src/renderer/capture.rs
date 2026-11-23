@@ -80,6 +80,7 @@ impl Renderer {
             for view in 0..self.captures.view_count() {
                 let group = hzb.cull(
                     &self.cull,
+                    &self.hzb_sampler,
                     self.captures.view(view),
                     instances,
                     self.captures.drawn_view(view),

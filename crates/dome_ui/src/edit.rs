@@ -93,7 +93,20 @@ impl Edit {
     }
 
     pub fn caret_visible(&self, time: f32) -> bool {
-        (time - self.active_at).rem_euclid(BLINK_PERIOD) < BLINK_DUTY
+        self.blink_phase(time) < BLINK_DUTY
+    }
+
+    pub fn blink_remaining(&self, time: f32) -> f32 {
+        let phase = self.blink_phase(time);
+        if phase < BLINK_DUTY {
+            BLINK_DUTY - phase
+        } else {
+            BLINK_PERIOD - phase
+        }
+    }
+
+    fn blink_phase(&self, time: f32) -> f32 {
+        (time - self.active_at).rem_euclid(BLINK_PERIOD)
     }
 
     pub fn composed(&self, preedit: &str) -> String {

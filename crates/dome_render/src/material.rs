@@ -6,6 +6,7 @@ use dome_gpu::{
 use dome_math::Vec3;
 use dome_shader::Fvec4;
 use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
+use std::ops::Range;
 
 const WHITE: [u8; 4] = [255, 255, 255, 255];
 const FLAT_NORMAL: [u8; 4] = [128, 128, 255, 255];
@@ -45,11 +46,14 @@ impl AlphaMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Material(u32);
+pub struct Material {
+    index: u32,
+    generation: u32,
+}
 
 impl Material {
     pub(crate) fn index(self) -> u32 {
-        self.0
+        self.index
     }
 }
 
@@ -211,6 +215,10 @@ pub(crate) struct MaterialLibrary {
     samplers: SamplerTable,
     records: Vec<MaterialRecord>,
     modes: Vec<AlphaMode>,
+    generations: Vec<u32>,
+    occupied: Vec<bool>,
+    free: Vec<u32>,
+    dirty: Option<Range<u32>>,
     white_srgb: Texture,
     white_linear: Texture,
     flat_normal: Texture,
@@ -275,6 +283,10 @@ impl MaterialLibrary {
             samplers,
             records: Vec::new(),
             modes: Vec::new(),
+            generations: Vec::new(),
+            occupied: Vec::new(),
+            free: Vec::new(),
+            dirty: None,
             white_srgb,
             white_linear,
             flat_normal,
@@ -316,36 +328,77 @@ impl MaterialLibrary {
     pub(crate) fn add(&mut self, desc: MaterialDesc) -> Material {
         self.validate(&desc);
         let record = self.record(&desc);
-        let material = Material(self.records.len() as u32);
-        self.modes.push(desc.alpha_mode);
-        self.records.push(record);
-        material
+        let index = match self.free.pop() {
+            Some(index) => {
+                let placeholder = self.records[index as usize];
+                self.release(&placeholder);
+                self.records[index as usize] = record;
+                self.modes[index as usize] = desc.alpha_mode;
+                self.generations[index as usize] += 1;
+                self.occupied[index as usize] = true;
+                index
+            }
+            None => {
+                let index = self.records.len() as u32;
+                self.records.push(record);
+                self.modes.push(desc.alpha_mode);
+                self.generations.push(1);
+                self.occupied.push(true);
+                index
+            }
+        };
+        self.touch(index);
+        Material {
+            index,
+            generation: self.generations[index as usize],
+        }
     }
 
     pub(crate) fn remove(&mut self, material: Material) {
-        let index = material.0 as usize;
-        let previous = *self
-            .records
-            .get(index)
-            .unwrap_or_else(|| panic!("material {} belongs to another renderer", material.0));
+        self.assert_held(material);
+        let previous = self.records[material.index as usize];
         self.release(&previous);
-        self.records[index] = self.record(&MaterialDesc::new(Vec3::ONE));
-        self.modes[index] = AlphaMode::Opaque;
+        let placeholder = self.record(&MaterialDesc::new(Vec3::ONE));
+        self.records[material.index as usize] = placeholder;
+        self.modes[material.index as usize] = AlphaMode::Opaque;
+        self.occupied[material.index as usize] = false;
+        self.free.push(material.index);
+        self.touch(material.index);
     }
 
     pub(crate) fn set(&mut self, material: Material, desc: MaterialDesc) {
         self.validate(&desc);
-        let index = material.0 as usize;
-        assert!(
-            index < self.records.len(),
-            "material {} belongs to another renderer",
-            material.0
-        );
-        let previous = self.records[index];
+        self.assert_held(material);
+        let at = material.index as usize;
+        let previous = self.records[at];
         self.release(&previous);
         let record = self.record(&desc);
-        self.records[index] = record;
-        self.modes[index] = desc.alpha_mode;
+        self.records[at] = record;
+        self.modes[at] = desc.alpha_mode;
+        self.touch(material.index);
+    }
+
+    fn assert_held(&self, material: Material) {
+        assert!(
+            self.occupied
+                .get(material.index as usize)
+                .copied()
+                .unwrap_or(false)
+                && self.generations[material.index as usize] == material.generation,
+            "material {} belongs to another renderer",
+            material.index
+        );
+    }
+
+    fn touch(&mut self, index: u32) {
+        self.dirty = Some(match self.dirty.take() {
+            Some(range) => range.start.min(index)..range.end.max(index + 1),
+            None => index..index + 1,
+        });
+    }
+
+    pub(crate) fn take_dirty(&mut self) -> Option<Range<u32>> {
+        self.dirty.take()
     }
 
     fn validate(&self, desc: &MaterialDesc) {
@@ -458,10 +511,8 @@ impl MaterialLibrary {
     }
 
     pub(crate) fn mode(&self, material: Material) -> AlphaMode {
-        *self
-            .modes
-            .get(material.0 as usize)
-            .expect("a rendered instance names a material this renderer does not hold")
+        self.assert_held(material);
+        self.modes[material.index as usize]
     }
 
     fn binding(&mut self, image: Option<&MaterialImage>, texture: u32, sampler: u32) -> (u32, u32) {
@@ -565,5 +616,38 @@ fn vector(value: Vec3) -> Fvec4 {
         y: value.y,
         z: value.z,
         w: 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AlphaMode, MaterialDesc, MaterialLibrary};
+    use dome_gpu::{GpuContext, GpuRequest};
+    use dome_math::Vec3;
+
+    #[test]
+    fn a_removed_material_hands_the_slot_it_held_back_to_its_successor() {
+        let context = GpuContext::open(&GpuRequest::default())
+            .unwrap_or_else(|error| panic!("no device reuses material slots: {error}"));
+        let mut library = MaterialLibrary::new(context.device(), context.queue());
+        let first = library.add(MaterialDesc::new(Vec3::ONE));
+        library.add(MaterialDesc::new(Vec3::ZERO).alpha_mode(AlphaMode::Blend));
+        library.remove(first);
+        let again = library.add(MaterialDesc::new(Vec3::ZERO).alpha_mode(AlphaMode::Mask));
+        assert_eq!(
+            again.index(),
+            first.index(),
+            "a removed material hands its slot back to its successor",
+        );
+        assert_ne!(
+            again, first,
+            "the slot it hands back carries a new identity"
+        );
+        assert_eq!(
+            library.records().len(),
+            2,
+            "reusing a slot leaves the record table the length it grew to",
+        );
+        assert_eq!(library.mode(again), AlphaMode::Mask);
     }
 }

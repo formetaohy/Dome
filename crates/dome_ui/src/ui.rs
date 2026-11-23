@@ -347,7 +347,7 @@ impl<A: Clone> Ui<A> {
         target: &Texture,
         scene: Option<&Texture>,
     ) {
-        self.textures.refresh(&self.text);
+        self.textures.refresh(&mut self.text, submission);
         let layers = [
             &self.layers[Layer::Content.index()],
             &self.layers[Layer::Chrome.index()],

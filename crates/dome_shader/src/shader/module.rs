@@ -470,6 +470,10 @@ impl Module {
         self.intern(Type::DepthImage)
     }
 
+    pub fn sampled_depth(&mut self) -> TypeId {
+        self.intern(Type::SampledDepth)
+    }
+
     pub fn sampler(&mut self) -> TypeId {
         self.intern(Type::Sampler)
     }
@@ -519,7 +523,11 @@ impl Module {
             Type::Struct { span, .. } => *span,
             Type::Atomic(scalar) => scalar.bytes(),
             Type::Pointer { .. } => Scalar::U32.bytes(),
-            Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler => {
+            Type::Image
+            | Type::DepthImage
+            | Type::SampledDepth
+            | Type::Sampler
+            | Type::ComparisonSampler => {
                 panic!("{} occupies no storage", element_name(self.ty(ty)))
             }
             Type::CooperativeMatrix { .. } => {
@@ -549,7 +557,11 @@ impl Module {
                 .unwrap_or(1),
             Type::Atomic(scalar) => scalar.bytes(),
             Type::Pointer { .. } => Scalar::U32.bytes(),
-            Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler => 1,
+            Type::Image
+            | Type::DepthImage
+            | Type::SampledDepth
+            | Type::Sampler
+            | Type::ComparisonSampler => 1,
             Type::CooperativeMatrix { .. } => 1,
             Type::Block { element, .. } => self.alignment(*element),
         }
@@ -659,7 +671,8 @@ pub fn element_name(ty: &Type) -> String {
         Type::Block { name, .. } => format!("the storage block {name}"),
         Type::Atomic(scalar) => format!("atomic {}", scalar.name()),
         Type::Image => "a sampled image".to_owned(),
-        Type::DepthImage => "a sampled depth image".to_owned(),
+        Type::DepthImage => "a compared depth image".to_owned(),
+        Type::SampledDepth => "a sampled depth image".to_owned(),
         Type::Sampler => "a sampler".to_owned(),
         Type::ComparisonSampler => "a comparison sampler".to_owned(),
         Type::Pointer { space, .. } => format!("a {} pointer", space.name()),

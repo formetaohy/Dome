@@ -1,6 +1,6 @@
 use dome_gpu::{
-    AddressMode, Device, Filter, Queue, ResourceId, Sampler, SamplerDesc, SamplerTable, Texture,
-    TextureFormat, TextureTable, TextureUsages,
+    AddressMode, Device, Filter, Queue, ResourceId, Sampler, SamplerDesc, SamplerTable, Submission,
+    Texture, TextureFormat, TextureRegion, TextureTable, TextureUsages,
 };
 use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use dome_text::Text;
@@ -36,7 +36,6 @@ struct Named {
 
 pub(crate) struct Textures {
     device: Device,
-    queue: Queue,
     table: TextureTable,
     samplers: SamplerTable,
     white: Texture,
@@ -73,7 +72,6 @@ impl Textures {
         samplers.add(&Sampler::new(device, NEAREST));
         Self {
             device: device.clone(),
-            queue: queue.clone(),
             table,
             samplers,
             white: white.clone(),
@@ -87,29 +85,46 @@ impl Textures {
         }
     }
 
-    pub(crate) fn refresh(&mut self, text: &Text) {
+    pub(crate) fn refresh(&mut self, text: &mut Text, submission: &mut Submission) {
         let revision = text.atlas().revision();
         if self.atlas_revision == Some(revision) {
             return;
         }
         let size = text.atlas().size();
-        let covered = atlas_pixels(text);
         if self.atlas.as_ref().is_some_and(|held| held.width() == size) {
-            self.atlas
-                .as_ref()
-                .expect("a held atlas names its texture")
-                .write(&self.queue, &covered);
+            let regions = text.atlas_mut().drain();
+            let atlas = text.atlas();
+            let pixels = atlas.pixels();
+            let texture = self.atlas.as_ref().expect("a held atlas names its texture");
+            for region in regions {
+                let offset = (region.y * size + region.x) as usize;
+                submission.write_texture_region(
+                    texture,
+                    0,
+                    TextureRegion::new(region.x, region.y, region.width, region.height),
+                    u64::from(size),
+                    &pixels[offset..],
+                );
+            }
         } else {
+            let atlas = text.atlas();
             let texture = Texture::new(
                 &self.device,
                 "dome ui atlas",
                 size,
                 size,
                 1,
-                TextureFormat::Rgba8Unorm,
+                TextureFormat::R8Unorm,
                 TextureUsages::SAMPLED | TextureUsages::COPY_DST,
             );
-            texture.write(&self.queue, &covered);
+            submission.write_texture_region(
+                &texture,
+                0,
+                TextureRegion::new(0, 0, size, size),
+                u64::from(size),
+                atlas.pixels(),
+            );
+            let _ = text.atlas_mut().drain();
             self.table.set(self.atlas_index, &texture);
             self.atlas = Some(texture);
             self.generation = self.generation.wrapping_add(1);
@@ -215,19 +230,4 @@ impl Textures {
     pub(crate) fn samplers(&self) -> &SamplerTable {
         &self.samplers
     }
-}
-
-fn atlas_pixels(text: &Text) -> Vec<u8> {
-    let atlas = text.atlas();
-    let coverage = atlas.pixels();
-    let mut pixels = vec![255u8; (atlas.size() * atlas.size() * 4) as usize];
-    for (target, alpha) in pixels
-        .as_chunks_mut::<4>()
-        .0
-        .iter_mut()
-        .zip(coverage.iter())
-    {
-        target[3] = *alpha;
-    }
-    pixels
 }

@@ -13,7 +13,7 @@ mod resource;
 
 pub use resource::{
     AtomicU32, ComparisonSampler, Depth2D, Fvec2, Fvec4, In, Out, Position, Read, ReadWrite,
-    Sampler, SamplerTable, Texture2D, TextureTable, Uvec3, Uvec4, Workgroup,
+    SampledDepth, Sampler, SamplerTable, Texture2D, TextureTable, Uvec3, Uvec4, Workgroup,
 };
 
 pub struct Compiler {
@@ -50,6 +50,7 @@ impl Compiler {
         }
         scalars.insert("Texture2D".to_owned(), module.image());
         scalars.insert("Depth2D".to_owned(), module.depth_image());
+        scalars.insert("SampledDepth".to_owned(), module.sampled_depth());
         scalars.insert("Sampler".to_owned(), module.sampler());
         scalars.insert("ComparisonSampler".to_owned(), module.comparison_sampler());
         Self {
@@ -159,6 +160,11 @@ impl Compiler {
         self.uniform_constant(name, ty, spec);
     }
 
+    pub fn sampled_depth(&mut self, name: &str, spec: BindingSpec) {
+        let ty = self.ty("SampledDepth");
+        self.uniform_constant(name, ty, spec);
+    }
+
     pub fn sampler(&mut self, name: &str, spec: BindingSpec) {
         let ty = self.ty("Sampler");
         self.uniform_constant(name, ty, spec);
@@ -203,6 +209,7 @@ impl Compiler {
                 crate::shader::BindingKind::SampledImage
                     | crate::shader::BindingKind::Sampler
                     | crate::shader::BindingKind::DepthImage
+                    | crate::shader::BindingKind::SampledDepth
                     | crate::shader::BindingKind::ComparisonSampler
             ),
             "a uniform constant {name} reads a texture or a sampler"
@@ -222,6 +229,7 @@ impl Compiler {
                 BindingKind::TableStorage => Access::Table,
                 BindingKind::SampledImage
                 | BindingKind::DepthImage
+                | BindingKind::SampledDepth
                 | BindingKind::Sampler
                 | BindingKind::ComparisonSampler
                 | BindingKind::SampledImageTable

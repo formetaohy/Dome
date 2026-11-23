@@ -1123,9 +1123,6 @@ mod selection {
 #[dome_shader::graphics]
 mod depth {
     #[binding]
-    fn view(view: Read<ViewRecord>) {}
-
-    #[binding]
     fn palette(palette: Read<JointRecord>) {}
 
     #[binding]
@@ -1142,7 +1139,6 @@ mod depth {
         drawn: Read<DrawRecord>,
         vertices: Read<f32>,
         position: Out<Position>,
-        world: Out<Fvec4>,
         surface: Out<Fvec4>,
     ) {
         let held = drawn[instance];
@@ -1152,12 +1148,6 @@ mod depth {
             vertices[base + 1u32],
             vertices[base + 2u32],
             1.0,
-        );
-        let shaped = fvec4(
-            vertices[base + 6u32],
-            vertices[base + 7u32],
-            held.material as f32,
-            0.0,
         );
         if held.joints > 0u32 {
             let skin = skins[vertex];
@@ -1173,41 +1163,31 @@ mod depth {
                 + deformed(fourth.col0, fourth.col1, fourth.col2, fourth.col3, rest)
                     * skin.weights.w;
             let local = fvec4(place.x, place.y, place.z, 1.0);
-            let moved = held.model0 * local.x
-                + held.model1 * local.y
-                + held.model2 * local.z
-                + held.model3 * local.w;
-            let projected = held.clip0 * local.x
+            position = held.clip0 * local.x
                 + held.clip1 * local.y
                 + held.clip2 * local.z
                 + held.clip3 * local.w;
-            position = projected;
-            world = moved;
         } else {
-            let moved = held.model0 * rest.x
-                + held.model1 * rest.y
-                + held.model2 * rest.z
-                + held.model3 * rest.w;
-            let projected = held.clip0 * rest.x
+            position = held.clip0 * rest.x
                 + held.clip1 * rest.y
                 + held.clip2 * rest.z
                 + held.clip3 * rest.w;
-            position = projected;
-            world = moved;
         }
-        surface = shaped;
+        surface = fvec4(
+            vertices[base + 6u32],
+            vertices[base + 7u32],
+            held.material as f32,
+            0.0,
+        );
     }
 
     #[fragment]
     fn fragment(
-        space: In<Fvec4>,
         shaped: In<Fvec4>,
         materials: Read<MaterialRecord>,
         textures: TextureTable,
         samplers: SamplerTable,
-        target: Out<Fvec4>,
     ) {
-        let placed = space;
         let shape = shaped;
         let material = shape.z as u32;
         let entry = materials[material];
@@ -1221,16 +1201,6 @@ mod depth {
                 discard();
             }
         }
-        let camera = view[0u32];
-        let reach = (placed.x - camera.eye.x) * camera.forward.x
-            + (placed.y - camera.eye.y) * camera.forward.y
-            + (placed.z - camera.eye.z) * camera.forward.z;
-        target = fvec4(
-            (reach - camera.near) / (camera.far - camera.near),
-            0.0,
-            0.0,
-            1.0,
-        );
     }
 }
 pub(crate) fn instancing() -> GraphicsProgram {

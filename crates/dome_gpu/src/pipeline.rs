@@ -426,6 +426,21 @@ fn bounded(
                     );
                     BoundResource::Texture(texture.clone())
                 }
+                (BindingKind::SampledDepth, Resource::Texture(texture)) => {
+                    assert!(
+                        texture.device().same(device),
+                        "a bind group cannot reference a different device"
+                    );
+                    assert!(
+                        texture.usages().contains(TextureUsages::SAMPLED),
+                        "a sampled depth binding requires a sampled texture"
+                    );
+                    assert!(
+                        texture.format().is_depth(),
+                        "a sampled depth binding requires a depth texture"
+                    );
+                    BoundResource::Texture(texture.clone())
+                }
                 (BindingKind::Sampler, Resource::Sampler(sampler)) => {
                     assert!(
                         sampler.device().same(device),
@@ -477,6 +492,7 @@ fn bounded(
                     match kind {
                         BindingKind::SampledImage => "sampled image",
                         BindingKind::DepthImage => "depth image",
+                        BindingKind::SampledDepth => "sampled depth image",
                         BindingKind::Sampler => "sampler",
                         BindingKind::ComparisonSampler => "comparison sampler",
                         BindingKind::SampledImageTable => "sampled image table",

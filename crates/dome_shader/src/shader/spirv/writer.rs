@@ -30,6 +30,7 @@ pub(crate) struct Writer<'m> {
     pub(crate) function_ids: Vec<u32>,
     pub(crate) globals: Vec<Global>,
     blocks: HashMap<TypeId, (u32, u32)>,
+    images: HashMap<u32, u32>,
     sampled_images: HashMap<u32, u32>,
     sampler: Option<u32>,
     builtins: BTreeMap<u32, u32>,
@@ -69,6 +70,7 @@ impl<'m> Writer<'m> {
             function_ids: Vec::new(),
             globals: Vec::new(),
             blocks: HashMap::new(),
+            images: HashMap::new(),
             sampled_images: HashMap::new(),
             sampler: None,
             builtins: BTreeMap::new(),
@@ -189,7 +191,7 @@ impl<'m> Writer<'m> {
                 id
             }
             Type::Atomic(scalar) => self.scalar_type(scalar),
-            Type::Image => self.image_type(0),
+            Type::Image | Type::SampledDepth => self.image_type(0),
             Type::DepthImage => self.image_type(1),
             Type::Sampler | Type::ComparisonSampler => self.sampler_type(),
             Type::Pointer { space, base } => {
@@ -252,6 +254,9 @@ impl<'m> Writer<'m> {
     }
 
     fn image_type(&mut self, depth: u32) -> u32 {
+        if let Some(id) = self.images.get(&depth) {
+            return *id;
+        }
         let component = self.scalar_type(Scalar::F32);
         let id = self.id();
         self.declare(
@@ -264,6 +269,7 @@ impl<'m> Writer<'m> {
                 .word(1u32)
                 .word(image_format::UNKNOWN),
         );
+        self.images.insert(depth, id);
         id
     }
 

@@ -93,6 +93,7 @@ pub enum Type {
     Atomic(Scalar),
     Image,
     DepthImage,
+    SampledDepth,
     Sampler,
     ComparisonSampler,
     Pointer {

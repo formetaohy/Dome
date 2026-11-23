@@ -120,7 +120,6 @@ pub struct Renderer {
     meshes: MeshLibrary,
     materials: MaterialLibrary,
     material_records: Growing,
-    materials_dirty: bool,
     shade: BindGroup,
     transparent_shade: BindGroup,
     shadow_map: Texture,
@@ -245,10 +244,9 @@ impl Renderer {
             program::shadowing(),
             PipelineState::DEPTH_WRITE,
         );
-        let depth = GraphicsPipeline::new_depth(
+        let depth = GraphicsPipeline::new_depth_only(
             &device,
             program::depth_prepass(),
-            TextureFormat::R32Float,
             PipelineState::DEPTH_WRITE,
         );
         let hzb_base = GraphicsPipeline::new(
@@ -361,7 +359,6 @@ impl Renderer {
             meshes,
             materials,
             material_records: Growing::new(&device, "dome material records", storage),
-            materials_dirty: true,
             shade,
             transparent_shade,
             shadow_map,
@@ -443,7 +440,7 @@ impl Renderer {
     }
 
     pub fn remove_mesh(&mut self, mesh: Mesh) {
-        self.meshes.remove(&self.queue, mesh);
+        self.meshes.remove(mesh);
         self.pick_frame = None;
     }
 
@@ -529,19 +526,15 @@ impl Renderer {
     }
 
     pub fn material(&mut self, desc: MaterialDesc) -> Material {
-        let material = self.materials.add(desc);
-        self.materials_changed();
-        material
+        self.materials.add(desc)
     }
 
     pub fn update_material(&mut self, material: Material, desc: MaterialDesc) {
         self.materials.set(material, desc);
-        self.materials_changed();
     }
 
     pub fn remove_material(&mut self, material: Material) {
         self.materials.remove(material);
-        self.materials_changed();
     }
 
     fn scene_depth(&mut self, width: u32, height: u32) -> Texture {
@@ -564,25 +557,28 @@ impl Renderer {
         depth
     }
 
-    fn materials_changed(&mut self) {
-        self.materials_dirty = true;
-    }
-
     fn flush_materials(&mut self) {
-        if !self.materials_dirty {
+        let Some(dirty) = self.materials.take_dirty() else {
             return;
-        }
+        };
         let records = self.materials.records();
         if records.is_empty() {
-            self.materials_dirty = false;
             return;
         }
-        self.material_records
-            .fit(&self.device, records.len() as u64 * MATERIAL_BYTES);
-        self.material_records
-            .buffer()
-            .write(&self.queue, bytemuck::cast_slice(records));
-        self.materials_dirty = false;
+        if self
+            .material_records
+            .fit(&self.device, records.len() as u64 * MATERIAL_BYTES)
+        {
+            self.material_records
+                .buffer()
+                .write(&self.queue, bytemuck::cast_slice(records));
+            return;
+        }
+        self.material_records.buffer().write_at(
+            &self.queue,
+            u64::from(dirty.start) * MATERIAL_BYTES,
+            bytemuck::cast_slice(&records[dirty.start as usize..dirty.end as usize]),
+        );
     }
 
     pub fn render(
@@ -877,6 +873,10 @@ impl Renderer {
     pub fn take_captures(&mut self) -> Vec<Capture> {
         self.settle_captures();
         self.captures.take()
+    }
+
+    pub fn capturing(&self) -> bool {
+        self.captures.pending().is_some()
     }
 
     pub fn pick(&mut self, point: Vec2) -> Option<Entity> {

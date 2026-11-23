@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TextureFormat {
+    R8Unorm,
     Rgba8Unorm,
     Rgba8UnormSrgb,
     Bgra8Unorm,
@@ -14,6 +15,7 @@ pub enum TextureFormat {
 impl TextureFormat {
     pub const fn bytes_per_texel(self) -> u32 {
         match self {
+            Self::R8Unorm => 1,
             Self::Rgba8Unorm
             | Self::Rgba8UnormSrgb
             | Self::Bgra8Unorm
@@ -33,6 +35,40 @@ impl TextureFormat {
 }
 
 const MAX_MIP_LEVELS: u32 = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextureRegion {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl TextureRegion {
+    pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+        assert!(
+            width > 0 && height > 0,
+            "a {width} by {height} texture region holds no texel"
+        );
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub(crate) fn assert_within(self, width: u32, height: u32) {
+        assert!(
+            self.x + self.width <= width && self.y + self.height <= height,
+            "the region {} by {} at {} by {} lies outside a {width} by {height} texture",
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+        );
+    }
+}
 
 struct TextureState {
     native: NativeTexture,
@@ -177,6 +213,18 @@ impl Texture {
             self.state.mip_levels,
         );
         self.write_levels(queue, &[pixels]);
+    }
+
+    pub fn write_region(
+        &self,
+        queue: &Queue,
+        region: TextureRegion,
+        row_pitch: u64,
+        pixels: &[u8],
+    ) {
+        let mut submission = Submission::new(self.device(), "dome texture region write");
+        submission.write_texture_region(self, 0, region, row_pitch, pixels);
+        submission.submit(queue);
     }
 
     pub fn write_levels(&self, queue: &Queue, levels: &[&[u8]]) {

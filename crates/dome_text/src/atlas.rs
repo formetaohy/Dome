@@ -16,8 +16,6 @@ pub struct GlyphKey {
     grade: i16,
     fill: u16,
     hint: bool,
-    subpixel_x: u8,
-    subpixel_y: u8,
 }
 
 impl GlyphKey {
@@ -38,24 +36,16 @@ impl GlyphKey {
             grade,
             fill,
             hint: style.hint,
-            subpixel_x: 0,
-            subpixel_y: 0,
         }
-    }
-
-    fn with_subpixel(mut self, x: u8, y: u8) -> Self {
-        self.subpixel_x = x;
-        self.subpixel_y = y;
-        self
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct GlyphRequest {
     pub face: usize,
     pub id: u16,
     pub style: GlyphStyle,
     pub pixels_per_point: f32,
-    pub position: (f32, f32),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -65,6 +55,32 @@ pub struct GlyphSlot {
     pub top: i32,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Region {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Region {
+    fn union(self, other: Self) -> Self {
+        let x = self.x.min(other.x);
+        let y = self.y.min(other.y);
+        Self {
+            x,
+            y,
+            width: (self.x + self.width).max(other.x + other.width) - x,
+            height: (self.y + self.height).max(other.y + other.height) - y,
+        }
+    }
+
+    fn joins(self, other: Self) -> bool {
+        let paired = self.y < other.y + other.height && other.y < self.y + self.height;
+        paired && self.x <= other.x + other.width && other.x <= self.x + self.width
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -78,6 +94,7 @@ pub struct Atlas {
     pixels: Vec<u8>,
     shelves: Vec<Shelf>,
     slots: HashMap<GlyphKey, Option<GlyphSlot>>,
+    dirty: Vec<Region>,
     revision: u64,
     exhausted: bool,
 }
@@ -101,6 +118,12 @@ impl Atlas {
             pixels: vec![0u8; (SIZE * SIZE) as usize],
             shelves: Vec::new(),
             slots: HashMap::new(),
+            dirty: vec![Region {
+                x: 0,
+                y: 0,
+                width: SIZE,
+                height: SIZE,
+            }],
             revision: 0,
             exhausted: false,
         }
@@ -122,11 +145,22 @@ impl Atlas {
         self.exhausted
     }
 
+    pub fn drain(&mut self) -> Vec<Region> {
+        std::mem::take(&mut self.dirty)
+    }
+
     pub fn reset(&mut self) {
         self.pixels.fill(0);
         self.shelves.clear();
         self.slots.clear();
         self.exhausted = false;
+        self.dirty.clear();
+        self.dirty.push(Region {
+            x: 0,
+            y: 0,
+            width: SIZE,
+            height: SIZE,
+        });
         self.touch();
     }
 
@@ -134,17 +168,12 @@ impl Atlas {
         if self.exhausted {
             return Slot::Full;
         }
-        let fraction_x = request.position.0.rem_euclid(1.0);
-        let fraction_y = request.position.1.rem_euclid(1.0);
-        let quantized_x = ((fraction_x * 4.0).round() as u8).min(3);
-        let quantized_y = ((fraction_y * 4.0).round() as u8).min(3);
         let key = GlyphKey::new(
             request.face,
             request.id,
             request.style,
             request.pixels_per_point,
-        )
-        .with_subpixel(quantized_x, quantized_y);
+        );
         if let Some(held) = self.slots.get(&key) {
             return held.map_or(Slot::Missing, Slot::Ready);
         }
@@ -153,7 +182,7 @@ impl Atlas {
             request.id,
             request.style,
             request.pixels_per_point,
-            [quantized_x as f32 / 4.0, quantized_y as f32 / 4.0],
+            [0.0, 0.0],
         ) else {
             self.slots.insert(key, None);
             return Slot::Missing;
@@ -179,6 +208,12 @@ impl Atlas {
             self.pixels[destination..destination + raster.width as usize]
                 .copy_from_slice(&raster.data[source..source + raster.width as usize]);
         }
+        self.mark(Region {
+            x,
+            y,
+            width,
+            height,
+        });
         self.touch();
         Some(GlyphSlot {
             uv: [
@@ -217,6 +252,20 @@ impl Atlas {
         Some((0, top))
     }
 
+    fn mark(&mut self, region: Region) {
+        let mut held = region;
+        let mut at = 0;
+        while at < self.dirty.len() {
+            if self.dirty[at].joins(held) {
+                held = held.union(self.dirty.swap_remove(at));
+                at = 0;
+            } else {
+                at += 1;
+            }
+        }
+        self.dirty.push(held);
+    }
+
     fn touch(&mut self) {
         self.revision = self
             .revision
@@ -224,3 +273,8 @@ impl Atlas {
             .expect("an atlas revision fits its counter");
     }
 }
+
+const _: () = assert!(
+    SIZE.is_power_of_two(),
+    "an atlas row of a power of two texels keeps every glyph upload aligned",
+);

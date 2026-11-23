@@ -26,6 +26,7 @@ use crate::session::Session;
 use crate::stage::{self, State};
 
 const SCENE_CLEAR: [f32; 4] = [0.035, 0.043, 0.063, 1.0];
+const WATCH_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct EditorConfig {
     pub window: WindowConfig,
@@ -99,6 +100,9 @@ pub struct Editor {
     hover: Option<Grip>,
     viewport_texture: Option<dome_gpu::Texture>,
     ime: bool,
+    redraw: bool,
+    ui_at: Option<Instant>,
+    watch_at: Instant,
 }
 
 impl Editor {
@@ -153,6 +157,9 @@ impl Editor {
             hover: None,
             viewport_texture: None,
             ime: false,
+            redraw: true,
+            ui_at: None,
+            watch_at: Instant::now(),
         }
     }
 
@@ -281,15 +288,15 @@ impl Editor {
         }
     }
 
-    fn reload_if_changed(&mut self) {
+    fn reload_if_changed(&mut self) -> bool {
         let Some(change) = self.watch.changed() else {
-            return;
+            return false;
         };
         if change.scene {
             if self.dirty {
                 self.conflict = true;
                 self.refresh_preview();
-                return;
+                return true;
             }
             let registry = self.scene.schema_arc();
             self.finish_drag();
@@ -314,6 +321,7 @@ impl Editor {
             self.refresh_preview();
         }
         self.rewatch();
+        true
     }
 
     fn rewatch(&mut self) {
@@ -472,7 +480,7 @@ impl Editor {
         }
     }
 
-    fn poll(&mut self) {
+    fn poll(&mut self) -> bool {
         let exited = self
             .child
             .as_mut()
@@ -480,6 +488,7 @@ impl Editor {
         if exited {
             self.child = None;
         }
+        exited
     }
 
     fn parent_for_insert(&self) -> Option<String> {
@@ -985,33 +994,49 @@ impl Editor {
     }
 
     fn frame(&mut self, window: &Window, real: Duration) -> Flow {
-        self.poll();
-        self.reload_if_changed();
+        let now = Instant::now();
+        let mut redraw = std::mem::take(&mut self.redraw) || self.ui_at.is_some_and(|at| at <= now);
+        if now >= self.watch_at {
+            self.watch_at = now + WATCH_INTERVAL;
+            redraw |= self.reload_if_changed();
+            redraw |= self.poll();
+        }
         let (width, height) = window.size();
         if window.is_minimized() || width == 0 || height == 0 {
-            return Flow::Continue;
+            return Flow::Idle;
         }
         let scale = window.scale_factor() as f32;
         let logical = Vec2::new(width as f32 / scale, height as f32 / scale);
         let time = self.origin.elapsed().as_secs_f64();
-        let (actions, asset_error) = {
+        let asset_error = {
             let Some(session) = self.session.as_mut() else {
-                return Flow::Continue;
+                return Flow::Idle;
             };
-            let asset_error = session
-                .preview
-                .poll()
+            let refresh = session.preview.poll();
+            redraw |= refresh.is_some();
+            refresh
                 .filter(|refresh| !refresh.errors.is_empty())
-                .map(|refresh| refresh.message());
-            session.register_textures(&self.scene);
-            session.preview.advance(real);
-            (session.ui.update(logical, scale, time), asset_error)
+                .map(|refresh| refresh.message())
         };
-        self.apply_actions(actions);
         if let Some(error) = asset_error {
             self.error = Some(error);
         }
         self.sync_title(window);
+        let busy = self.session.as_ref().is_some_and(|session| {
+            session.preview.loading() || session.preview.capturing() || session.preview.playing()
+        });
+        if !redraw && !busy {
+            return self.idle();
+        }
+        let actions = {
+            let Some(session) = self.session.as_mut() else {
+                return Flow::Idle;
+            };
+            session.register_textures(&self.scene);
+            session.preview.advance(real);
+            session.ui.update(logical, scale, time)
+        };
+        self.apply_actions(actions);
 
         let camera = self.orbit.view();
         let origin = self.selection_origin();
@@ -1046,7 +1071,7 @@ impl Editor {
 
         let viewport = {
             let Some(session) = self.session.as_mut() else {
-                return Flow::Continue;
+                return Flow::Idle;
             };
             let element = {
                 let mut ctx = session.ui.build();
@@ -1057,7 +1082,13 @@ impl Editor {
         };
         self.viewport = viewport;
         if viewport.is_empty() {
-            return Flow::Continue;
+            let wake = self
+                .session
+                .as_mut()
+                .expect("a drawn editor holds its session")
+                .ui
+                .finish();
+            return self.pace(wake, busy);
         }
 
         let texture_width = (viewport.width() * scale).round().max(1.0) as u32;
@@ -1095,13 +1126,15 @@ impl Editor {
             session.surface.resize(width, height);
         }
         let Some(frame) = session.surface.acquire() else {
-            return Flow::Continue;
+            let wake = session.ui.finish();
+            return self.pace(wake, busy);
         };
         let Session { context, ui, .. } = session;
         let mut submission = Submission::new(context.device(), "dome editor");
         ui.render(&mut submission, frame.texture(), Some(scene));
         submission.present(frame);
         submission.submit(context.queue());
+        let wake = ui.finish();
         let caret = ui.edit_caret();
         let editing = ui.editing();
         if editing != self.ime {
@@ -1116,7 +1149,25 @@ impl Editor {
                 f64::from(caret.height()),
             );
         }
-        Flow::Continue
+        self.pace(wake, busy)
+    }
+
+    fn idle(&self) -> Flow {
+        let now = Instant::now();
+        let deadline = self.ui_at.map_or(self.watch_at, |at| at.min(self.watch_at));
+        Flow::Wait(deadline.saturating_duration_since(now))
+    }
+
+    fn pace(&mut self, wake: Option<Duration>, busy: bool) -> Flow {
+        let continuous = busy || wake.is_some_and(|duration| duration.is_zero());
+        self.ui_at = match wake {
+            Some(duration) if !duration.is_zero() => Some(Instant::now() + duration),
+            _ => None,
+        };
+        if continuous {
+            return Flow::Continuous;
+        }
+        self.idle()
     }
 
     fn ui_claims_pointer(&self) -> bool {
@@ -1389,6 +1440,7 @@ impl Handler for Editor {
     }
 
     fn event(&mut self, window: &Window, event: Event) {
+        self.redraw = true;
         let scale = window.scale_factor() as f32;
         let viewport_captured = self.drag.is_some() || self.camera_drag.is_some();
         self.handle(&event, scale, window.size());

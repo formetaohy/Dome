@@ -633,10 +633,12 @@ impl FunctionLower<'_> {
                 })
             }
             Intrinsic::SampleLod => {
-                assert_eq!(
-                    self.stage,
-                    Some(crate::shader::Stage::Fragment),
-                    "explicit level of detail sampling belongs to the fragment stage"
+                assert!(
+                    matches!(
+                        self.stage,
+                        Some(crate::shader::Stage::Fragment | crate::shader::Stage::Compute)
+                    ),
+                    "explicit level of detail sampling belongs to a fragment or compute stage"
                 );
                 let image = self.value(&args[0]);
                 let sampler = self.value(&args[1]);
@@ -650,6 +652,26 @@ impl FunctionLower<'_> {
                     sampler: sampler.value,
                     coordinates: coordinates.value,
                     level: Some(level.value),
+                    result,
+                })
+            }
+            Intrinsic::SampleDepth => {
+                let depth = self.value(&args[0]);
+                let sampler = self.value(&args[1]);
+                let coordinates_type = self.compiler.ty("fvec2");
+                let coordinates = self.value_with_hint(&args[2], Some(coordinates_type));
+                let ty = self.compiler.ty("fvec4");
+                let sampled = self.emit(ty, |result| ShaderInstruction::Sample {
+                    image: depth.value,
+                    sampler: sampler.value,
+                    coordinates: coordinates.value,
+                    level: None,
+                    result,
+                });
+                let held = self.compiler.scalar("f32");
+                self.emit(held, |result| ShaderInstruction::AccessIndex {
+                    base: sampled.value,
+                    index: 0,
                     result,
                 })
             }

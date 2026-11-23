@@ -171,7 +171,11 @@ impl<'m> Verifier<'m> {
                 Space::UniformConstant => assert!(
                     matches!(
                         self.module.ty(global.ty),
-                        Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler
+                        Type::Image
+                            | Type::DepthImage
+                            | Type::SampledDepth
+                            | Type::Sampler
+                            | Type::ComparisonSampler
                     ) || matches!(
                         self.module.ty(global.ty),
                         Type::Array { element, .. } if matches!(
@@ -201,7 +205,11 @@ impl<'m> Verifier<'m> {
             );
             let subject = format!("the shader global {}", global.name);
             match self.module.ty(global.ty) {
-                Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler => {}
+                Type::Image
+                | Type::DepthImage
+                | Type::SampledDepth
+                | Type::Sampler
+                | Type::ComparisonSampler => {}
                 Type::Array { element, .. }
                     if matches!(self.module.ty(*element), Type::Image | Type::Sampler) => {}
                 Type::Block { element, .. } => self.storable(*element, &subject),
@@ -268,7 +276,11 @@ impl<'m> Verifier<'m> {
                 "{subject} atomically holds the non-integer {}",
                 scalar.name()
             ),
-            Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler => {
+            Type::Image
+            | Type::DepthImage
+            | Type::SampledDepth
+            | Type::Sampler
+            | Type::ComparisonSampler => {
                 panic!("{subject} holds {}", element_name(self.module.ty(ty)))
             }
             Type::Pointer { .. } => panic!("{subject} holds a shader pointer"),
@@ -500,7 +512,10 @@ impl<'m> Checker<'m> {
                     );
                 }
                 assert!(
-                    matches!(self.module.ty(self.ty(*image)), Type::Image),
+                    matches!(
+                        self.module.ty(self.ty(*image)),
+                        Type::Image | Type::SampledDepth
+                    ),
                     "a shader sample reads {} as its image",
                     element_name(self.module.ty(self.ty(*image)))
                 );

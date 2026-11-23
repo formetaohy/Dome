@@ -66,6 +66,7 @@ pub(crate) enum Command {
     WriteTexture {
         texture: Texture,
         level: u32,
+        region: crate::texture::TextureRegion,
         bytes: Vec<u8>,
     },
     Present {
@@ -344,6 +345,20 @@ impl Submission {
     }
 
     pub fn write_texture(&mut self, texture: &Texture, level: u32, pixels: &[u8]) {
+        let (width, height) = texture.level_extent(level);
+        let region = crate::texture::TextureRegion::new(0, 0, width, height);
+        let row = texture.level_row_bytes(level);
+        self.write_texture_region(texture, level, region, row, pixels);
+    }
+
+    pub fn write_texture_region(
+        &mut self,
+        texture: &Texture,
+        level: u32,
+        region: crate::texture::TextureRegion,
+        row_pitch: u64,
+        pixels: &[u8],
+    ) {
         assert!(
             texture.device().same(&self.device),
             "a texture upload crosses devices"
@@ -353,22 +368,31 @@ impl Submission {
             "a texture upload requires a copy destination"
         );
         let (width, height) = texture.level_extent(level);
-        let row = texture.level_row_bytes(level) as usize;
-        let stride = texture.level_row_stride(level) as usize;
-        assert_eq!(
-            pixels.len(),
-            row * height as usize,
-            "a level {level} upload writes {} bytes where {width} texels of {row} bytes span {}",
-            pixels.len(),
-            row * height as usize,
+        region.assert_within(width, height);
+        let texel = u64::from(texture.format().bytes_per_texel());
+        let row = u64::from(region.width) * texel;
+        assert!(
+            row_pitch >= row && row_pitch.is_multiple_of(texel),
+            "a region of {row} byte rows reads them {row_pitch} apart",
         );
-        let mut bytes = vec![0u8; stride * height as usize];
-        for (line, target) in pixels.chunks_exact(row).zip(bytes.chunks_exact_mut(stride)) {
-            target[..row].copy_from_slice(line);
+        assert!(
+            pixels.len() as u64 >= row_pitch * u64::from(region.height - 1) + row,
+            "a region {region:?} upload writes {} bytes where {} come in at a {row_pitch} byte pitch",
+            row_pitch * u64::from(region.height - 1) + row,
+            pixels.len(),
+        );
+        let stride = row.div_ceil(Texture::READBACK_ALIGNMENT) * Texture::READBACK_ALIGNMENT;
+        let mut bytes = vec![0u8; (stride * u64::from(region.height)) as usize];
+        for (line, target) in pixels
+            .chunks(row_pitch as usize)
+            .zip(bytes.chunks_exact_mut(stride as usize))
+        {
+            target[..row as usize].copy_from_slice(&line[..row as usize]);
         }
         self.commands.push(Command::WriteTexture {
             texture: texture.clone(),
             level,
+            region,
             bytes,
         });
     }

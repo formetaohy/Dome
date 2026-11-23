@@ -26,6 +26,7 @@ pub enum BindingKind {
     TableStorage,
     SampledImage,
     DepthImage,
+    SampledDepth,
     Sampler,
     ComparisonSampler,
     SampledImageTable,
@@ -58,7 +59,7 @@ impl BindingKind {
     pub const fn texture(self) -> bool {
         matches!(
             self,
-            Self::SampledImage | Self::DepthImage | Self::SampledImageTable
+            Self::SampledImage | Self::DepthImage | Self::SampledDepth | Self::SampledImageTable
         )
     }
 
@@ -117,6 +118,15 @@ impl BindingSpec {
             group,
             binding,
             kind: BindingKind::DepthImage,
+            count: 1,
+        }
+    }
+
+    pub const fn sampled_depth(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            kind: BindingKind::SampledDepth,
             count: 1,
         }
     }
@@ -207,6 +217,7 @@ pub fn reflect(module: &Module) -> Vec<ShaderBinding> {
                 Space::UniformConstant => match module.ty(global.ty) {
                     Type::Image => (BindingKind::SampledImage, 1),
                     Type::DepthImage => (BindingKind::DepthImage, 1),
+                    Type::SampledDepth => (BindingKind::SampledDepth, 1),
                     Type::Sampler => (BindingKind::Sampler, 1),
                     Type::ComparisonSampler => (BindingKind::ComparisonSampler, 1),
                     Type::Array { element, count } => match module.ty(*element) {

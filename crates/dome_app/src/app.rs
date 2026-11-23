@@ -696,7 +696,7 @@ impl Handler for App {
 
     fn frame(&mut self, window: &Window, real: Duration) -> Flow {
         let Some(mut session) = self.session.take() else {
-            return Flow::Continue;
+            return Flow::Continuous;
         };
         let flow = self.frame_session(&mut session, window, real);
         self.session = Some(session);
@@ -724,7 +724,7 @@ impl App {
         self.reload_scene(session);
         let (width, height) = window.size();
         if window.is_minimized() || width == 0 || height == 0 {
-            return Flow::Continue;
+            return Flow::Idle;
         }
         let loading = session
             .live
@@ -748,7 +748,7 @@ impl App {
         self.sync_debug();
         session.draw_window(&mut self.world, clear, width, height);
         dome_render::install_captures(&mut self.world, session.renderer.take_captures());
-        if exit { Flow::Exit } else { Flow::Continue }
+        if exit { Flow::Exit } else { Flow::Continuous }
     }
 }
 

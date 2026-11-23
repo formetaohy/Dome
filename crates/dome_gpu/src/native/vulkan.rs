@@ -336,33 +336,51 @@ impl Pending {
             .state
             .lock()
             .expect("a Vulkan texture layout is never poisoned");
-        let TextureState { layout, access } = &mut *state;
-        if *layout == next {
-            self.record(access, next_access);
+        let TextureState { layouts, access } = &mut *state;
+        let first = texture.first_level as usize;
+        let last = (first + texture.mip_levels as usize).min(layouts.len());
+        let mut transitioned = false;
+        let mut index = first;
+        while index < last {
+            if layouts[index] == next {
+                index += 1;
+                continue;
+            }
+            let previous = layouts[index];
+            let mut end = index + 1;
+            while end < last && layouts[end] == previous {
+                end += 1;
+            }
+            self.images.push(
+                vk::ImageMemoryBarrier::default()
+                    .old_layout(previous)
+                    .new_layout(next)
+                    .image(texture.image)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(texture.aspect)
+                            .base_mip_level(index as u32)
+                            .level_count((end - index) as u32)
+                            .base_array_layer(0)
+                            .layer_count(1),
+                    )
+                    .src_access_mask(access.access)
+                    .dst_access_mask(next_access.access),
+            );
+            layouts[index..end].fill(next);
+            transitioned = true;
+            index = end;
+        }
+        if transitioned {
+            self.src_stage |= access.stage;
+            self.src_access |= access.access;
+            self.dst_stage |= next_access.stage;
+            self.dst_access |= next_access.access;
+            self.touched = true;
+            *access = next_access;
             return;
         }
-        let barrier = vk::ImageMemoryBarrier::default()
-            .old_layout(*layout)
-            .new_layout(next)
-            .image(texture.image)
-            .subresource_range(
-                vk::ImageSubresourceRange::default()
-                    .aspect_mask(texture.aspect)
-                    .base_mip_level(0)
-                    .level_count(texture.mip_levels)
-                    .base_array_layer(0)
-                    .layer_count(1),
-            )
-            .src_access_mask(access.access)
-            .dst_access_mask(next_access.access);
-        self.images.push(barrier);
-        self.src_stage |= access.stage;
-        self.src_access |= access.access;
-        self.dst_stage |= next_access.stage;
-        self.dst_access |= next_access.access;
-        self.touched = true;
-        *layout = next;
-        *access = next_access;
+        self.record(access, next_access);
     }
 
     fn flush(&mut self, raw: &ash::Device, command: vk::CommandBuffer) {
@@ -896,7 +914,7 @@ struct Image<'a> {
 }
 
 struct TextureState {
-    layout: vk::ImageLayout,
+    layouts: Vec<vk::ImageLayout>,
     access: Access,
 }
 
@@ -908,11 +926,12 @@ struct TextureResource {
     width: u32,
     height: u32,
     mip_levels: u32,
+    first_level: u32,
     format: TextureFormat,
     usages: TextureUsages,
     aspect: vk::ImageAspectFlags,
     present: bool,
-    state: Mutex<TextureState>,
+    state: Arc<Mutex<TextureState>>,
     core: Arc<Core>,
 }
 
@@ -1765,6 +1784,7 @@ impl Device {
                         .descriptor_type(match spec.kind {
                             dome_shader::shader::BindingKind::SampledImage
                             | dome_shader::shader::BindingKind::DepthImage
+                            | dome_shader::shader::BindingKind::SampledDepth
                             | dome_shader::shader::BindingKind::SampledImageTable => {
                                 vk::DescriptorType::SAMPLED_IMAGE
                             }
@@ -2078,10 +2098,11 @@ impl Device {
                 usages,
                 aspect,
                 present: false,
-                state: Mutex::new(TextureState {
-                    layout: vk::ImageLayout::UNDEFINED,
+                first_level: 0,
+                state: Arc::new(Mutex::new(TextureState {
+                    layouts: vec![vk::ImageLayout::UNDEFINED; mip_levels as usize],
                     access: Access::default(),
-                }),
+                })),
             }),
         }
     }
@@ -2125,14 +2146,12 @@ impl Device {
                 width,
                 height,
                 mip_levels: 1,
+                first_level: level,
                 format: held.format,
                 usages: held.usages,
                 aspect: held.aspect,
                 present: false,
-                state: Mutex::new(TextureState {
-                    layout: vk::ImageLayout::UNDEFINED,
-                    access: Access::default(),
-                }),
+                state: Arc::clone(&held.state),
             }),
         }
     }
@@ -2388,10 +2407,11 @@ impl Device {
                 usages: TextureUsages::RENDER_ATTACHMENT,
                 aspect: vk::ImageAspectFlags::COLOR,
                 present: true,
-                state: Mutex::new(TextureState {
-                    layout: vk::ImageLayout::UNDEFINED,
+                first_level: 0,
+                state: Arc::new(Mutex::new(TextureState {
+                    layouts: vec![vk::ImageLayout::UNDEFINED],
                     access: Access::default(),
-                }),
+                })),
             }),
         }
     }
@@ -2836,13 +2856,15 @@ impl Device {
                     if let (Some((_, ops)), Some(held)) = (&depth, &depth_texture)
                         && ops.load == DepthLoad::Keep
                     {
-                        let state = held
-                            .state
-                            .lock()
-                            .expect("a Vulkan texture layout is never poisoned");
-                        assert!(
-                            state.layout == vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                            "a render pass keeps a depth texture no storing pass left",
+                        pending.transition(
+                            held,
+                            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                            Access::write(
+                                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
+                                    | vk::AccessFlags::MEMORY_WRITE,
+                            ),
                         );
                     }
                     let (render_pass, framebuffer) = self.framing(color, key, depth_texture);
@@ -3015,11 +3037,12 @@ impl Device {
                     unsafe { self.core.cmd_end_render_pass(command) };
                     if let Some(target) = &target {
                         let texture = native_texture(target.native());
-                        texture
+                        let mut state = texture
                             .state
                             .lock()
-                            .expect("a Vulkan texture layout is never poisoned")
-                            .layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+                            .expect("a Vulkan texture layout is never poisoned");
+                        let at = (*level as usize).min(state.layouts.len().saturating_sub(1));
+                        state.layouts[at] = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
                         frame.resources.push(texture.clone());
                     }
                     if let Some(texture) = &depth_texture {
@@ -3027,12 +3050,13 @@ impl Device {
                             .state
                             .lock()
                             .expect("a Vulkan texture layout is never poisoned")
-                            .layout = vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                            .layouts[0] = vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
                     }
                 }
                 Command::WriteTexture {
                     texture,
                     level,
+                    region,
                     bytes,
                 } => {
                     let texture = native_texture(texture.native());
@@ -3051,14 +3075,12 @@ impl Device {
                         ),
                     );
                     pending.flush(&self.core, command);
-                    let width = (texture.width >> level).max(1);
-                    let height = (texture.height >> level).max(1);
-                    let row = u64::from(width) * texel;
+                    let row = u64::from(region.width) * texel;
                     let stride = row.div_ceil(256) * 256;
                     let regions = [vk::BufferImageCopy::default()
                         .buffer_offset(offset)
                         .buffer_row_length((stride / texel) as u32)
-                        .buffer_image_height(height)
+                        .buffer_image_height(region.height)
                         .image_subresource(
                             vk::ImageSubresourceLayers::default()
                                 .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -3066,9 +3088,14 @@ impl Device {
                                 .base_array_layer(0)
                                 .layer_count(1),
                         )
+                        .image_offset(vk::Offset3D {
+                            x: region.x as i32,
+                            y: region.y as i32,
+                            z: 0,
+                        })
                         .image_extent(vk::Extent3D {
-                            width,
-                            height,
+                            width: region.width,
+                            height: region.height,
                             depth: 1,
                         })];
                     unsafe {
@@ -3527,6 +3554,7 @@ fn allocation(entry: &Entry, instance: &Instance, physical: vk::PhysicalDevice) 
 
 fn vk_format(format: TextureFormat) -> vk::Format {
     match format {
+        TextureFormat::R8Unorm => vk::Format::R8_UNORM,
         TextureFormat::Rgba8Unorm => vk::Format::R8G8B8A8_UNORM,
         TextureFormat::Rgba8UnormSrgb => vk::Format::R8G8B8A8_SRGB,
         TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,

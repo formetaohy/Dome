@@ -118,12 +118,12 @@ impl Renderer {
         let mut counted = HashMap::new();
         for (_, _, instance, blended) in &gathered {
             let held = counted
-                .entry((instance.mesh.index(), *blended))
+                .entry((instance.mesh, *blended))
                 .or_insert((instance.mesh, 0u32));
             held.1 += 1;
         }
         let mut pairs = counted.into_iter().collect::<Vec<_>>();
-        pairs.sort_unstable_by_key(|((mesh, blended), _)| (*blended, *mesh));
+        pairs.sort_unstable_by_key(|((mesh, blended), _)| (*blended, mesh.index()));
         let counts = pairs
             .iter()
             .map(|(_, (_, count))| *count)
@@ -152,7 +152,7 @@ impl Renderer {
         for index in 0..instances.len() {
             let slot = instances.at(index);
             let source = slot.source();
-            let batch = batch_of[&(source.mesh.index(), source.blended)];
+            let batch = batch_of[&(source.mesh, source.blended)];
             let model = source.transform.matrix();
             let previous = slot.model.unwrap_or(model);
             let bounds = slot

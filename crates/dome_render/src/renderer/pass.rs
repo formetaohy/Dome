@@ -13,7 +13,6 @@ impl Renderer {
         self.hzb = Some(Hzb::new(
             &self.device,
             &self.queue,
-            &self.hzb_base,
             &self.hzb_reduce,
             &self.hzb_sampler,
             width,

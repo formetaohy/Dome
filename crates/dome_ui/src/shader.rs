@@ -122,7 +122,7 @@ mod paint {
         let clip_mask = coverage(clip_distance);
         if is_glyph(kind) {
             let glyph = sample(images[held.meta.z], samplers[held.meta.w], uv);
-            let alpha = pow(max(glyph.w, 0.0), held.extra.x);
+            let alpha = pow(max(glyph.x, 0.0), held.extra.x);
             target = premultiplied(held.color, alpha * clip_mask);
         } else if is_segment(kind) {
             let ax = held.rect.x * scale;

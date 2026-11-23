@@ -6,7 +6,7 @@ mod outline;
 mod style;
 mod text;
 
-pub use atlas::{Atlas, GlyphRequest, GlyphSlot};
+pub use atlas::{Atlas, GlyphRequest, GlyphSlot, Region};
 pub use font::{FaceRun, Fonts, GlyphStyle, IconGlyph, ShapedGlyph, ShapedRun};
 pub use glyph::GlyphRaster;
 pub use outline::{Contour, Curve, Outline};

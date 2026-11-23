@@ -56,6 +56,9 @@ pub struct Texture2D;
 pub struct Depth2D;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SampledDepth;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sampler;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +75,12 @@ impl Default for Texture2D {
 }
 
 impl Default for Depth2D {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl Default for SampledDepth {
     fn default() -> Self {
         Self
     }

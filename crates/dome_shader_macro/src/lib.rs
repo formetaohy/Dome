@@ -338,6 +338,7 @@ struct Storage {
 enum ResourceKind {
     Texture,
     Depth,
+    SampledDepth,
     Sampler,
     ComparisonSampler,
     TextureTable,
@@ -466,6 +467,7 @@ fn resource_kind(ty: &syn::Type) -> Option<ResourceKind> {
     match path.path.get_ident()?.to_string().as_str() {
         "Texture2D" => Some(ResourceKind::Texture),
         "Depth2D" => Some(ResourceKind::Depth),
+        "SampledDepth" => Some(ResourceKind::SampledDepth),
         "Sampler" => Some(ResourceKind::Sampler),
         "ComparisonSampler" => Some(ResourceKind::ComparisonSampler),
         "TextureTable" => Some(ResourceKind::TextureTable),
@@ -728,6 +730,7 @@ fn resource_type(kind: ResourceKind) -> syn::Type {
     match kind {
         ResourceKind::Texture => syn::parse_quote!(::dome_shader::Texture2D),
         ResourceKind::Depth => syn::parse_quote!(::dome_shader::Depth2D),
+        ResourceKind::SampledDepth => syn::parse_quote!(::dome_shader::SampledDepth),
         ResourceKind::Sampler => syn::parse_quote!(::dome_shader::Sampler),
         ResourceKind::ComparisonSampler => syn::parse_quote!(::dome_shader::ComparisonSampler),
         ResourceKind::TextureTable => syn::parse_quote!(::dome_shader::TextureTable),
@@ -742,6 +745,9 @@ fn resource_declaration(name: &str, kind: ResourceKind, group: u32, slot: u32) -
         }
         ResourceKind::Depth => {
             quote!(compiler.depth_image(#name, ::dome_shader::BindingSpec::depth_image(#group, #slot));)
+        }
+        ResourceKind::SampledDepth => {
+            quote!(compiler.sampled_depth(#name, ::dome_shader::BindingSpec::sampled_depth(#group, #slot));)
         }
         ResourceKind::Sampler => {
             quote!(compiler.sampler(#name, ::dome_shader::BindingSpec::sampler(#group, #slot));)
@@ -758,11 +764,13 @@ fn resource_declaration(name: &str, kind: ResourceKind, group: u32, slot: u32) -
     }
 }
 
-fn resource_declarations(resources: &[Resource]) -> Vec<Tokens> {
+fn resource_declarations(resources: &[Resource], group: u32, offset: u32) -> Vec<Tokens> {
     resources
         .iter()
         .enumerate()
-        .map(|(slot, resource)| resource_declaration(&resource.name, resource.kind, 1, slot as u32))
+        .map(|(slot, resource)| {
+            resource_declaration(&resource.name, resource.kind, group, offset + slot as u32)
+        })
         .collect()
 }
 
@@ -906,7 +914,11 @@ fn expand_kernel_function(
     let typecheck = check_body(&original, &entry);
     let records = record_declarations(entry.records.values().cloned());
     let mut statements = storage_declarations(&entry.storages, 0);
-    statements.extend(resource_declarations(&entry.resources));
+    statements.extend(resource_declarations(
+        &entry.resources,
+        0,
+        entry.storages.len() as u32,
+    ));
     let size = options.size;
     Ok(quote! {
         #visibility fn #name() -> ::dome_shader::ComputeProgram {
@@ -959,7 +971,11 @@ fn expand_kernel_module(options: KernelOptions, module: syn::ItemMod) -> syn::Re
                 entry_bindings.records.values().cloned(),
             ));
             statements.extend(storage_declarations(&entry_bindings.storages, 0));
-            statements.extend(resource_declarations(&entry_bindings.resources));
+            statements.extend(resource_declarations(
+                &entry_bindings.resources,
+                0,
+                entry_bindings.storages.len() as u32,
+            ));
             let mut check = check_body(function, &entry_bindings);
             if !locals.is_empty() {
                 check.block.stmts.splice(0..0, locals);
@@ -1299,7 +1315,7 @@ fn expand_graphics(module: GraphicsModule) -> syn::Result<Tokens> {
         }
     }
     let mut storages = storage_declarations(&storages, shared_storages);
-    storages.extend(resource_declarations(&resources));
+    storages.extend(resource_declarations(&resources, 1, 0));
     let vertex_varyings = varying_declarations(&vertex_varyings);
     let fragment_varyings = varying_declarations(&fragment_varyings);
     let names = module.functions.iter().map(|function| &function.sig.ident);

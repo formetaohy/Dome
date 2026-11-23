@@ -114,6 +114,7 @@ impl Renderer {
             .binding(0, u64::from(total) * INSTANCE_BYTES);
         let depth_cull = hzb.cull(
             &self.cull,
+            &self.hzb_sampler,
             self.views.binding(VIEW_BYTES, VIEW_BYTES),
             instances,
             self.depth_drawn
@@ -125,6 +126,7 @@ impl Renderer {
         );
         let main_cull = hzb.cull(
             &self.cull,
+            &self.hzb_sampler,
             self.views.binding(0, VIEW_BYTES),
             instances,
             self.main_drawn
@@ -139,6 +141,7 @@ impl Renderer {
             shadow_cull.push(
                 hzb.cull(
                     &self.cull,
+                    &self.hzb_sampler,
                     self.shadow_views
                         .binding(u64::from(cascade) * VIEW_BYTES, VIEW_BYTES),
                     instances,
@@ -161,6 +164,7 @@ impl Renderer {
             for cell in 0..point_cells {
                 let group = hzb.cull(
                     &self.cull,
+                    &self.hzb_sampler,
                     self.point_shadows.view(cell),
                     instances,
                     self.point_shadows.drawn_view(cell),
@@ -319,11 +323,14 @@ impl Renderer {
                 )
             })
             .collect::<Vec<_>>();
-        submission.render(
-            Pass::new(hzb.depth(), [1.0, 0.0, 0.0, 1.0]).depth(scene_depth, DepthOps::CLEAR_STORED),
-            &depth,
+        submission.render(Pass::depth_only(scene_depth), &depth);
+        hzb.build(
+            submission,
+            &self.hzb_base,
+            &self.hzb_reduce,
+            scene_depth,
+            &self.hzb_sampler,
         );
-        hzb.build(submission, &self.hzb_base, &self.hzb_reduce);
         submission.dispatch(&self.cull, &main_cull, [total.div_ceil(WORKGROUP), 1, 1]);
         let mut main = main_groups
             .iter()

@@ -55,7 +55,6 @@ impl SlotGroups {
             pipelines.depth.bind_group(
                 0,
                 &[
-                    Binding::buffer(program::DEPTH_VIEW, shared.view),
                     Binding::buffer(program::DEPTH_PALETTE, shared.palette),
                     Binding::buffer(program::DEPTH_SKINS, slot.skins),
                     Binding::buffer(program::DEPTH_DRAWN, slot.depth_drawn),

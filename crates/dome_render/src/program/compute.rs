@@ -9,8 +9,8 @@ mod cull {
         instances: Read<InstanceRecord>,
         drawn: ReadWrite<DrawRecord>,
         arguments: ReadWrite<AtomicU32>,
-        levels: Read<HzbLevelRecord>,
-        depths: Read<f32>,
+        hzb: Texture2D,
+        filter: Sampler,
     ) {
         let index = global.x;
         let held = view[0u32];
@@ -51,13 +51,14 @@ mod cull {
                             let low = fvec2(middle.x - half_x - pad.x, middle.y - half_y - pad.y);
                             let high = fvec2(middle.x + half_x + pad.x, middle.y + half_y + pad.y);
                             if low.x >= 0.0 && high.x <= 1.0 && low.y >= 0.0 && high.y <= 1.0 {
-                                let base = levels[0u32];
-                                let width = base.width as f32;
-                                let height = base.height as f32;
-                                let low_x = low.x * width;
-                                let low_y = low.y * height;
-                                let high_x = high.x * width;
-                                let high_y = high.y * height;
+                                let base = fvec2(
+                                    floor((held.view_width + 3.0) * 0.25),
+                                    floor((held.view_height + 3.0) * 0.25),
+                                );
+                                let low_x = low.x * base.x;
+                                let low_y = low.y * base.y;
+                                let high_x = high.x * base.x;
+                                let high_y = high.y * base.y;
                                 let mut level = 0u32;
                                 let mut factor = 1.0;
                                 let mut extent = max(high_x - low_x, high_y - low_y);
@@ -66,24 +67,30 @@ mod cull {
                                     factor *= 2.0;
                                     level += 1u32;
                                 }
-                                let chosen = levels[level];
-                                let chosen_width = chosen.width as f32;
-                                let chosen_height = chosen.height as f32;
-                                let first_x = max(floor(low_x / factor), 0.0) as u32;
-                                let last_x = min(floor(high_x / factor), chosen_width - 1.0) as u32;
-                                let first_y = max(floor(low_y / factor), 0.0) as u32;
-                                let last_y =
-                                    min(floor(high_y / factor), chosen_height - 1.0) as u32;
+                                let chosen = fvec2(
+                                    max(floor(base.x / factor), 1.0),
+                                    max(floor(base.y / factor), 1.0),
+                                );
+                                let first_x = max(floor(low_x / factor), 0.0);
+                                let last_x = min(floor(high_x / factor), chosen.x - 1.0);
+                                let first_y = max(floor(low_y / factor), 0.0);
+                                let last_y = min(floor(high_y / factor), chosen.y - 1.0);
                                 let mut deepest = 0.0;
-                                for y in stride(first_y, last_y + 1u32, 1u32) {
-                                    for x in stride(first_x, last_x + 1u32, 1u32) {
+                                for y in stride(first_y as u32, last_y as u32 + 1u32, 1u32) {
+                                    for x in stride(first_x as u32, last_x as u32 + 1u32, 1u32) {
+                                        let at = fvec2(
+                                            (x as f32 + 0.5) / chosen.x,
+                                            (y as f32 + 0.5) / chosen.y,
+                                        );
                                         deepest = max(
                                             deepest,
-                                            depths[chosen.offset + y * chosen.stride + x],
+                                            sample_lod(hzb, filter, at, level as f32).x,
                                         );
                                     }
                                 }
-                                occluded = deepest < (nearest - held.near) / (held.far - held.near);
+                                let near_z = held.far * (nearest - held.near)
+                                    / (nearest * (held.far - held.near));
+                                occluded = deepest < near_z;
                             }
                         }
                     }

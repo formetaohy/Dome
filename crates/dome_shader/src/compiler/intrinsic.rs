@@ -1,5 +1,5 @@
 use crate::compiler::resource::{
-    AtomicU32, ComparisonSampler, Depth2D, Fvec2, Fvec4, Sampler, Texture2D, Uvec4,
+    AtomicU32, ComparisonSampler, Depth2D, Fvec2, Fvec4, SampledDepth, Sampler, Texture2D, Uvec4,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -76,6 +76,7 @@ vocabulary! {
     UnpackHalf2x16 "unpack2x16float" Kernel 1 true;
     Sample "sample" Kernel 3 true;
     SampleLod "sample_lod" Kernel 4 true;
+    SampleDepth "sample_depth" Kernel 3 true;
     SampleCompare "sample_compare" Kernel 4 true;
     Dpdx "dpdx" Kernel 1 true;
     Dpdy "dpdy" Kernel 1 true;
@@ -244,6 +245,10 @@ pub fn sample_lod(
     _coordinates: Fvec2,
     _level: f32,
 ) -> Fvec4 {
+    unreachable!("a shader intrinsic runs only on a GPU")
+}
+
+pub fn sample_depth(_depth: SampledDepth, _sampler: Sampler, _coordinates: Fvec2) -> f32 {
     unreachable!("a shader intrinsic runs only on a GPU")
 }
 

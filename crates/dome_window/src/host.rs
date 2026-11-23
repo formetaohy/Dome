@@ -3,13 +3,15 @@ use crate::window::{Window, WindowConfig};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event::{ElementState, MouseScrollDelta, StartCause, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Flow {
-    Continue,
+    Continuous,
+    Idle,
+    Wait(Duration),
     Exit,
 }
 
@@ -34,6 +36,7 @@ pub fn run<H: Handler>(config: WindowConfig, handler: H) {
         handler,
         window: None,
         last: None,
+        timer: false,
     };
     event_loop
         .run_app(&mut host)
@@ -45,6 +48,7 @@ struct Host<H: Handler> {
     handler: H,
     window: Option<Window>,
     last: Option<Instant>,
+    timer: bool,
 }
 
 impl<H: Handler> Host<H> {
@@ -54,9 +58,51 @@ impl<H: Handler> Host<H> {
         }
         event_loop.exit();
     }
+
+    fn redraw(&self) {
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
+    fn hold(&mut self, event_loop: &ActiveEventLoop, flow: Flow) {
+        self.timer = false;
+        match flow {
+            Flow::Exit => self.close(event_loop),
+            Flow::Idle => event_loop.set_control_flow(ControlFlow::Wait),
+            Flow::Continuous => {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                self.redraw();
+            }
+            Flow::Wait(duration) if duration.is_zero() => {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                self.redraw();
+            }
+            Flow::Wait(duration) => {
+                self.timer = true;
+                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + duration));
+            }
+        }
+    }
+
+    fn accepts_frames(&self) -> bool {
+        let Some(window) = self.window.as_ref() else {
+            return false;
+        };
+        !window.is_minimized() && window.size() != (0, 0)
+    }
 }
 
 impl<H: Handler> ApplicationHandler for Host<H> {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        if !matches!(cause, StartCause::ResumeTimeReached { .. }) {
+            return;
+        }
+        if std::mem::take(&mut self.timer) {
+            self.redraw();
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         assert!(
             self.window.is_none(),
@@ -83,6 +129,7 @@ impl<H: Handler> ApplicationHandler for Host<H> {
         );
         self.handler.opened(&window);
         self.last = None;
+        self.timer = false;
         window.request_redraw();
         self.window = Some(window);
     }
@@ -97,35 +144,37 @@ impl<H: Handler> ApplicationHandler for Host<H> {
             self.close(event_loop);
             return;
         }
-        let Some(window) = self.window.as_ref() else {
+        if self.window.is_none() {
             return;
-        };
+        }
         if let WindowEvent::RedrawRequested = event {
-            if window.is_minimized() || window.size() == (0, 0) {
+            if !self.accepts_frames() {
+                self.hold(event_loop, Flow::Idle);
                 return;
             }
             let real = self.last.map_or(Duration::ZERO, |last| last.elapsed());
             self.last = Some(Instant::now());
-            if self.handler.frame(window, real) == Flow::Exit {
-                self.close(event_loop);
-            } else {
-                window.request_redraw();
-            }
+            let flow = {
+                let window = self
+                    .window
+                    .as_ref()
+                    .expect("a redraw names the window it draws");
+                self.handler.frame(window, real)
+            };
+            self.hold(event_loop, flow);
             return;
         }
-        if let Some(event) = translate(&event) {
-            let restarts = match event {
-                Event::Resized { width, height } => width > 0 && height > 0,
-                Event::Focused(true) | Event::ScaleFactorChanged { .. } => {
-                    !window.is_minimized() && window.size() != (0, 0)
-                }
-                _ => false,
-            };
+        let Some(event) = translate(&event) else {
+            return;
+        };
+        {
+            let window = self
+                .window
+                .as_ref()
+                .expect("a window event names the window it reports");
             self.handler.event(window, event);
-            if restarts {
-                window.request_redraw();
-            }
         }
+        self.redraw();
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {

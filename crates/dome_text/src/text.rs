@@ -70,6 +70,10 @@ impl Text {
         &self.atlas
     }
 
+    pub fn atlas_mut(&mut self) -> &mut Atlas {
+        &mut self.atlas
+    }
+
     pub fn begin(&mut self, pixels_per_point: f32) -> bool {
         self.pixels_per_point = pixels_per_point;
         self.frame += 1;
@@ -352,7 +356,6 @@ impl Text {
                 id,
                 style,
                 pixels_per_point,
-                position: (pen_x, baseline),
             },
         );
         let Slot::Ready(slot) = slot else {
@@ -360,8 +363,8 @@ impl Text {
         };
         plot(GlyphPlot {
             slot,
-            left: (pen_x.floor() + slot.left as f32) / pixels_per_point,
-            top: (baseline.floor() - slot.top as f32) / pixels_per_point,
+            left: (pen_x + slot.left as f32) / pixels_per_point,
+            top: (baseline - slot.top as f32) / pixels_per_point,
             width: slot.width as f32 / pixels_per_point,
             height: slot.height as f32 / pixels_per_point,
             color,

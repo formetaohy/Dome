@@ -90,7 +90,10 @@ fn paint(context: &GpuContext, backend: Backend, format: TextureFormat) {
     let red = match format {
         TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb => [255, 0, 0, 255],
         TextureFormat::Bgra8Unorm => [0, 0, 255, 255],
-        TextureFormat::Rgba16Float | TextureFormat::R32Float | TextureFormat::Depth32Float => {
+        TextureFormat::R8Unorm
+        | TextureFormat::Rgba16Float
+        | TextureFormat::R32Float
+        | TextureFormat::Depth32Float => {
             unreachable!("a sampled quad writes an eight bit colour target")
         }
     };

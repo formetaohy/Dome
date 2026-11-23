@@ -22,11 +22,11 @@ pub(crate) use post::{
 
 use crate::abi::{
     AtlasRecord, AtmosphereRecord, BakeLevelRecord, BloomRecord, BloomUpRecord, CascadeRecord,
-    DebugLineRecord, DrawRecord, HzbLevelRecord, HzbStepRecord, IRRADIANCE_PARTIALS,
-    InstanceRecord, IrradianceRecord, IrradianceSetupRecord, JointRecord, LIGHT_CAPACITY,
-    LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE, LightRecord, MaterialRecord, MotionRecord, ProbeRecord,
-    SHADOW_CASCADES, SkinVertexRecord, SkyRecord, TemporalRecord, TonemapRecord,
-    TransparentSetupRecord, VERTEX_FLOATS, ViewRecord, WORKGROUP,
+    DebugLineRecord, DrawRecord, IRRADIANCE_PARTIALS, InstanceRecord, IrradianceRecord,
+    IrradianceSetupRecord, JointRecord, LIGHT_CAPACITY, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE,
+    LightRecord, MaterialRecord, MotionRecord, ProbeRecord, SHADOW_CASCADES, SkinVertexRecord,
+    SkyRecord, TemporalRecord, TonemapRecord, TransparentSetupRecord, VERTEX_FLOATS, ViewRecord,
+    WORKGROUP,
 };
 use dome_shader::AtomicU32;
 use dome_shader::{ComputeProgram, Fvec2, Fvec4, GraphicsProgram, Read, ReadWrite, Uvec3};
@@ -35,18 +35,16 @@ pub(crate) const CULL_VIEW: u32 = 0;
 pub(crate) const CULL_INSTANCES: u32 = 1;
 pub(crate) const CULL_DRAWN: u32 = 2;
 pub(crate) const CULL_ARGUMENTS: u32 = 3;
-pub(crate) const CULL_LEVELS: u32 = 4;
-pub(crate) const CULL_DEPTHS: u32 = 5;
+pub(crate) const CULL_HZB: u32 = 4;
+pub(crate) const CULL_FILTER: u32 = 5;
 
-pub(crate) const DEPTH_VIEW: u32 = 0;
-pub(crate) const DEPTH_PALETTE: u32 = 1;
-pub(crate) const DEPTH_SKINS: u32 = 2;
-pub(crate) const DEPTH_DRAWN: u32 = 3;
-pub(crate) const DEPTH_VERTICES: u32 = 4;
-pub(crate) const DEPTH_MATERIALS: u32 = 5;
+pub(crate) const DEPTH_PALETTE: u32 = 0;
+pub(crate) const DEPTH_SKINS: u32 = 1;
+pub(crate) const DEPTH_DRAWN: u32 = 2;
+pub(crate) const DEPTH_VERTICES: u32 = 3;
+pub(crate) const DEPTH_MATERIALS: u32 = 4;
 
-pub(crate) const HZB_STEP_BINDING: u32 = 0;
-pub(crate) const HZB_DEPTHS_BINDING: u32 = 1;
+pub(crate) const HZB_ORIENTATION_BINDING: u32 = 0;
 pub(crate) const HZB_SOURCE_BINDING: u32 = 0;
 pub(crate) const HZB_SAMPLER_BINDING: u32 = 1;
 

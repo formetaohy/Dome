@@ -45,4 +45,4 @@ pub use sampler::{AddressMode, CompareOp, Filter, Sampler, SamplerDesc};
 pub use submission::{Submission, SubmissionIndex};
 pub use surface::{Surface, SurfaceFrame, WindowHandle};
 pub use table::{SamplerTable, TextureTable};
-pub use texture::{Texture, TextureFormat};
+pub use texture::{Texture, TextureFormat, TextureRegion};
