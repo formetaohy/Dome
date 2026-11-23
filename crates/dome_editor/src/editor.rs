@@ -98,6 +98,7 @@ pub struct Editor {
     origin: Instant,
     hover: Option<Grip>,
     viewport_texture: Option<dome_gpu::Texture>,
+    ime: bool,
 }
 
 impl Editor {
@@ -151,6 +152,7 @@ impl Editor {
             origin: Instant::now(),
             hover: None,
             viewport_texture: None,
+            ime: false,
         }
     }
 
@@ -173,6 +175,7 @@ impl Editor {
         let mut preview = Preview::new(&context, &self.scene, Arc::clone(&self.registry));
         preview.set_debug(self.debug);
         self.session = Some(Session::new(context, surface, preview, &self.scene));
+        self.ime = false;
         self.sync_title(window);
     }
 
@@ -224,12 +227,36 @@ impl Editor {
     }
 
     fn save(&mut self) {
+        if self.conflict {
+            self.error = Some(format!(
+                "{} changed on disk: reload it or save over it",
+                self.path.display(),
+            ));
+            return;
+        }
+        self.write();
+    }
+
+    fn overwrite(&mut self) {
+        self.conflict = false;
+        self.write();
+    }
+
+    fn write(&mut self) {
         self.finish_drag();
+        self.commit();
         self.finish_property();
         self.scene.save(&self.path);
         self.rewatch();
         self.dirty = false;
-        self.conflict = false;
+    }
+
+    fn commit(&mut self) {
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        let actions = session.ui.commit();
+        self.apply_actions(actions);
     }
 
     fn reload(&mut self) {
@@ -792,6 +819,7 @@ impl Editor {
         }
         match action {
             Action::Save => self.save(),
+            Action::Overwrite => self.overwrite(),
             Action::Reload => self.reload(),
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
@@ -1060,6 +1088,20 @@ impl Editor {
         ui.render(&mut submission, frame.texture(), Some(scene));
         submission.present(frame);
         submission.submit(context.queue());
+        let caret = ui.edit_caret();
+        let editing = ui.editing();
+        if editing != self.ime {
+            window.set_ime_allowed(editing);
+            self.ime = editing;
+        }
+        if let Some(caret) = caret {
+            window.set_ime_cursor_area(
+                f64::from(caret.min.x),
+                f64::from(caret.min.y),
+                f64::from(caret.width()),
+                f64::from(caret.height()),
+            );
+        }
         Flow::Continue
     }
 
@@ -1275,6 +1317,7 @@ impl Editor {
                 }
             }
             Event::Key { pressed: false, .. } => {}
+            Event::Ime(_) => {}
             Event::CursorMoved { x, y } => {
                 let point = Vec2::new(*x / scale, *y / scale);
                 let delta = point - self.pointer;

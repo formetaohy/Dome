@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 mod memory;
 
 const ACQUIRE_SLOTS: usize = FRAMES_IN_FLIGHT * 2;
+const ACQUIRE_TIMEOUT_NANOS: u64 = 1_000_000_000;
 
 struct InstanceOwner {
     entry: Entry,
@@ -856,10 +857,28 @@ pub(crate) struct Group {
 struct GroupResource {
     set: vk::DescriptorSet,
     pool: Arc<GroupPool>,
-    buffers: Vec<Arc<BufferResource>>,
+    buffers: Vec<GroupBuffer>,
     textures: Vec<Arc<TextureResource>>,
     _samplers: Vec<crate::Sampler>,
     _pipeline: Arc<dyn Any + Send + Sync>,
+}
+
+struct GroupBuffer {
+    resource: Arc<BufferResource>,
+    writable: bool,
+}
+
+impl GroupBuffer {
+    fn access(&self, stages: vk::PipelineStageFlags) -> Access {
+        if self.writable {
+            Access::write(
+                stages,
+                vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
+            )
+        } else {
+            Access::read(stages, vk::AccessFlags::SHADER_READ)
+        }
+    }
 }
 
 struct Target {
@@ -1838,7 +1857,10 @@ impl Device {
             match resource {
                 BoundResource::Buffer(binding) => {
                     sources.push((descriptor_type(resource), buffer_infos.len(), 1));
-                    buffers.push(buffer(&binding.buffer).clone());
+                    buffers.push(GroupBuffer {
+                        resource: buffer(&binding.buffer).clone(),
+                        writable: binding.writable,
+                    });
                     buffer_infos.push(
                         vk::DescriptorBufferInfo::default()
                             .buffer(buffer(&binding.buffer).handle)
@@ -2785,12 +2807,10 @@ impl Device {
                             for held in &group.buffers {
                                 pending.touch(
                                     accesses,
-                                    Resource::Buffer(held.handle),
-                                    Access::write(
+                                    Resource::Buffer(held.resource.handle),
+                                    held.access(
                                         vk::PipelineStageFlags::VERTEX_SHADER
                                             | vk::PipelineStageFlags::FRAGMENT_SHADER,
-                                        vk::AccessFlags::SHADER_READ
-                                            | vk::AccessFlags::SHADER_WRITE,
                                     ),
                                 );
                             }
@@ -2828,6 +2848,11 @@ impl Device {
                         );
                     }
                     pending.flush(&self.core, command);
+                    if let Some(held) = &held {
+                        frame
+                            .resources
+                            .push(Arc::clone(held) as Arc<dyn Any + Send + Sync>);
+                    }
                     unsafe {
                         self.core.cmd_begin_render_pass(
                             command,
@@ -3090,11 +3115,8 @@ impl Device {
                     for held in &group.buffers {
                         pending.touch(
                             accesses,
-                            Resource::Buffer(held.handle),
-                            Access::write(
-                                vk::PipelineStageFlags::COMPUTE_SHADER,
-                                vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
-                            ),
+                            Resource::Buffer(held.resource.handle),
+                            held.access(vk::PipelineStageFlags::COMPUTE_SHADER),
                         );
                     }
                     pending.flush(&self.core, command);
@@ -3535,8 +3557,12 @@ impl Surface {
         }
         let acquire = self.acquire[self.acquired as usize % ACQUIRE_SLOTS];
         let (image, _) = match unsafe {
-            self.loader
-                .acquire_next_image(self.raw, u64::MAX, acquire, vk::Fence::null())
+            self.loader.acquire_next_image(
+                self.raw,
+                ACQUIRE_TIMEOUT_NANOS,
+                acquire,
+                vk::Fence::null(),
+            )
         } {
             Ok(image) => image,
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
@@ -3544,6 +3570,7 @@ impl Surface {
                     .store(true, std::sync::atomic::Ordering::Release);
                 return None;
             }
+            Err(vk::Result::TIMEOUT | vk::Result::NOT_READY) => return None,
             Err(error) => panic!("acquiring a Vulkan swapchain image: {error:?}"),
         };
         self.acquired = self.acquired.wrapping_add(1);

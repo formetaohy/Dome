@@ -32,6 +32,7 @@ use aaudio::Session;
 compile_error!("no audio device backend targets this platform");
 
 use std::fmt;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
@@ -40,6 +41,27 @@ use std::thread::{self, JoinHandle};
 pub type Render = Box<dyn FnMut(&mut [f32]) + Send>;
 
 const THREAD: &str = "dome audio";
+
+struct Life(Arc<AtomicBool>);
+
+impl Drop for Life {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+pub(crate) fn mix(render: &mut Render, block: &mut [f32]) {
+    if catch_unwind(AssertUnwindSafe(|| render(block))).is_err() {
+        std::process::abort();
+    }
+}
+
+fn aborting<T>(body: impl FnOnce() -> T) -> T {
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(held) => held,
+        Err(_) => std::process::abort(),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OutputFormat {
@@ -110,30 +132,29 @@ impl Output {
         let join = thread::Builder::new()
             .name(String::from(THREAD))
             .spawn(move || {
-                let session = match Session::open() {
-                    Ok(session) => session,
-                    Err(error) => {
-                        let _ = format_send.send(Err(error.clone()));
-                        let _ = ready_send.send(Err(error));
-                        thread_alive.store(false, Ordering::Release);
+                let _life = Life(thread_alive);
+                aborting(|| {
+                    let session = match Session::open() {
+                        Ok(session) => session,
+                        Err(error) => {
+                            let _ = format_send.send(Err(error.clone()));
+                            let _ = ready_send.send(Err(error));
+                            return;
+                        }
+                    };
+                    if format_send.send(Ok(session.format())).is_err() {
                         return;
                     }
-                };
-                if format_send.send(Ok(session.format())).is_err() {
-                    thread_alive.store(false, Ordering::Release);
-                    return;
-                }
-                let Ok(render) = render_recv.recv() else {
-                    thread_alive.store(false, Ordering::Release);
-                    return;
-                };
-                let ready = || {
-                    let _ = ready_send.send(Ok(()));
-                };
-                if let Err(error) = session.play(render, &thread_stop, &ready) {
-                    let _ = ready_send.send(Err(error));
-                }
-                thread_alive.store(false, Ordering::Release);
+                    let Ok(render) = render_recv.recv() else {
+                        return;
+                    };
+                    let ready = || {
+                        let _ = ready_send.send(Ok(()));
+                    };
+                    if let Err(error) = session.play(render, &thread_stop, &ready) {
+                        let _ = ready_send.send(Err(error));
+                    }
+                });
             })
             .expect("the audio device thread spawns");
         let format = match format_recv.recv() {

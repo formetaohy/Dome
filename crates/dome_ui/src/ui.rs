@@ -267,7 +267,9 @@ impl<A: Clone> Ui<A> {
         }
         self.focus
             .and_then(|node| self.tree.nodes.get(node))
-            .is_some_and(|node| node.visible && crate::dispatch::accepts(&node.content, key))
+            .is_some_and(|node| {
+                node.on_screen && node.visible && crate::dispatch::accepts(&node.content, key)
+            })
     }
 
     pub fn update(&mut self, size: Vec2, scale: f32, time: f64) -> Vec<A> {

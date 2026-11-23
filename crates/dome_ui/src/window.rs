@@ -1,6 +1,6 @@
 use crate::input::{Button, Event, Input, Key, Modifiers, ScrollDelta};
 use dome_math::Vec2;
-use dome_window::{Event as WindowEvent, KeyCode, MouseButton};
+use dome_window::{Event as WindowEvent, Ime, KeyCode, MouseButton};
 
 const LINE_STEP: f32 = 40.0;
 
@@ -61,6 +61,17 @@ impl Input {
                     }
                 }
             }
+            WindowEvent::Ime(ime) => match ime {
+                Ime::Preedit(text) => {
+                    self.push(Event::Preedit((!text.is_empty()).then(|| text.clone())));
+                }
+                Ime::Commit(text) => {
+                    self.push(Event::Preedit(None));
+                    self.push(Event::Text(text.clone()));
+                }
+                Ime::Enabled => {}
+                Ime::Disabled => self.push(Event::Preedit(None)),
+            },
             WindowEvent::Modifiers(state) => self.push(Event::Modifiers(Modifiers {
                 shift: state.shift_key(),
                 control: state.control_key(),

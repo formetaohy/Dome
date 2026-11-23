@@ -69,7 +69,7 @@ impl Temporality {
                 device,
                 program::motion_vectors(),
                 FORMAT,
-                PipelineState::TRANSPARENT,
+                PipelineState::TESTED,
             ),
             temporal_pipeline: GraphicsPipeline::new(
                 device,

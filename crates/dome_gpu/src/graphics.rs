@@ -138,6 +138,12 @@ impl PipelineState {
         alpha: false,
     };
 
+    pub const TESTED: Self = Self {
+        depth: DepthState::Test,
+        blend: BlendState::Opaque,
+        alpha: true,
+    };
+
     pub const COVERED: Self = Self {
         depth: DepthState::TestCovered,
         blend: BlendState::Opaque,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use dome_math::Vec2;
 
-use crate::atlas::{Atlas, GlyphRequest, GlyphSlot};
+use crate::atlas::{Atlas, GlyphRequest, GlyphSlot, Slot};
 use crate::font::{Fonts, IconGlyph};
 use crate::style::{Align, TypeStyle};
 
@@ -76,12 +76,12 @@ impl Text {
         if self.frame.is_multiple_of(120) {
             self.evict();
         }
-        let saturated = self.atlas.saturated();
-        if saturated {
-            self.atlas.reset();
-            self.entries.clear();
+        if !self.atlas.exhausted() {
+            return false;
         }
-        saturated
+        self.atlas.reset();
+        self.entries.clear();
+        true
     }
 
     pub fn set_pixels_per_point(&mut self, pixels_per_point: f32) {
@@ -345,7 +345,7 @@ impl Text {
         let pixels_per_point = self.pixels_per_point;
         let pen_x = origin.x * pixels_per_point;
         let baseline = origin.y * pixels_per_point;
-        let Some(slot) = self.atlas.slot(
+        let slot = self.atlas.slot(
             &mut self.fonts,
             GlyphRequest {
                 face,
@@ -354,7 +354,8 @@ impl Text {
                 pixels_per_point,
                 position: (pen_x, baseline),
             },
-        ) else {
+        );
+        let Slot::Ready(slot) = slot else {
             return;
         };
         plot(GlyphPlot {

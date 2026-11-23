@@ -1,4 +1,4 @@
-use crate::event::Event;
+use crate::event::{Event, Ime};
 use crate::window::{Window, WindowConfig};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -172,6 +172,12 @@ fn translate(event: &WindowEvent) -> Option<Event> {
             button: *button,
             pressed: *state == ElementState::Pressed,
         }),
+        WindowEvent::Ime(ime) => match ime {
+            winit::event::Ime::Preedit(text, _) => Some(Event::Ime(Ime::Preedit(text.clone()))),
+            winit::event::Ime::Commit(text) => Some(Event::Ime(Ime::Commit(text.clone()))),
+            winit::event::Ime::Enabled => Some(Event::Ime(Ime::Enabled)),
+            winit::event::Ime::Disabled => Some(Event::Ime(Ime::Disabled)),
+        },
         WindowEvent::CursorMoved { position, .. } => Some(Event::CursorMoved {
             x: position.x as f32,
             y: position.y as f32,

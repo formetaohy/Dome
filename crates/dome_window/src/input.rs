@@ -1,4 +1,4 @@
-use crate::event::{Event, KeyCode, ModifiersState, MouseButton};
+use crate::event::{Event, Ime, KeyCode, ModifiersState, MouseButton};
 use std::collections::HashSet;
 
 #[derive(Debug)]
@@ -14,6 +14,7 @@ pub struct Input {
     scroll_lines: [f32; 2],
     scroll_pixels: [f32; 2],
     modifiers: ModifiersState,
+    text: String,
     focused: bool,
 }
 
@@ -24,6 +25,7 @@ impl Input {
                 code,
                 pressed,
                 repeat,
+                text,
                 ..
             } => {
                 if pressed {
@@ -31,10 +33,15 @@ impl Input {
                     if fresh || !repeat {
                         self.keys_pressed.insert(code);
                     }
+                    if let Some(text) = text {
+                        self.text.push_str(&text);
+                    }
                 } else if self.keys.remove(&code) {
                     self.keys_released.insert(code);
                 }
             }
+            Event::Ime(Ime::Commit(text)) => self.text.push_str(&text),
+            Event::Ime(Ime::Preedit(_) | Ime::Enabled | Ime::Disabled) => {}
             Event::Button { button, pressed } => {
                 if pressed {
                     if self.buttons.insert(button) {
@@ -81,6 +88,7 @@ impl Input {
         self.keys_released.clear();
         self.buttons_pressed.clear();
         self.buttons_released.clear();
+        self.text.clear();
         self.cursor_delta = [0.0; 2];
         self.scroll_lines = [0.0; 2];
         self.scroll_pixels = [0.0; 2];
@@ -138,6 +146,10 @@ impl Input {
         self.modifiers
     }
 
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
     pub fn focused(&self) -> bool {
         self.focused
     }
@@ -157,6 +169,7 @@ impl Default for Input {
             scroll_lines: [0.0; 2],
             scroll_pixels: [0.0; 2],
             modifiers: ModifiersState::empty(),
+            text: String::new(),
             focused: true,
         }
     }

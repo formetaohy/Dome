@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::dispatch::{Finish, Source};
+use crate::dispatch::Finish;
 use crate::element::{Content, Layer};
 use crate::node::NodeId;
 use crate::ui::Ui;
@@ -49,7 +49,7 @@ impl<A: Clone> Ui<A> {
             if !self.tree.nodes.contains_key(id) {
                 continue;
             }
-            if !self.tree.nodes[id].visible {
+            if !self.tree.nodes[id].on_screen {
                 self.tree.nodes[id].runtime.active = false;
                 continue;
             }
@@ -98,7 +98,7 @@ impl<A: Clone> Ui<A> {
             let previous = self.tree.nodes[id].runtime.edit_prop;
             self.tree.nodes[id].runtime.edit_prop = editing;
             if editing && !active {
-                self.begin_edit(id, Source::Key);
+                self.begin_edit(id, None);
             } else if !editing && previous && active {
                 assert!(
                     self.edit == Some(id),
@@ -117,7 +117,7 @@ impl<A: Clone> Ui<A> {
         self.hits = hits;
         self.occluders.clear();
         for node in self.tree.nodes.values() {
-            if !node.visible || node.rect.is_empty() || node.layer == Layer::Content {
+            if !node.on_screen || node.rect.is_empty() || node.layer == Layer::Content {
                 continue;
             }
             if node.layer == Layer::Hud && !node.blocks_pointer {

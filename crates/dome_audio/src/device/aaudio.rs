@@ -1,4 +1,4 @@
-use crate::device::{OutputFormat, Render, Unavailable};
+use crate::device::{OutputFormat, Render, Unavailable, mix};
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -96,7 +96,7 @@ impl Session {
         ready();
         let mut block = vec![0.0f32; FRAMES * 2];
         'playing: while !stop.load(Ordering::Acquire) {
-            render(&mut block);
+            mix(&mut render, &mut block);
             let mut offset = 0usize;
             while offset < FRAMES {
                 let remaining = (FRAMES - offset) as i32;

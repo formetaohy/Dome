@@ -45,6 +45,9 @@ impl<A: Clone> Ui<A> {
             && editing.is_some_and(|node| self.tree.nodes[node].rect.contains(press_pointer));
         if primary.pressed && !inside_edit {
             self.begin_press(press_pointer);
+            if let Some(node) = self.press {
+                self.field_press(node);
+            }
         }
         if self.drag_scrollbar() {
             self.wheel();
@@ -202,7 +205,7 @@ impl<A: Clone> Ui<A> {
             .iter()
             .filter_map(|id| {
                 let node = self.tree.nodes.get(*id)?;
-                if !node.visible || node.rect.is_empty() || node.layer.index() < top {
+                if !node.on_screen || node.rect.is_empty() || node.layer.index() < top {
                     return None;
                 }
                 let scroll = node.scroll?;
@@ -496,36 +499,47 @@ impl<A: Clone> Ui<A> {
             self.wake_animation(previous);
         }
         let pressed = hit::resolve(&self.hits, press_pointer).map(|hit| hit.node);
+        self.press_at = press_pointer;
+        self.drag = None;
+        if self.dismiss_popups(pressed) {
+            self.press = None;
+            return;
+        }
         self.focus = pressed.filter(|node| self.tree.nodes[*node].interaction.is_focusable());
         self.press = pressed;
         if let Some(node) = self.press {
             self.wake_animation(node);
         }
-        self.press_at = press_pointer;
-        self.drag = None;
         self.focus_visible = false;
-        self.dismiss_popups();
     }
 
-    fn dismiss_popups(&mut self) {
+    fn dismiss_popups(&mut self, pressed: Option<NodeId>) -> bool {
         let pointer = self.pointer;
-        let pressed = self.press;
         let open = self
             .popup_anchors
             .iter()
             .filter(|(_, id)| self.tree.nodes[**id].runtime.open)
             .map(|(anchor, id)| (*anchor, *id))
             .collect::<Vec<_>>();
-        for (anchor, popup) in open {
-            if pressed == self.tree.node_at(anchor) {
-                continue;
-            }
-            let inside = self.tree.nodes[popup].rect.contains(pointer)
+        if open.is_empty() {
+            return false;
+        }
+        let mut inside = pressed.is_some_and(|node| {
+            open.iter()
+                .any(|(anchor, _)| self.tree.node_at(*anchor) == Some(node))
+        });
+        let mut dismissed = false;
+        for (_, popup) in open {
+            let held = self.tree.nodes[popup].rect.contains(pointer)
                 || pressed.is_some_and(|node| is_inside(&self.tree, popup, node));
-            if !inside {
+            if held {
+                inside = true;
+            } else {
                 self.set_popup(popup, false);
+                dismissed = true;
             }
         }
+        dismissed && !inside
     }
 
     fn activate(&mut self, node: NodeId, source: Source) {
@@ -543,7 +557,13 @@ impl<A: Clone> Ui<A> {
             Interaction::Field { .. } | Interaction::DragValue { .. }
         ) {
             if self.edit != Some(node) {
-                self.begin_edit(node, source);
+                self.begin_edit(
+                    node,
+                    match source {
+                        Source::Pointer => Some(self.press_at),
+                        Source::Key => None,
+                    },
+                );
             }
             self.focus = Some(node);
             return;
@@ -647,7 +667,7 @@ impl<A: Clone> Ui<A> {
         self.tree.invalidate_layout(node);
     }
 
-    pub(crate) fn begin_edit(&mut self, node: NodeId, source: Source) {
+    pub(crate) fn begin_edit(&mut self, node: NodeId, at: Option<Vec2>) {
         if self.edit != Some(node) {
             self.finish_edit(Finish::Write);
         }
@@ -678,10 +698,9 @@ impl<A: Clone> Ui<A> {
         };
         if select_all {
             edit.select_all(self.time);
-        } else if source == Source::Pointer {
+        } else if let Some(pointer) = at {
             let rect = self.tree.nodes[node].rect;
             let preedit = self.preedit.clone();
-            let pointer = self.pointer;
             let caret = crate::widget::field::caret_at(
                 &edit,
                 preedit.as_deref(),
@@ -700,6 +719,21 @@ impl<A: Clone> Ui<A> {
         self.focus_visible = false;
         self.input.clear_preedit();
         self.touch(node);
+    }
+
+    fn field_press(&mut self, node: NodeId) {
+        if !self.tree.nodes[node].enabled
+            || !matches!(self.tree.nodes[node].interaction, Interaction::Field { .. })
+        {
+            return;
+        }
+        let at = self.press_at;
+        if self.edit == Some(node) {
+            self.edit_press(node, at);
+            return;
+        }
+        self.begin_edit(node, Some(self.press_at));
+        self.edit_drag = true;
     }
 
     fn edit_press(&mut self, node: NodeId, at: Vec2) {
@@ -825,6 +859,11 @@ impl<A: Clone> Ui<A> {
         }
     }
 
+    pub fn commit(&mut self) -> Vec<A> {
+        self.finish_edit(Finish::Write);
+        std::mem::take(&mut self.actions)
+    }
+
     pub(crate) fn finish_edit(&mut self, finish: Finish) {
         let Some(node) = self.edit else {
             return;
@@ -895,7 +934,11 @@ impl<A: Clone> Ui<A> {
             return;
         }
         let focused = self.focus.filter(|node| {
-            self.tree.nodes.get(*node).is_some_and(|node| node.visible) && self.inside_modal(*node)
+            self.tree
+                .nodes
+                .get(*node)
+                .is_some_and(|node| node.on_screen && node.visible)
+                && self.inside_modal(*node)
         });
         for key in &keys {
             if matches!(key, InputKey::PageUp | InputKey::PageDown) {

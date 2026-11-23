@@ -77,9 +77,16 @@ struct Shelf {
 pub struct Atlas {
     pixels: Vec<u8>,
     shelves: Vec<Shelf>,
-    slots: HashMap<GlyphKey, GlyphSlot>,
-    used: u64,
+    slots: HashMap<GlyphKey, Option<GlyphSlot>>,
     revision: u64,
+    exhausted: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Slot {
+    Ready(GlyphSlot),
+    Missing,
+    Full,
 }
 
 impl Default for Atlas {
@@ -94,8 +101,8 @@ impl Atlas {
             pixels: vec![0u8; (SIZE * SIZE) as usize],
             shelves: Vec::new(),
             slots: HashMap::new(),
-            used: 0,
             revision: 0,
+            exhausted: false,
         }
     }
 
@@ -111,19 +118,22 @@ impl Atlas {
         self.revision
     }
 
-    pub fn saturated(&self) -> bool {
-        self.used * 8 >= u64::from(SIZE) * u64::from(SIZE) * 7
+    pub fn exhausted(&self) -> bool {
+        self.exhausted
     }
 
     pub fn reset(&mut self) {
         self.pixels.fill(0);
         self.shelves.clear();
         self.slots.clear();
-        self.used = 0;
+        self.exhausted = false;
         self.touch();
     }
 
-    pub fn slot(&mut self, fonts: &mut Fonts, request: GlyphRequest) -> Option<GlyphSlot> {
+    pub fn slot(&mut self, fonts: &mut Fonts, request: GlyphRequest) -> Slot {
+        if self.exhausted {
+            return Slot::Full;
+        }
         let fraction_x = request.position.0.rem_euclid(1.0);
         let fraction_y = request.position.1.rem_euclid(1.0);
         let quantized_x = ((fraction_x * 4.0).round() as u8).min(3);
@@ -135,19 +145,25 @@ impl Atlas {
             request.pixels_per_point,
         )
         .with_subpixel(quantized_x, quantized_y);
-        if let Some(slot) = self.slots.get(&key) {
-            return Some(*slot);
+        if let Some(held) = self.slots.get(&key) {
+            return held.map_or(Slot::Missing, Slot::Ready);
         }
-        let raster = fonts.rasterize(
+        let Some(raster) = fonts.rasterize(
             request.face,
             request.id,
             request.style,
             request.pixels_per_point,
             [quantized_x as f32 / 4.0, quantized_y as f32 / 4.0],
-        )?;
-        let slot = self.insert(&raster)?;
-        self.slots.insert(key, slot);
-        Some(slot)
+        ) else {
+            self.slots.insert(key, None);
+            return Slot::Missing;
+        };
+        let Some(slot) = self.insert(&raster) else {
+            self.exhausted = true;
+            return Slot::Full;
+        };
+        self.slots.insert(key, Some(slot));
+        Slot::Ready(slot)
     }
 
     fn insert(&mut self, raster: &GlyphRaster) -> Option<GlyphSlot> {
@@ -157,7 +173,6 @@ impl Atlas {
             return None;
         }
         let (x, y) = self.allocate(width, height)?;
-        self.used += u64::from(width) * u64::from(height);
         for row in 0..raster.height {
             let source = (row * raster.width) as usize;
             let destination = ((y + PADDING + row) * SIZE + x + PADDING) as usize;

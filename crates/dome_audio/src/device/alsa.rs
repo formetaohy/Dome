@@ -1,4 +1,4 @@
-use crate::device::{OutputFormat, Render, Unavailable};
+use crate::device::{OutputFormat, Render, Unavailable, mix};
 use libloading::{Library, Symbol};
 use std::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::ptr;
@@ -123,7 +123,7 @@ impl Session {
         ready();
         let mut block = vec![0.0f32; PERIOD_FRAMES as usize * 2];
         'playing: while !stop.load(Ordering::Acquire) {
-            render(&mut block);
+            mix(&mut render, &mut block);
             let mut offset = 0usize;
             while offset < PERIOD_FRAMES as usize {
                 let remaining = PERIOD_FRAMES as c_ulong - offset as c_ulong;

@@ -78,6 +78,8 @@ pub(crate) struct BoundBuffer {
     pub(crate) offset: u64,
     #[cfg(vulkan_backend)]
     pub(crate) size: u64,
+    #[cfg(vulkan_backend)]
+    pub(crate) writable: bool,
 }
 
 #[derive(Clone)]
@@ -366,6 +368,8 @@ fn bounded(
                         offset: binding.offset,
                         #[cfg(vulkan_backend)]
                         size: binding.size,
+                        #[cfg(vulkan_backend)]
+                        writable: spec.kind.writable(),
                     })
                 }
                 (BindingKind::SampledImage, Resource::Texture(texture)) => {

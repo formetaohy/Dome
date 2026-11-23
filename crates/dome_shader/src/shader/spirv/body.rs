@@ -193,16 +193,19 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
         self.writer.module.pointee(ty).0
     }
 
-    fn atomic_scope(&mut self, pointer: ValueId, ordering: u32) -> (u32, u32) {
-        let space = self.pointer_space(pointer);
-        let scope = if space == Space::WorkGroup {
-            scope::WORKGROUP
+    fn atomic_space(&self, pointer: ValueId) -> (u32, u32) {
+        if self.pointer_space(pointer) == Space::WorkGroup {
+            (scope::WORKGROUP, semantics::WORKGROUP_MEMORY)
         } else {
-            scope::DEVICE
-        };
+            (scope::DEVICE, semantics::UNIFORM_MEMORY)
+        }
+    }
+
+    fn atomic_ordering(&mut self, pointer: ValueId, ordering: u32) -> (u32, u32) {
+        let (scope, memory) = self.atomic_space(pointer);
         (
             self.writer.integer(Scalar::U32, scope),
-            self.writer.integer(Scalar::U32, ordering),
+            self.writer.integer(Scalar::U32, ordering | memory),
         )
     }
 
@@ -367,7 +370,7 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                     .pointee(self.writer.module.value_ty(*pointer))
                     .1;
                 if matches!(self.writer.module.ty(pointee), Type::Atomic(_)) {
-                    let (scope, ordering) = self.atomic_scope(*pointer, semantics::ACQUIRE);
+                    let (scope, ordering) = self.atomic_ordering(*pointer, semantics::ACQUIRE);
                     self.push(
                         Instruction::result(ATOMIC_LOAD, ty, id)
                             .operand(self.value(*pointer))
@@ -389,7 +392,7 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                     .pointee(self.writer.module.value_ty(*pointer))
                     .1;
                 if matches!(self.writer.module.ty(pointee), Type::Atomic(_)) {
-                    let (scope, ordering) = self.atomic_scope(*pointer, semantics::RELEASE);
+                    let (scope, ordering) = self.atomic_ordering(*pointer, semantics::RELEASE);
                     self.push(
                         Instruction::plain(ATOMIC_STORE)
                             .operand(self.value(*pointer))
@@ -649,14 +652,16 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
             } => {
                 let scalar = self.scalar(*value);
                 let opcode = atomic_opcode(*op, scalar);
-                let (scope, relaxed) = self.atomic_scope(*pointer, semantics::RELAXED);
+                let scope = self.atomic_space(*pointer).0;
+                let scope = self.writer.integer(Scalar::U32, scope);
+                let ordering = self.writer.integer(Scalar::U32, semantics::RELAXED);
                 let ty = self.writer.value_types[result];
                 let id = self.value(*result);
                 self.push(
                     Instruction::result(opcode, ty, id)
                         .operand(self.value(*pointer))
                         .operand(scope)
-                        .operand(relaxed)
+                        .operand(ordering)
                         .operand(self.value(*value)),
                 );
             }
@@ -666,13 +671,11 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                 desired,
                 result,
             } => {
-                let (scope, ordering) = self.atomic_scope(
-                    *pointer,
-                    semantics::ACQUIRE_RELEASE | semantics::UNIFORM_MEMORY,
-                );
+                let (scope, ordering) = self.atomic_ordering(*pointer, semantics::ACQUIRE_RELEASE);
+                let (_, memory) = self.atomic_space(*pointer);
                 let unequal = self
                     .writer
-                    .integer(Scalar::U32, semantics::ACQUIRE | semantics::UNIFORM_MEMORY);
+                    .integer(Scalar::U32, semantics::ACQUIRE | memory);
                 let ty = self.writer.value_types[result];
                 let id = self.value(*result);
                 self.push(

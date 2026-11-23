@@ -1,4 +1,4 @@
-use crate::device::{OutputFormat, Render, Unavailable};
+use crate::device::{OutputFormat, Render, Unavailable, mix};
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::ptr;
@@ -240,7 +240,7 @@ unsafe extern "C" fn output(
     }
     let samples = frames as usize * CHANNELS as usize;
     let samples = unsafe { std::slice::from_raw_parts_mut(buffer.data.cast::<f32>(), samples) };
-    render(samples);
+    mix(render, samples);
     buffer.data_byte_size = (samples.len() * size_of::<f32>()) as u32;
     0
 }

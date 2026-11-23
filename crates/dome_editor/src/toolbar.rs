@@ -115,6 +115,11 @@ pub(crate) fn build(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Elemen
                 .key(Key::new("toolbar.reload"))
                 .press(Action::Reload),
         );
+        items.push(
+            widget::icon_button(Icon::Warning, 32.0, Role::Error, "Save over Disk")
+                .key(Key::new("toolbar.overwrite"))
+                .press(Action::Overwrite),
+        );
     }
     let island = Element::row()
         .key(Key::new("toolbar"))

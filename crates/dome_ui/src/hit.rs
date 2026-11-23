@@ -35,7 +35,7 @@ fn walk<A>(
     within: bool,
 ) {
     let node = &tree.nodes[id];
-    if !node.visible {
+    if !node.on_screen {
         return;
     }
     let clip = node.clip;

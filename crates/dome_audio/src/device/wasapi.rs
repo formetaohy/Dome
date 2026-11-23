@@ -1,4 +1,4 @@
-use crate::device::{OutputFormat, Render, Unavailable};
+use crate::device::{OutputFormat, Render, Unavailable, mix};
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::ptr;
@@ -217,7 +217,7 @@ impl Session {
             let Ok(destination) = (unsafe { self.render.GetBuffer(available) }) else {
                 break;
             };
-            render(&mut self.scratch[..frames * 2]);
+            mix(&mut render, &mut self.scratch[..frames * 2]);
             self.write(destination, frames);
             if unsafe { self.render.ReleaseBuffer(available, 0) }.is_err() {
                 break;

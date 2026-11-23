@@ -1,6 +1,14 @@
 pub use winit::event::MouseButton;
 pub use winit::keyboard::{KeyCode, ModifiersState};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Ime {
+    Preedit(String),
+    Commit(String),
+    Enabled,
+    Disabled,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Resized {
@@ -18,6 +26,7 @@ pub enum Event {
         repeat: bool,
         text: Option<String>,
     },
+    Ime(Ime),
     Button {
         button: MouseButton,
         pressed: bool,

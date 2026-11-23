@@ -77,7 +77,7 @@ impl<A: Clone> Ui<A> {
             let mut painter = Painter::new(&mut instances, &mut self.text, &self.textures, clip);
             if focus_visible
                 && let Some(node) = focus
-                && self.tree.nodes[node].visible
+                && self.tree.nodes[node].on_screen
             {
                 let (rect, corners, node_clip) = {
                     let node = &self.tree.nodes[node];

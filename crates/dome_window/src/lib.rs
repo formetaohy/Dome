@@ -4,7 +4,7 @@ mod input;
 mod key;
 mod window;
 
-pub use event::Event;
+pub use event::{Event, Ime};
 pub use host::{Flow, Handler, run};
 pub use input::Input;
 pub use key::{KEY_NAMES, key_code, key_name};

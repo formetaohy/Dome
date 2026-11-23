@@ -45,7 +45,7 @@ impl<A: Clone> Ui<A> {
     }
 
     fn paint_node<'a>(&mut self, id: NodeId, canvases: &SecondaryMap<NodeId, CanvasPaint<'a>>) {
-        if !self.tree.nodes[id].visible {
+        if !self.tree.nodes[id].on_screen {
             if self.tree.nodes[id].painted {
                 let layer = self.tree.nodes[id].layer.index();
                 self.tree.nodes[id].painted = false;
@@ -237,7 +237,7 @@ impl<A: Clone> Ui<A> {
         let node = &mut tree.nodes[id];
         let index = node.layer.index();
         if layers[index].rebuild {
-            if node.visible && node.painted && !node.paint.is_empty() {
+            if node.on_screen && node.painted && !node.paint.is_empty() {
                 let start = materials[index].len() as u32;
                 materials[index].extend_from_slice(&node.paint.material);
                 node.layer_range = (start, materials[index].len() as u32);

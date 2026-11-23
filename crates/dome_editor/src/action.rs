@@ -72,6 +72,7 @@ pub enum ParameterKind {
 #[derive(Clone, Debug)]
 pub enum Action {
     Save,
+    Overwrite,
     Reload,
     Undo,
     Redo,

@@ -414,7 +414,7 @@ impl LayoutEngine<'_> {
             let node = &tree.nodes[id];
             if !node.arrange_dirty
                 && node.arranged
-                && node.visible
+                && node.on_screen
                 && node.rect == rect
                 && node.arranged_clip == parent_clip
             {
@@ -432,11 +432,11 @@ impl LayoutEngine<'_> {
             parent_clip
         };
         let mut hit_change = false;
-        let restored = !tree.nodes[id].visible;
+        let restored = !tree.nodes[id].on_screen;
         let moved = tree.nodes[id].rect != rect;
         {
             let node = &mut tree.nodes[id];
-            if !node.visible
+            if !node.on_screen
                 || node.rect != rect
                 || node.clip != clip.rect
                 || node.clip_corners != clip.corners
@@ -448,6 +448,7 @@ impl LayoutEngine<'_> {
             node.clip = clip.rect;
             node.clip_corners = clip.corners;
             node.visible = true;
+            node.on_screen = true;
             node.arranged = true;
             node.arrange_dirty = false;
             node.arranged_clip = parent_clip;
@@ -575,7 +576,7 @@ impl LayoutEngine<'_> {
         if rect.expand(CULL_MARGIN).intersects(clip.rect) {
             self.arrange(tree, id, rect, clip);
         } else {
-            hide(tree, id);
+            clip_out(tree, id);
         }
     }
 
@@ -604,7 +605,7 @@ impl LayoutEngine<'_> {
             } else if tree.nodes[child].position.is_some() || window.intersects(child_rect) {
                 self.arrange(tree, child, child_rect, clip);
             } else {
-                hide(tree, child);
+                clip_out(tree, child);
             }
             match spec.axis {
                 Axis::Column => cursor.y += size.y,
@@ -622,7 +623,7 @@ impl LayoutEngine<'_> {
         }
         let Some(anchor) = tree
             .node_at(spec.anchor)
-            .filter(|id| tree.nodes[*id].visible)
+            .filter(|id| tree.nodes[*id].on_screen)
         else {
             hide(tree, id);
             return;
@@ -653,7 +654,7 @@ impl LayoutEngine<'_> {
         let corners = Corners::all(self.theme.metrics.corner_md);
         let clip = Clip::new(screen, Corners::ZERO).intersect(rect, corners);
         let mut changed = false;
-        let restored = !tree.nodes[id].visible;
+        let restored = !tree.nodes[id].on_screen;
         {
             let node = &mut tree.nodes[id];
             if restored
@@ -668,6 +669,7 @@ impl LayoutEngine<'_> {
             node.clip = clip.rect;
             node.clip_corners = clip.corners;
             node.visible = true;
+            node.on_screen = true;
             node.measured = rect.size();
         }
         if restored {
@@ -707,6 +709,7 @@ fn hide<A>(tree: &mut Tree<A>, id: NodeId) {
         return;
     }
     tree.nodes[id].visible = false;
+    tree.nodes[id].on_screen = false;
     tree.hits = true;
     tree.focus = true;
     tree.modal = true;
@@ -716,6 +719,19 @@ fn hide<A>(tree: &mut Tree<A>, id: NodeId) {
     for index in 0..tree.nodes[id].children.len() {
         let child = tree.nodes[id].children[index];
         hide(tree, child);
+    }
+}
+
+fn clip_out<A>(tree: &mut Tree<A>, id: NodeId) {
+    if !tree.nodes[id].on_screen {
+        return;
+    }
+    tree.nodes[id].on_screen = false;
+    tree.hits = true;
+    tree.modal = true;
+    for index in 0..tree.nodes[id].children.len() {
+        let child = tree.nodes[id].children[index];
+        clip_out(tree, child);
     }
 }
 

@@ -61,6 +61,17 @@ impl Window {
         self.raw.set_theme(theme);
     }
 
+    pub fn set_ime_allowed(&self, allowed: bool) {
+        self.raw.set_ime_allowed(allowed);
+    }
+
+    pub fn set_ime_cursor_area(&self, x: f64, y: f64, width: f64, height: f64) {
+        self.raw.set_ime_cursor_area(
+            winit::dpi::LogicalPosition::new(x, y),
+            winit::dpi::LogicalSize::new(width, height),
+        );
+    }
+
     pub fn set_title(&self, title: &str) {
         self.raw.set_title(title);
     }

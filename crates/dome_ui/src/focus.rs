@@ -22,7 +22,7 @@ impl<A: Clone> Ui<A> {
 
     fn collect_focus_in(&self, id: NodeId, out: &mut Vec<NodeId>) {
         let node = &self.tree.nodes[id];
-        if !node.visible || !node.enabled {
+        if !node.on_screen || !node.visible || !node.enabled {
             return;
         }
         if node.interaction.is_focusable() {
