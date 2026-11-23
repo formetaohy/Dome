@@ -1,4 +1,6 @@
-use crate::compiler::resource::{AtomicU32, Fvec2, Fvec4, Sampler, Texture2D, Uvec4};
+use crate::compiler::resource::{
+    AtomicU32, ComparisonSampler, Depth2D, Fvec2, Fvec4, Sampler, Texture2D, Uvec4,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Reach {
@@ -74,6 +76,7 @@ vocabulary! {
     UnpackHalf2x16 "unpack2x16float" Kernel 1 true;
     Sample "sample" Kernel 3 true;
     SampleLod "sample_lod" Kernel 4 true;
+    SampleCompare "sample_compare" Kernel 4 true;
     Dpdx "dpdx" Kernel 1 true;
     Dpdy "dpdy" Kernel 1 true;
     AtomicLoad "atomic_load" Kernel 1 true;
@@ -241,6 +244,15 @@ pub fn sample_lod(
     _coordinates: Fvec2,
     _level: f32,
 ) -> Fvec4 {
+    unreachable!("a shader intrinsic runs only on a GPU")
+}
+
+pub fn sample_compare(
+    _depth: Depth2D,
+    _sampler: ComparisonSampler,
+    _coordinates: Fvec2,
+    _reference: f32,
+) -> f32 {
     unreachable!("a shader intrinsic runs only on a GPU")
 }
 

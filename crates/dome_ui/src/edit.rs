@@ -1,6 +1,7 @@
 use dome_math::Vec2;
 
 use crate::clipboard::Clipboard;
+use crate::grapheme::{self, Boundary, Class};
 use crate::input::{Input, Key};
 
 const BLINK_PERIOD: f32 = 1.06;
@@ -21,36 +22,19 @@ pub enum Outcome {
     Cancel,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Class {
-    Word,
-    Space,
-    Symbol,
-}
-
-fn class(character: char) -> Class {
-    if character.is_alphanumeric() || character == '_' {
-        Class::Word
-    } else if character.is_whitespace() {
-        Class::Space
-    } else {
-        Class::Symbol
-    }
-}
-
 #[derive(Clone, Debug)]
 struct Snapshot {
     text: String,
-    anchor: usize,
-    caret: usize,
+    anchor: Boundary,
+    caret: Boundary,
 }
 
 #[derive(Clone, Debug)]
 pub struct Edit {
     key: u64,
     text: String,
-    anchor: usize,
-    caret: usize,
+    anchor: Boundary,
+    caret: Boundary,
     active_at: f32,
     clicks: u32,
     last_click: Option<(f32, Vec2)>,
@@ -61,11 +45,12 @@ pub struct Edit {
 
 impl Edit {
     pub fn new(key: u64, text: &str, time: f32) -> Self {
+        let end = Boundary::end(text);
         Self {
             key,
             text: text.to_string(),
-            anchor: 0,
-            caret: text.chars().count(),
+            anchor: end,
+            caret: end,
             active_at: time,
             clicks: 0,
             last_click: None,
@@ -90,19 +75,19 @@ impl Edit {
         &self.text
     }
 
-    pub fn caret(&self) -> usize {
+    pub fn caret(&self) -> Boundary {
         self.caret
     }
 
-    pub fn anchor(&self) -> usize {
+    pub fn anchor(&self) -> Boundary {
         self.anchor
     }
 
     pub fn length(&self) -> usize {
-        self.text.chars().count()
+        self.text.len()
     }
 
-    pub fn selection(&self) -> Option<(usize, usize)> {
+    pub fn selection(&self) -> Option<(Boundary, Boundary)> {
         (self.caret != self.anchor)
             .then(|| (self.caret.min(self.anchor), self.caret.max(self.anchor)))
     }
@@ -115,55 +100,31 @@ impl Edit {
         if preedit.is_empty() {
             return self.text.clone();
         }
-        let length = self.length();
-        let (start, end) = self
-            .selection()
-            .unwrap_or((self.caret.min(length), self.caret.min(length)));
+        let (start, end) = self.selection().unwrap_or((self.caret, self.caret));
         let mut composed = String::with_capacity(self.text.len() + preedit.len());
-        for (index, character) in self.text.chars().enumerate() {
-            if index == start {
-                composed.push_str(preedit);
-            }
-            if index >= start && index < end {
-                continue;
-            }
-            composed.push(character);
-        }
-        if start >= length {
-            composed.push_str(preedit);
-        }
+        composed.push_str(&self.text[..start.byte()]);
+        composed.push_str(preedit);
+        composed.push_str(&self.text[end.byte()..]);
         composed
     }
 
-    fn offset(&self, index: usize) -> usize {
-        let index = index.min(self.length());
-        let mut offset = self.text.len();
-        for (count, (position, _)) in self.text.char_indices().enumerate() {
-            if count == index {
-                offset = position;
-                break;
-            }
-        }
-        offset
-    }
-
-    pub fn place(&mut self, caret: usize, extend: bool, time: f32) {
-        self.caret = caret.min(self.length());
+    pub fn place(&mut self, caret: Boundary, extend: bool, time: f32) {
+        self.caret = caret;
         if !extend {
-            self.anchor = self.caret;
+            self.anchor = caret;
         }
         self.active_at = time;
     }
 
-    pub fn select(&mut self, range: (usize, usize), time: f32) {
-        self.anchor = range.0.min(self.length());
-        self.caret = range.1.min(self.length());
+    pub fn select(&mut self, range: (Boundary, Boundary), time: f32) {
+        self.anchor = range.0;
+        self.caret = range.1;
         self.active_at = time;
     }
 
     pub fn select_all(&mut self, time: f32) {
-        self.anchor = 0;
-        self.caret = self.length();
+        self.anchor = Boundary::start();
+        self.caret = Boundary::end(&self.text);
         self.active_at = time;
     }
 
@@ -182,120 +143,142 @@ impl Edit {
         count
     }
 
-    pub fn word(&self, caret: usize) -> (usize, usize) {
-        let characters = self.text.chars().collect::<Vec<_>>();
-        if characters.is_empty() {
-            return (0, 0);
+    pub fn word(&self, caret: Boundary) -> (Boundary, Boundary) {
+        let clusters = grapheme::clusters(&self.text).collect::<Vec<_>>();
+        if clusters.is_empty() {
+            return (caret, caret);
         }
-        let caret = caret.min(characters.len());
-        let index = caret.min(characters.len() - 1);
-        let kind = class(characters[index]);
-        if kind == Class::Space {
+        let index = clusters
+            .partition_point(|cluster| cluster.start < caret)
+            .min(clusters.len() - 1);
+        let class = clusters[index].class();
+        if class == Class::Space {
             return (caret, caret);
         }
         let mut start = index;
-        while start > 0 && class(characters[start - 1]) == kind {
+        while start > 0 && clusters[start - 1].class() == class {
             start -= 1;
         }
         let mut end = index + 1;
-        while end < characters.len() && class(characters[end]) == kind {
+        while end < clusters.len() && clusters[end].class() == class {
             end += 1;
         }
-        (start, end)
+        (clusters[start].start, clusters[end - 1].end)
     }
 
-    fn previous_word(&self, caret: usize) -> usize {
-        let characters = self.text.chars().collect::<Vec<_>>();
-        let mut index = caret.min(characters.len());
-        while index > 0 && class(characters[index - 1]) == Class::Space {
+    fn previous_word(&self, caret: Boundary) -> Boundary {
+        let clusters = grapheme::clusters(&self.text).collect::<Vec<_>>();
+        let mut index = clusters
+            .iter()
+            .take_while(|cluster| cluster.end <= caret)
+            .count();
+        while index > 0 && clusters[index - 1].class() == Class::Space {
             index -= 1;
         }
         if index == 0 {
-            return 0;
+            return Boundary::start();
         }
-        let kind = class(characters[index - 1]);
-        while index > 0 && class(characters[index - 1]) == kind {
+        let class = clusters[index - 1].class();
+        while index > 0 && clusters[index - 1].class() == class {
             index -= 1;
         }
-        index
+        clusters
+            .get(index)
+            .map_or_else(Boundary::start, |cluster| cluster.start)
     }
 
-    fn next_word(&self, caret: usize) -> usize {
-        let characters = self.text.chars().collect::<Vec<_>>();
-        let mut index = caret.min(characters.len());
-        while index < characters.len() && class(characters[index]) == Class::Space {
+    fn next_word(&self, caret: Boundary) -> Boundary {
+        let clusters = grapheme::clusters(&self.text).collect::<Vec<_>>();
+        let mut index = clusters.partition_point(|cluster| cluster.start < caret);
+        while index < clusters.len() && clusters[index].class() == Class::Space {
             index += 1;
         }
-        if index == characters.len() {
-            return index;
+        if index == clusters.len() {
+            return Boundary::end(&self.text);
         }
-        let kind = class(characters[index]);
-        while index < characters.len() && class(characters[index]) == kind {
+        let class = clusters[index].class();
+        while index < clusters.len() && clusters[index].class() == class {
             index += 1;
         }
-        index
+        clusters
+            .get(index)
+            .map_or_else(|| Boundary::end(&self.text), |cluster| cluster.start)
     }
 
-    fn line_span(&self, line: usize) -> (usize, usize) {
-        let characters = self.text.chars().collect::<Vec<_>>();
-        let mut start = 0;
-        let mut current = 0;
-        for (index, character) in characters.iter().enumerate() {
-            if current == line {
-                if *character == '\n' {
-                    return (start, index);
-                }
-            } else if *character == '\n' {
-                current += 1;
-                start = index + 1;
+    fn line_bounds(&self, line: usize) -> (usize, usize) {
+        let mut start = 0usize;
+        let mut current = 0usize;
+        for (offset, character) in self.text.char_indices() {
+            if character != '\n' {
+                continue;
             }
+            if current == line {
+                return (start, offset);
+            }
+            current += 1;
+            start = offset + 1;
         }
-        (start, characters.len())
+        (start, self.text.len())
+    }
+
+    fn line_count(&self) -> usize {
+        self.text.matches('\n').count() + 1
+    }
+
+    fn line_span(&self, line: usize) -> (Boundary, Boundary) {
+        let (start, end) = self.line_bounds(line);
+        let end = Boundary::floor(&self.text, end);
+        (Boundary::ceil(&self.text, start).min(end), end)
     }
 
     fn caret_line(&self) -> (usize, usize) {
-        let characters = self.text.chars().collect::<Vec<_>>();
-        let caret = self.caret.min(characters.len());
-        let mut line = 0;
-        let mut start = 0;
-        for (index, character) in characters.iter().enumerate().take(caret) {
-            if *character == '\n' {
+        let caret = self.caret.byte();
+        let mut line = 0usize;
+        let mut start = 0usize;
+        for (offset, character) in self.text.char_indices() {
+            if offset >= caret {
+                break;
+            }
+            if character == '\n' {
                 line += 1;
-                start = index + 1;
+                start = offset + 1;
             }
         }
-        (line, caret - start)
+        let start = Boundary::ceil(&self.text, start).byte();
+        (line, grapheme::clusters(&self.text[start..caret]).count())
     }
 
     fn vertical(&mut self, delta: i32, extend: bool, time: f32) {
         let (line, column) = self.caret_line();
-        let characters = self.text.chars().collect::<Vec<_>>();
-        let count = characters
-            .iter()
-            .filter(|character| **character == '\n')
-            .count()
-            + 1;
-        let target = (line as i32 + delta).clamp(0, count as i32 - 1) as usize;
+        let target = (line as i32 + delta).clamp(0, self.line_count() as i32 - 1) as usize;
         let (start, end) = self.line_span(target);
-        self.place((start + column).min(end), extend, time);
+        let caret = if column == 0 {
+            start
+        } else {
+            grapheme::clusters(&self.text)
+                .filter(|cluster| cluster.start >= start && cluster.end <= end)
+                .nth(column - 1)
+                .map_or(end, |cluster| cluster.end)
+        };
+        self.place(caret, extend, time);
     }
 
     fn home(&mut self, extend: bool, time: f32) {
-        if self.multiline {
-            let (start, _) = self.line_span(self.caret_line().0);
-            self.place(start, extend, time);
+        let caret = if self.multiline {
+            self.line_span(self.caret_line().0).0
         } else {
-            self.place(0, extend, time);
-        }
+            Boundary::start()
+        };
+        self.place(caret, extend, time);
     }
 
     fn end(&mut self, extend: bool, time: f32) {
-        if self.multiline {
-            let (_, end) = self.line_span(self.caret_line().0);
-            self.place(end, extend, time);
+        let caret = if self.multiline {
+            self.line_span(self.caret_line().0).1
         } else {
-            self.place(self.length(), extend, time);
-        }
+            Boundary::end(&self.text)
+        };
+        self.place(caret, extend, time);
     }
 
     fn remember(&mut self) {
@@ -418,7 +401,7 @@ impl Edit {
 
     fn selected_text(&self) -> Option<String> {
         let (start, end) = self.selection()?;
-        Some(self.text[self.offset(start)..self.offset(end)].to_string())
+        Some(self.text[start.byte()..end.byte()].to_string())
     }
 
     fn copy(&self, clipboard: &mut dyn Clipboard) {
@@ -444,14 +427,9 @@ impl Edit {
 
     fn replace(&mut self, text: &str, time: f32) {
         self.remember();
-        let (start, end) = match self.selection() {
-            Some((start, end)) => (start, end),
-            None => (self.caret, self.caret),
-        };
-        let start_offset = self.offset(start);
-        let end_offset = self.offset(end);
-        self.text.replace_range(start_offset..end_offset, text);
-        self.caret = start + text.chars().count();
+        let (start, end) = self.selection().unwrap_or((self.caret, self.caret));
+        self.text.replace_range(start.byte()..end.byte(), text);
+        self.caret = Boundary::ceil(&self.text, start.byte() + text.len());
         self.anchor = self.caret;
         self.active_at = time;
     }
@@ -459,27 +437,31 @@ impl Edit {
     fn erase_before(&mut self, time: f32) {
         if self.selection().is_some() {
             self.replace("", time);
-        } else if self.caret > 0 {
-            self.remember();
-            let end = self.offset(self.caret);
-            let start = self.offset(self.caret - 1);
-            self.text.replace_range(start..end, "");
-            self.caret -= 1;
-            self.anchor = self.caret;
-            self.active_at = time;
+            return;
         }
+        let Some(start) = self.caret.previous(&self.text) else {
+            return;
+        };
+        self.remember();
+        self.text.replace_range(start.byte()..self.caret.byte(), "");
+        self.caret = Boundary::floor(&self.text, start.byte());
+        self.anchor = self.caret;
+        self.active_at = time;
     }
 
     fn erase_after(&mut self, time: f32) {
         if self.selection().is_some() {
             self.replace("", time);
-        } else if self.caret < self.length() {
-            self.remember();
-            let start = self.offset(self.caret);
-            let end = self.offset(self.caret + 1);
-            self.text.replace_range(start..end, "");
-            self.active_at = time;
+            return;
         }
+        let Some(end) = self.caret.next(&self.text) else {
+            return;
+        };
+        self.remember();
+        self.text.replace_range(self.caret.byte()..end.byte(), "");
+        self.caret = Boundary::floor(&self.text, self.caret.byte());
+        self.anchor = self.caret;
+        self.active_at = time;
     }
 
     fn erase_word_before(&mut self, time: f32) {
@@ -490,11 +472,9 @@ impl Edit {
         let start = self.previous_word(self.caret);
         if start < self.caret {
             self.remember();
-            let start_offset = self.offset(start);
-            let end_offset = self.offset(self.caret);
-            self.text.replace_range(start_offset..end_offset, "");
-            self.caret = start;
-            self.anchor = start;
+            self.text.replace_range(start.byte()..self.caret.byte(), "");
+            self.caret = Boundary::floor(&self.text, start.byte());
+            self.anchor = self.caret;
             self.active_at = time;
         }
     }
@@ -507,22 +487,26 @@ impl Edit {
         let end = self.next_word(self.caret);
         if self.caret < end {
             self.remember();
-            let start_offset = self.offset(self.caret);
-            let end_offset = self.offset(end);
-            self.text.replace_range(start_offset..end_offset, "");
+            self.text.replace_range(self.caret.byte()..end.byte(), "");
+            self.caret = Boundary::floor(&self.text, self.caret.byte());
+            self.anchor = self.caret;
             self.active_at = time;
         }
     }
 
     fn step(&mut self, delta: i32, extend: bool, time: f32) {
-        let caret = if extend {
+        let from = if extend {
             self.caret
         } else if let Some((start, end)) = self.selection() {
             if delta < 0 { start } else { end }
         } else {
             self.caret
         };
-        let caret = (caret as i32 + delta).clamp(0, self.length() as i32) as usize;
-        self.place(caret, extend, time);
+        let caret = if delta < 0 {
+            from.previous(&self.text)
+        } else {
+            from.next(&self.text)
+        };
+        self.place(caret.unwrap_or(from), extend, time);
     }
 }

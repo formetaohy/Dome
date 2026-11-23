@@ -28,6 +28,7 @@ fn baked(backend: Backend) {
         mip_filter: Filter::Linear,
         address_u: AddressMode::Repeat,
         address_v: AddressMode::ClampToEdge,
+        compare: None,
     });
     let uniform = Panorama::new(WIDTH, HEIGHT, &vec![1.0; (WIDTH * HEIGHT * 3) as usize]);
     let texture = uniform.texture(&renderer, "uniform sky");

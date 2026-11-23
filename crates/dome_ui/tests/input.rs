@@ -1,5 +1,5 @@
 use dome_math::Vec2;
-use dome_ui::{Clipboard, Edit, EditOutcome, Input, ScrollDelta};
+use dome_ui::{Boundary, Clipboard, Edit, EditOutcome, Input, ScrollDelta};
 use dome_window::{Event as WindowEvent, KeyCode, ModifiersState};
 
 struct Held(String);
@@ -64,21 +64,90 @@ fn key_events_reach_the_edit_they_type_into() {
     assert_eq!(edit.text(), "pasted");
 
     let edit = Edit::new(4, "alpha beta ", 0.0);
+    let at = |byte: usize| Boundary::floor(edit.text(), byte);
     assert_eq!(
-        edit.word(11),
-        (11, 11),
+        edit.word(at(11)),
+        (at(11), at(11)),
         "a caret at the end of trailing space selects no blank word",
     );
     assert_eq!(
-        edit.word(10),
-        (10, 10),
+        edit.word(at(10)),
+        (at(10), at(10)),
         "a caret inside trailing space selects no blank word",
     );
     assert_eq!(
-        edit.word(2),
-        (0, 5),
+        edit.word(at(2)),
+        (at(0), at(5)),
         "a caret inside a word selects that whole word",
     );
+}
+
+#[test]
+fn editing_moves_and_deletes_by_grapheme_cluster() {
+    let mut clipboard = Held(String::new());
+
+    let mut input = Input::new();
+    press(&mut input, KeyCode::Backspace, None, None);
+    begin(&mut input, 1.0);
+    let mut edit = Edit::new(1, "e\u{301}x", 0.0);
+    let acute = Boundary::floor(edit.text(), 3);
+    edit.place(acute, false, 0.1);
+    assert_eq!(edit.poll(&input, &mut clipboard, 0.2), None);
+    assert_eq!(
+        edit.text(),
+        "x",
+        "one Backspace erases the e with its combining acute whole",
+    );
+    assert_eq!(edit.caret().byte(), 0);
+
+    let mut input = Input::new();
+    press(&mut input, KeyCode::ArrowLeft, None, None);
+    press(&mut input, KeyCode::ArrowLeft, None, None);
+    begin(&mut input, 1.0);
+    let mut edit = Edit::new(2, "e\u{301}x", 0.0);
+    assert_eq!(edit.poll(&input, &mut clipboard, 0.2), None);
+    assert_eq!(
+        edit.caret().byte(),
+        0,
+        "two Lefts cross the e with its combining acute as one cluster",
+    );
+
+    let mut input = Input::new();
+    press(&mut input, KeyCode::ArrowRight, None, None);
+    begin(&mut input, 1.0);
+    let mut edit = Edit::new(3, "e\u{301}x", 0.0);
+    edit.place(Boundary::start(), false, 0.1);
+    assert_eq!(edit.poll(&input, &mut clipboard, 0.2), None);
+    assert_eq!(
+        edit.caret().byte(),
+        3,
+        "one Right crosses the e with its combining acute as one cluster",
+    );
+
+    let family = "a\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}b";
+    let mut input = Input::new();
+    press(&mut input, KeyCode::ArrowLeft, None, None);
+    press(&mut input, KeyCode::ArrowLeft, None, None);
+    begin(&mut input, 1.0);
+    let mut edit = Edit::new(4, family, 0.0);
+    assert_eq!(edit.poll(&input, &mut clipboard, 0.2), None);
+    assert_eq!(
+        edit.caret().byte(),
+        1,
+        "two Lefts cross the ZWJ emoji as one cluster",
+    );
+
+    let mut input = Input::new();
+    press(&mut input, KeyCode::ArrowRight, None, None);
+    press(&mut input, KeyCode::Backspace, None, None);
+    begin(&mut input, 1.0);
+    assert_eq!(edit.poll(&input, &mut clipboard, 0.2), None);
+    assert_eq!(
+        edit.text(),
+        "ab",
+        "one Right crosses the ZWJ emoji and one Backspace erases it whole",
+    );
+    assert_eq!(edit.caret().byte(), 1);
 }
 
 #[test]

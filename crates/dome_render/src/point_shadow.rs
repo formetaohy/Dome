@@ -3,7 +3,7 @@ use crate::frame::record_of_view;
 use crate::growing::Growing;
 use crate::view::View;
 use dome_gpu::{
-    AddressMode, BufferBinding, BufferUsages, ClipSpace, DepthTexture, Device, Filter, GpuBuffer,
+    AddressMode, BufferBinding, BufferUsages, ClipSpace, CompareOp, Device, Filter, GpuBuffer,
     Queue, Sampler, SamplerDesc, Texture, TextureFormat, TextureUsages, Viewport,
 };
 use dome_math::{Mat4, Vec3};
@@ -18,7 +18,6 @@ const DRAW_BYTES: u64 = size_of::<DrawRecord>() as u64;
 const ARGUMENT_BYTES: u64 = 16;
 const WORD_BYTES: u64 = 4;
 const WIDE: f32 = std::f32::consts::FRAC_PI_2;
-const CLEAR: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 
 const FACES: [(Vec3, Vec3); POINT_SHADOW_FACES as usize] = [
     (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, -1.0, 0.0)),
@@ -40,7 +39,6 @@ pub(crate) struct PointShadowFrame<'a> {
 
 pub(crate) struct PointShadows {
     atlas: Texture,
-    depth: DepthTexture,
     sampler: Sampler,
     views: GpuBuffer,
     drawn: Growing,
@@ -54,10 +52,8 @@ pub(crate) struct PointShadows {
 
 impl PointShadows {
     pub(crate) fn new(device: &Device) -> Self {
-        let (atlas, depth) = atlas(device, 1);
         Self {
-            atlas,
-            depth,
+            atlas: atlas(device, 1),
             sampler: Sampler::new(
                 device,
                 SamplerDesc {
@@ -66,6 +62,7 @@ impl PointShadows {
                     mip_filter: Filter::Nearest,
                     address_u: AddressMode::ClampToEdge,
                     address_v: AddressMode::ClampToEdge,
+                    compare: Some(CompareOp::LessOrEqual),
                 },
             ),
             views: GpuBuffer::new(
@@ -93,7 +90,7 @@ impl PointShadows {
         if self.rows == rows {
             return;
         }
-        (self.atlas, self.depth) = atlas(device, rows);
+        self.atlas = atlas(device, rows);
         self.views = GpuBuffer::new(
             device,
             "dome point shadow views",
@@ -187,16 +184,8 @@ impl PointShadows {
         &self.atlas
     }
 
-    pub(crate) fn depth(&self) -> &DepthTexture {
-        &self.depth
-    }
-
     pub(crate) fn sampler(&self) -> &Sampler {
         &self.sampler
-    }
-
-    pub(crate) fn clear(&self) -> [f32; 4] {
-        CLEAR
     }
 
     pub(crate) fn cells(&self) -> u32 {
@@ -247,20 +236,17 @@ impl PointShadows {
     }
 }
 
-fn atlas(device: &Device, rows: u32) -> (Texture, DepthTexture) {
+fn atlas(device: &Device, rows: u32) -> Texture {
     let width = POINT_SHADOW_FACES * POINT_SHADOW_SIDE;
     let height = rows * POINT_SHADOW_SIDE;
-    (
-        Texture::new(
-            device,
-            "dome point shadows",
-            width,
-            height,
-            1,
-            TextureFormat::R32Float,
-            TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED,
-        ),
-        DepthTexture::new(device, "dome point shadow depth", width, height),
+    Texture::new(
+        device,
+        "dome point shadows",
+        width,
+        height,
+        1,
+        TextureFormat::Depth32Float,
+        TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED,
     )
 }
 

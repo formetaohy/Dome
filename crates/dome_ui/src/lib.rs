@@ -8,6 +8,7 @@ mod edit;
 mod element;
 mod focus;
 mod geometry;
+mod grapheme;
 mod hit;
 mod icon;
 mod input;
@@ -41,6 +42,7 @@ pub use element::{
     canvas, column, place, row, spacer, stack, text,
 };
 pub use geometry::{Band, Corners, Edges, Rect};
+pub use grapheme::Boundary;
 pub use icon::{Icon, IconStyle};
 pub use input::{
     Button, ButtonState, Cursor, Event, Input, Key as InputKey, KeyEvent, Modifiers, ScrollDelta,

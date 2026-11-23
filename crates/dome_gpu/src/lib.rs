@@ -3,7 +3,6 @@ mod buffer;
 mod cache;
 mod capability;
 mod context;
-mod depth;
 mod gate;
 mod graphics;
 mod group;
@@ -27,7 +26,6 @@ pub use capability::{
     DeviceType, Limits, PowerPreference, TextureUsages,
 };
 pub use context::{Device, GpuContext, GpuRequest, GpuUnavailable, LimitsPolicy, Queue};
-pub use depth::DepthTexture;
 pub use gate::QueueLock;
 pub use graphics::{
     BlendState, Count, DepthLoad, DepthOps, DepthState, Draw, Pass, PipelineState, Scissor,
@@ -43,7 +41,7 @@ pub(crate) use native::{NativeSampler, NativeTexture};
 pub use pipeline::{BindGroup, Binding, GraphicsPipeline, PipelineHandle};
 pub use raw_window_handle;
 pub use readback::{READBACK_TIMEOUT, Readback, ReadbackLease};
-pub use sampler::{AddressMode, Filter, Sampler, SamplerDesc};
+pub use sampler::{AddressMode, CompareOp, Filter, Sampler, SamplerDesc};
 pub use submission::{Submission, SubmissionIndex};
 pub use surface::{Surface, SurfaceFrame, WindowHandle};
 pub use table::{SamplerTable, TextureTable};

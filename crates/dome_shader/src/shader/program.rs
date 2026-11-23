@@ -25,7 +25,9 @@ pub enum BindingKind {
     ReadWriteStorage,
     TableStorage,
     SampledImage,
+    DepthImage,
     Sampler,
+    ComparisonSampler,
     SampledImageTable,
     SamplerTable,
 }
@@ -51,6 +53,17 @@ impl BindingKind {
                 | Self::SampledImageTable
                 | Self::SamplerTable
         )
+    }
+
+    pub const fn texture(self) -> bool {
+        matches!(
+            self,
+            Self::SampledImage | Self::DepthImage | Self::SampledImageTable
+        )
+    }
+
+    pub const fn compare(self) -> bool {
+        matches!(self, Self::ComparisonSampler)
     }
 }
 
@@ -99,11 +112,29 @@ impl BindingSpec {
         }
     }
 
+    pub const fn depth_image(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            kind: BindingKind::DepthImage,
+            count: 1,
+        }
+    }
+
     pub const fn sampler(group: u32, binding: u32) -> Self {
         Self {
             group,
             binding,
             kind: BindingKind::Sampler,
+            count: 1,
+        }
+    }
+
+    pub const fn comparison_sampler(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            kind: BindingKind::ComparisonSampler,
             count: 1,
         }
     }
@@ -175,11 +206,10 @@ pub fn reflect(module: &Module) -> Vec<ShaderBinding> {
                 ),
                 Space::UniformConstant => match module.ty(global.ty) {
                     Type::Image => (BindingKind::SampledImage, 1),
+                    Type::DepthImage => (BindingKind::DepthImage, 1),
                     Type::Sampler => (BindingKind::Sampler, 1),
-                    Type::Array {
-                        element,
-                        count: Some(count),
-                    } => match module.ty(*element) {
+                    Type::ComparisonSampler => (BindingKind::ComparisonSampler, 1),
+                    Type::Array { element, count } => match module.ty(*element) {
                         Type::Image => (BindingKind::SampledImageTable, *count),
                         Type::Sampler => (BindingKind::SamplerTable, *count),
                         other => panic!(
@@ -319,10 +349,7 @@ impl ComputeProgram {
         for global in module.globals() {
             if global.space == crate::shader::Space::WorkGroup {
                 assert!(
-                    matches!(
-                        module.ty(global.ty),
-                        crate::shader::Type::Array { count: Some(_), .. }
-                    ),
+                    matches!(module.ty(global.ty), crate::shader::Type::Array { .. }),
                     "{label} declares the workgroup variable {} as a {}",
                     global.name,
                     element_name(module.ty(global.ty))
@@ -423,6 +450,7 @@ struct GraphicsCompiled {
     fragment: String,
     bindings: Vec<BindingSpec>,
     reflected: Vec<ShaderBinding>,
+    targets: u32,
     spirv: Vec<u32>,
 }
 
@@ -506,12 +534,24 @@ impl GraphicsProgram {
             outputs, inputs,
             "{label} links the varyings {outputs:?} of its vertex stage to {inputs:?} in its fragment stage"
         );
-        assert_eq!(
-            targets.len(),
-            1,
+        assert!(
+            targets.len() <= 1,
             "{label} writes {} fragment targets where one color target exists",
             targets.len()
         );
+        for (location, ty) in &targets {
+            assert!(
+                matches!(
+                    module.ty(*ty),
+                    Type::Vector {
+                        scalar: Scalar::F32,
+                        length: 4
+                    }
+                ),
+                "{label} writes the fragment target {location} as {}",
+                element_name(module.ty(*ty))
+            );
+        }
         let position = module
             .globals()
             .iter()
@@ -557,9 +597,14 @@ impl GraphicsProgram {
                 fragment: fragment_name,
                 bindings: bindings.to_vec(),
                 reflected,
+                targets: targets.len() as u32,
                 spirv,
             }),
         }
+    }
+
+    pub fn targets(&self) -> u32 {
+        self.compiled.targets
     }
 
     pub fn label(&self) -> &str {

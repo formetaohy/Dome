@@ -79,16 +79,22 @@ pub enum Type {
     },
     Array {
         element: TypeId,
-        count: Option<u32>,
+        count: u32,
     },
     Struct {
         name: String,
         members: Vec<Member>,
         span: u32,
     },
+    Block {
+        name: String,
+        element: TypeId,
+    },
     Atomic(Scalar),
     Image,
+    DepthImage,
     Sampler,
+    ComparisonSampler,
     Pointer {
         space: Space,
         base: TypeId,

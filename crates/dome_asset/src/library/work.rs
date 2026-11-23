@@ -48,7 +48,6 @@ pub(super) enum Outcome {
 }
 
 pub(super) struct Prepared {
-    pub(super) applied: bool,
     pub(super) errors: Vec<AssetError>,
     pub(super) images: Vec<PreparedImage>,
     pub(super) materials: Vec<PreparedMaterial>,
@@ -106,6 +105,7 @@ pub(super) struct PreparedEnvironment {
 }
 
 pub(super) enum EnvironmentData {
+    Empty,
     Panorama(Panorama),
     Atmosphere(Atmosphere),
 }

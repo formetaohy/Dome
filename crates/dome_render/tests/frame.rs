@@ -146,6 +146,7 @@ fn paint(backend: Backend) {
             mip_filter: Filter::Nearest,
             address_u: AddressMode::ClampToEdge,
             address_v: AddressMode::ClampToEdge,
+            compare: None,
         },
     );
     let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
@@ -524,6 +525,7 @@ fn points(backend: Backend) {
             mip_filter: Filter::Nearest,
             address_u: AddressMode::ClampToEdge,
             address_v: AddressMode::ClampToEdge,
+            compare: None,
         },
     );
     let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
@@ -709,6 +711,7 @@ fn blend(backend: Backend) {
             mip_filter: Filter::Nearest,
             address_u: AddressMode::ClampToEdge,
             address_v: AddressMode::ClampToEdge,
+            compare: None,
         },
     );
     layers(
@@ -1072,6 +1075,7 @@ fn glow(backend: Backend) {
             mip_filter: Filter::Nearest,
             address_u: AddressMode::ClampToEdge,
             address_v: AddressMode::ClampToEdge,
+            compare: None,
         },
     );
     let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
@@ -1206,6 +1210,7 @@ fn maps(backend: Backend) {
             mip_filter: Filter::Nearest,
             address_u: AddressMode::ClampToEdge,
             address_v: AddressMode::ClampToEdge,
+            compare: None,
         },
     );
     let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
@@ -1477,6 +1482,7 @@ fn ambient(backend: Backend) {
         mip_filter: Filter::Linear,
         address_u: AddressMode::Repeat,
         address_v: AddressMode::ClampToEdge,
+        compare: None,
     });
     let panorama_texture = panorama.texture(&renderer, "ambient panorama");
     let request = renderer.bake(&panorama_texture, &sampler);
@@ -1781,6 +1787,7 @@ fn environment(renderer: &mut Renderer, radiance: Vec3) -> Environment {
         mip_filter: Filter::Linear,
         address_u: AddressMode::Repeat,
         address_v: AddressMode::ClampToEdge,
+        compare: None,
     });
     let texture = panorama.texture(renderer, "local panorama");
     let request = renderer.bake(&texture, &sampler);

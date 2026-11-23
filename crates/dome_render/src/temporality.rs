@@ -85,6 +85,7 @@ impl Temporality {
                     mip_filter: Filter::Nearest,
                     address_u: AddressMode::ClampToEdge,
                     address_v: AddressMode::ClampToEdge,
+                    compare: None,
                 },
             ),
             nearest: Sampler::new(
@@ -95,6 +96,7 @@ impl Temporality {
                     mip_filter: Filter::Nearest,
                     address_u: AddressMode::ClampToEdge,
                     address_v: AddressMode::ClampToEdge,
+                    compare: None,
                 },
             ),
             motion_record: GpuBuffer::new(

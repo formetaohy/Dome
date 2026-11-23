@@ -1,7 +1,7 @@
 use crate::shader::spirv::op::*;
 use crate::shader::spirv::writer::Writer;
 use crate::shader::{
-    Address, AtomicOp, Barrier, BinaryOp, Constant, DerivativeOp, Instruction as ShaderInstruction,
+    AtomicOp, Barrier, BinaryOp, Constant, DerivativeOp, Instruction as ShaderInstruction,
     IntegerArithmetic, MathFun, MatrixLayout, Scalar, Space, Type, UnaryOp, ValueId,
 };
 use std::collections::HashSet;
@@ -178,14 +178,12 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
         matches!(self.writer.module.ty(ty), Type::Pointer { .. })
     }
 
-    fn wrapped(&self, value: ValueId) -> bool {
-        match self.writer.declared.get(&value) {
-            Some(ShaderInstruction::Address {
-                address: Address::Global(index),
-                ..
-            }) => self.writer.globals[*index as usize].wrapped,
-            _ => false,
-        }
+    fn is_block(&self, value: ValueId) -> bool {
+        let (_, base) = self
+            .writer
+            .module
+            .pointee(self.writer.module.value_ty(value));
+        matches!(self.writer.module.ty(base), Type::Block { .. })
     }
 
     fn pointer_space(&self, value: ValueId) -> Space {
@@ -318,7 +316,7 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                 if self.is_pointer(*base) {
                     let mut chain =
                         Instruction::result(ACCESS_CHAIN, ty, id).operand(self.value(*base));
-                    if self.wrapped(*base) {
+                    if self.is_block(*base) {
                         let zero = self.writer.integer(Scalar::U32, 0);
                         chain = chain.operand(zero);
                     }
@@ -345,12 +343,8 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                 let ty = self.writer.value_types[result];
                 let id = self.value(*result);
                 if self.is_pointer(*base) {
-                    let mut chain =
+                    let chain =
                         Instruction::result(ACCESS_CHAIN, ty, id).operand(self.value(*base));
-                    if self.wrapped(*base) {
-                        let zero = self.writer.integer(Scalar::U32, 0);
-                        chain = chain.operand(zero);
-                    }
                     let index = self.writer.integer(Scalar::U32, *index);
                     self.push(chain.operand(index));
                 } else {
@@ -713,7 +707,9 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                 result,
             } => {
                 let sampled = self.writer.id();
-                let sampled_type = self.writer.sampled_image();
+                let sampled_type = self
+                    .writer
+                    .sampled_image(self.writer.module.value_ty(*image));
                 self.push(
                     Instruction::result(SAMPLED_IMAGE, sampled_type, sampled)
                         .operand(self.value(*image))
@@ -734,6 +730,31 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                         .operand(self.value(*level));
                 }
                 self.push(instruction);
+            }
+            ShaderInstruction::SampleCompare {
+                depth,
+                sampler,
+                coordinates,
+                reference,
+                result,
+            } => {
+                let sampled = self.writer.id();
+                let sampled_type = self
+                    .writer
+                    .sampled_image(self.writer.module.value_ty(*depth));
+                self.push(
+                    Instruction::result(SAMPLED_IMAGE, sampled_type, sampled)
+                        .operand(self.value(*depth))
+                        .operand(self.value(*sampler)),
+                );
+                let ty = self.writer.value_types[result];
+                let id = self.value(*result);
+                self.push(
+                    Instruction::result(IMAGE_SAMPLE_DREF_IMPLICIT_LOD, ty, id)
+                        .operand(sampled)
+                        .operand(self.value(*coordinates))
+                        .operand(self.value(*reference)),
+                );
             }
             ShaderInstruction::Barrier(barrier) => {
                 let execution = self.writer.integer(Scalar::U32, scope::WORKGROUP);

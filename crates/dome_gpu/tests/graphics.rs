@@ -81,6 +81,7 @@ fn paint(context: &GpuContext, backend: Backend, format: TextureFormat) {
             mip_filter: Filter::Nearest,
             address_u: AddressMode::ClampToEdge,
             address_v: AddressMode::ClampToEdge,
+            compare: None,
         },
     );
     let pixels = render(context, &albedo, &palette, format);
@@ -89,7 +90,7 @@ fn paint(context: &GpuContext, backend: Backend, format: TextureFormat) {
     let red = match format {
         TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb => [255, 0, 0, 255],
         TextureFormat::Bgra8Unorm => [0, 0, 255, 255],
-        TextureFormat::Rgba16Float | TextureFormat::R32Float => {
+        TextureFormat::Rgba16Float | TextureFormat::R32Float | TextureFormat::Depth32Float => {
             unreachable!("a sampled quad writes an eight bit colour target")
         }
     };
@@ -144,6 +145,7 @@ fn mipped(backend: Backend) {
             mip_filter: Filter::Linear,
             address_u: AddressMode::ClampToEdge,
             address_v: AddressMode::ClampToEdge,
+            compare: None,
         },
     );
     let pixels = render(&context, &texture, &sampler, TextureFormat::Rgba8Unorm);

@@ -134,13 +134,17 @@ impl LiveScene {
         let scene = Scene::load(&path, registry.clone());
         let mut assets = Library::new();
         let mut sync = SceneSync::new(registry.clone());
+        let mut messages = Vec::new();
         let (wanted, requested) = if blocking {
             let refresh = assets.refresh(&scene, renderer);
             assert!(
                 refresh.applied,
-                "the scene builds its assets: {}",
+                "the library adopts the assets of its scene: {}",
                 refresh.message(),
             );
+            if !refresh.errors.is_empty() {
+                messages.push(refresh.message());
+            }
             sync.sync(&scene, world, &assets, &Changed::none());
             (None, None)
         } else {
@@ -154,7 +158,7 @@ impl LiveScene {
             assets,
             sync,
             watch,
-            messages: Vec::new(),
+            messages,
             wanted,
             requested,
             renew: false,
@@ -213,9 +217,11 @@ impl LiveScene {
         };
         let failed = self.requested.take();
         if !refresh.applied {
-            if self.sync.applied().is_none() {
-                panic!("the scene builds its assets: {}", refresh.message());
-            }
+            assert!(
+                self.sync.applied().is_some(),
+                "the library adopts the assets of its scene: {}",
+                refresh.message(),
+            );
             if self.wanted.as_ref() == failed.as_ref() {
                 self.wanted = None;
             }
@@ -240,10 +246,14 @@ impl LiveScene {
         Some(self.reloaded())
     }
 
+    fn take_error(&mut self) -> Option<String> {
+        joined(&std::mem::take(&mut self.messages))
+    }
+
     fn reloaded(&mut self) -> Reload {
         Reload {
             renew: std::mem::take(&mut self.renew),
-            error: joined(&std::mem::take(&mut self.messages)),
+            error: self.take_error(),
         }
     }
 
@@ -584,6 +594,7 @@ impl App {
             .handle(Event::Focused(focused));
         if let Some(path) = &self.config.scene {
             session.load_scene(&mut self.world, path, &self.config.registry, blocking);
+            self.reload = session.live.as_mut().and_then(LiveScene::take_error);
         }
         if !blocking && self.config.scene.is_some() {
             let camera = self.world.spawn();

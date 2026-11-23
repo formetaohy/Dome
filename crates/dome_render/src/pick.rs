@@ -5,8 +5,8 @@ use crate::program;
 use crate::view::View;
 use dome_ecs::Entity;
 use dome_gpu::{
-    Binding, BufferBinding, BufferUsages, ClipSpace, DepthOps, DepthTexture, Device, Draw,
-    GpuBuffer, GraphicsPipeline, Pass, PipelineState, Queue, Submission, Texture, TextureFormat,
+    Binding, BufferBinding, BufferUsages, ClipSpace, DepthOps, Device, Draw, GpuBuffer,
+    GraphicsPipeline, Pass, PipelineState, Queue, Submission, Texture, TextureFormat,
     TextureUsages,
 };
 use dome_math::{Mat4, Vec2, Vec3, Vec4};
@@ -45,7 +45,7 @@ pub(crate) struct Picker {
     pipeline: GraphicsPipeline,
     view: GpuBuffer,
     target: Texture,
-    depth: DepthTexture,
+    depth: Texture,
 }
 
 impl Picker {
@@ -72,7 +72,15 @@ impl Picker {
                 TextureFormat::Rgba8Unorm,
                 TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
             ),
-            depth: DepthTexture::new(device, "dome pick depth", TARGET_SIDE, TARGET_SIDE),
+            depth: Texture::new(
+                device,
+                "dome pick depth",
+                TARGET_SIDE,
+                TARGET_SIDE,
+                1,
+                TextureFormat::Depth32Float,
+                TextureUsages::RENDER_ATTACHMENT,
+            ),
         }
     }
 

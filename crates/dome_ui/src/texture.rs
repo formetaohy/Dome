@@ -16,6 +16,7 @@ pub(crate) const LINEAR: SamplerDesc = SamplerDesc {
     mip_filter: Filter::Linear,
     address_u: AddressMode::ClampToEdge,
     address_v: AddressMode::ClampToEdge,
+    compare: None,
 };
 
 pub(crate) const NEAREST: SamplerDesc = SamplerDesc {
@@ -24,6 +25,7 @@ pub(crate) const NEAREST: SamplerDesc = SamplerDesc {
     mip_filter: Filter::Nearest,
     address_u: AddressMode::ClampToEdge,
     address_v: AddressMode::ClampToEdge,
+    compare: None,
 };
 
 struct Named {

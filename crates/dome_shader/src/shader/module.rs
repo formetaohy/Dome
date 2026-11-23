@@ -438,11 +438,16 @@ impl Module {
         self.intern(Type::Vector { scalar, length })
     }
 
-    pub fn array(&mut self, element: TypeId, count: Option<u32>) -> TypeId {
-        if let Some(count) = count {
-            assert!(count > 0, "a shader array holds no element");
-        }
+    pub fn array(&mut self, element: TypeId, count: u32) -> TypeId {
+        assert!(count > 0, "a shader array holds no element");
         self.intern(Type::Array { element, count })
+    }
+
+    pub fn block(&mut self, name: &str, element: TypeId) -> TypeId {
+        self.intern(Type::Block {
+            name: name.to_owned(),
+            element,
+        })
     }
 
     pub fn structure(&mut self, name: &str, members: Vec<Member>, span: u32) -> TypeId {
@@ -461,8 +466,16 @@ impl Module {
         self.intern(Type::Image)
     }
 
+    pub fn depth_image(&mut self) -> TypeId {
+        self.intern(Type::DepthImage)
+    }
+
     pub fn sampler(&mut self) -> TypeId {
         self.intern(Type::Sampler)
+    }
+
+    pub fn comparison_sampler(&mut self) -> TypeId {
+        self.intern(Type::ComparisonSampler)
     }
 
     pub fn pointer(&mut self, space: Space, base: TypeId) -> TypeId {
@@ -502,18 +515,18 @@ impl Module {
         match self.ty(ty) {
             Type::Scalar(scalar) => scalar.bytes(),
             Type::Vector { scalar, length } => scalar.bytes() * length,
-            Type::Array { element, count } => {
-                let count = count.expect("a runtime sized array has no byte size");
-                self.stride(*element) * count
-            }
+            Type::Array { element, count } => self.stride(*element) * count,
             Type::Struct { span, .. } => *span,
             Type::Atomic(scalar) => scalar.bytes(),
             Type::Pointer { .. } => Scalar::U32.bytes(),
-            Type::Image | Type::Sampler => {
+            Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler => {
                 panic!("{} occupies no storage", element_name(self.ty(ty)))
             }
             Type::CooperativeMatrix { .. } => {
                 panic!("a cooperative matrix has no storage size")
+            }
+            Type::Block { .. } => {
+                panic!("{} spans no byte size", element_name(self.ty(ty)))
             }
         }
     }
@@ -536,14 +549,15 @@ impl Module {
                 .unwrap_or(1),
             Type::Atomic(scalar) => scalar.bytes(),
             Type::Pointer { .. } => Scalar::U32.bytes(),
-            Type::Image | Type::Sampler => 1,
+            Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler => 1,
             Type::CooperativeMatrix { .. } => 1,
+            Type::Block { element, .. } => self.alignment(*element),
         }
     }
 
     pub fn element(&self, ty: TypeId) -> TypeId {
         match self.ty(ty) {
-            Type::Array { element, .. } => *element,
+            Type::Array { element, .. } | Type::Block { element, .. } => *element,
             other => panic!("{} is not a shader array", element_name(other)),
         }
     }
@@ -642,9 +656,12 @@ pub fn element_name(ty: &Type) -> String {
         Type::Vector { scalar, length } => format!("{}x{length}", scalar.name()),
         Type::Array { .. } => "an array".to_owned(),
         Type::Struct { name, .. } => format!("struct {name}"),
+        Type::Block { name, .. } => format!("the storage block {name}"),
         Type::Atomic(scalar) => format!("atomic {}", scalar.name()),
         Type::Image => "a sampled image".to_owned(),
+        Type::DepthImage => "a sampled depth image".to_owned(),
         Type::Sampler => "a sampler".to_owned(),
+        Type::ComparisonSampler => "a comparison sampler".to_owned(),
         Type::Pointer { space, .. } => format!("a {} pointer", space.name()),
         Type::CooperativeMatrix {
             scalar,

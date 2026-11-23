@@ -569,6 +569,7 @@ dependencies = [
  "dome_text",
  "dome_window",
  "slotmap",
+ "unicode-segmentation",
 ]
 
 [[package]]

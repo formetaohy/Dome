@@ -137,7 +137,7 @@ impl<'m> Writer<'m> {
         let global_name = symbol(&global.name);
         match global.space {
             Space::Storage => {
-                let element = self.element_type(global.ty);
+                let element = self.module.element(global.ty);
                 let pointee = self.pointee_type(element);
                 let qualifier = if global.access.writable() {
                     "device"
@@ -184,11 +184,7 @@ impl<'m> Writer<'m> {
             if global.space != Space::UniformConstant {
                 continue;
             }
-            let Type::Array {
-                element,
-                count: Some(count),
-            } = self.module.ty(global.ty)
-            else {
+            let Type::Array { element, count } = self.module.ty(global.ty) else {
                 continue;
             };
             let declared = match self.module.ty(*element) {
@@ -221,13 +217,17 @@ impl<'m> Writer<'m> {
             Type::Scalar(scalar) => scalar_name(*scalar).to_owned(),
             Type::Vector { scalar, length } => format!("{}{length}", scalar_name(*scalar)),
             Type::Array { element, count } => {
-                let count = count.expect("a shader array holds a fixed number of elements");
                 format!("{}[{count}]", self.value_type(*element))
             }
             Type::Struct { name, .. } => name.clone(),
+            Type::Block { name, .. } => {
+                panic!("the Metal shader passes the storage block {name} as a pointer")
+            }
             Type::Atomic(scalar) => format!("atomic_{}", scalar_name(*scalar)),
             Type::Image => "texture2d<float>".to_owned(),
+            Type::DepthImage => "depth2d<float>".to_owned(),
             Type::Sampler => "sampler".to_owned(),
+            Type::ComparisonSampler => "sampler".to_owned(),
             Type::Pointer { .. } => panic!("a Metal shader carries no device pointer type"),
             Type::CooperativeMatrix {
                 scalar,
@@ -238,13 +238,6 @@ impl<'m> Writer<'m> {
                 "simdgroup_matrix<{}, {rows}, {columns}>",
                 scalar_name(*scalar)
             ),
-        }
-    }
-
-    fn element_type(&self, ty: TypeId) -> TypeId {
-        match self.module.ty(ty) {
-            Type::Array { element, .. } => *element,
-            _ => ty,
         }
     }
 
@@ -364,10 +357,7 @@ impl<'m> Writer<'m> {
                 continue;
             }
             let (element, count) = match self.module.ty(declared.ty) {
-                Type::Array {
-                    element,
-                    count: Some(count),
-                } => (*element, *count),
+                Type::Array { element, count } => (*element, *count),
                 _ => panic!(
                     "the Metal workgroup variable {} is not an array",
                     declared.name
@@ -465,8 +455,8 @@ impl<'m> Writer<'m> {
         let class = match self.module.global(index).space {
             Space::Storage => "buffer",
             Space::UniformConstant => match self.module.ty(self.module.global(index).ty) {
-                Type::Image => "texture",
-                Type::Sampler => "sampler",
+                Type::Image | Type::DepthImage => "texture",
+                Type::Sampler | Type::ComparisonSampler => "sampler",
                 Type::Array { element, .. } => match self.module.ty(*element) {
                     Type::Image | Type::Sampler => "buffer",
                     other => panic!(
@@ -494,8 +484,10 @@ impl<'m> Writer<'m> {
             .take(index as usize)
             .filter(|global| match (global.space, self.module.ty(global.ty)) {
                 (Space::Storage, _) => class == "buffer",
-                (Space::UniformConstant, Type::Image) => class == "texture",
-                (Space::UniformConstant, Type::Sampler) => class == "sampler",
+                (Space::UniformConstant, Type::Image | Type::DepthImage) => class == "texture",
+                (Space::UniformConstant, Type::Sampler | Type::ComparisonSampler) => {
+                    class == "sampler"
+                }
                 (Space::UniformConstant, Type::Array { element, .. }) => {
                     class == "buffer"
                         && matches!(self.module.ty(*element), Type::Image | Type::Sampler)
@@ -668,8 +660,10 @@ impl<'m> Writer<'m> {
         {
             return format!("{named}.values");
         }
-        if matches!(self.module.ty(global.ty), Type::Array { .. })
-            || global.space == Space::UniformConstant
+        if matches!(
+            self.module.ty(global.ty),
+            Type::Array { .. } | Type::Block { .. }
+        ) || global.space == Space::UniformConstant
         {
             named
         } else {
@@ -757,6 +751,22 @@ impl<'m> Writer<'m> {
                     }
                 };
                 self.out.line(format!("{target} = {text};"));
+            }
+            Instruction::SampleCompare {
+                depth,
+                sampler,
+                coordinates,
+                reference,
+                result,
+            } => {
+                let target = self.target(*result);
+                let depth = self.value(*depth);
+                let sampler = self.value(*sampler);
+                let coordinates = self.value(*coordinates);
+                let reference = self.value(*reference);
+                self.out.line(format!(
+                    "{target} = {depth}.sample_compare({sampler}, {coordinates}, {reference});"
+                ));
             }
             Instruction::Load { pointer, result } => {
                 if self.resource(self.module.value_ty(*result)) {

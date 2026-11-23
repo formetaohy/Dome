@@ -13,9 +13,8 @@ use crate::capability::{
 use crate::gate::Gate;
 use crate::graphics::{BlendState, DepthLoad, DepthState, PipelineState};
 use crate::host::{HOST_SLICE, HostAdvance, VulkanHost};
-use crate::native::NativeDepth;
 use crate::pipeline::BoundResource;
-use crate::sampler::{AddressMode, Filter, SamplerDesc};
+use crate::sampler::{AddressMode, CompareOp, Filter, SamplerDesc};
 use crate::submission::{Command, RecordedCount, Write};
 use crate::surface::WindowHandle;
 use crate::texture::TextureFormat;
@@ -348,7 +347,7 @@ impl Pending {
             .image(texture.image)
             .subresource_range(
                 vk::ImageSubresourceRange::default()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .aspect_mask(texture.aspect)
                     .base_mip_level(0)
                     .level_count(texture.mip_levels)
                     .base_array_layer(0)
@@ -876,33 +875,13 @@ struct Framebuffer {
     key: PassKey,
     render_pass: vk::RenderPass,
     raw: vk::Framebuffer,
-    depth: Option<Arc<DepthResource>>,
+    depth: Option<Arc<TextureResource>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct PassKey {
-    format: TextureFormat,
+    format: Option<TextureFormat>,
     depth: Option<(DepthLoad, bool)>,
-}
-
-#[derive(Clone)]
-pub(crate) struct Depth {
-    resource: Arc<DepthResource>,
-}
-
-struct DepthResource {
-    _block: Block,
-    image: vk::Image,
-    view: vk::ImageView,
-    content: Mutex<DepthContent>,
-    access: Mutex<Access>,
-    core: Arc<Core>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DepthContent {
-    Unused,
-    Stored,
 }
 
 #[derive(Clone, Copy)]
@@ -914,25 +893,6 @@ struct Image<'a> {
     format: vk::Format,
     usage: vk::ImageUsageFlags,
     aspect: vk::ImageAspectFlags,
-}
-
-impl Drop for DepthResource {
-    fn drop(&mut self) {
-        unsafe {
-            self.core.destroy_image_view(self.view, None);
-            self.core.destroy_image(self.image, None);
-        }
-    }
-}
-
-impl DepthResource {
-    fn record(&self, pending: &mut Pending, next: Access) {
-        let mut access = self
-            .access
-            .lock()
-            .expect("a Vulkan depth texture is never poisoned");
-        pending.record(&mut access, next);
-    }
 }
 
 struct TextureState {
@@ -950,6 +910,7 @@ struct TextureResource {
     mip_levels: u32,
     format: TextureFormat,
     usages: TextureUsages,
+    aspect: vk::ImageAspectFlags,
     present: bool,
     state: Mutex<TextureState>,
     core: Arc<Core>,
@@ -967,6 +928,14 @@ impl TextureResource {
             .lock()
             .expect("a Vulkan texture layout is never poisoned");
         pending.record(&mut state.access, next);
+    }
+
+    fn sampled_layout(&self) -> vk::ImageLayout {
+        if self.aspect.contains(vk::ImageAspectFlags::DEPTH) {
+            vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL
+        } else {
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        }
     }
 }
 
@@ -1010,7 +979,7 @@ struct GraphicsPipelineResource {
     groups: Vec<vk::DescriptorSetLayout>,
     pools: Vec<Arc<GroupPool>>,
     render_pass: vk::RenderPass,
-    format: TextureFormat,
+    format: Option<TextureFormat>,
     state: PipelineState,
     compiled: OnceLock<vk::Pipeline>,
 }
@@ -1078,6 +1047,19 @@ fn address(mode: AddressMode) -> vk::SamplerAddressMode {
         AddressMode::ClampToEdge => vk::SamplerAddressMode::CLAMP_TO_EDGE,
         AddressMode::Repeat => vk::SamplerAddressMode::REPEAT,
         AddressMode::MirrorRepeat => vk::SamplerAddressMode::MIRRORED_REPEAT,
+    }
+}
+
+fn compare_op(compare: CompareOp) -> vk::CompareOp {
+    match compare {
+        CompareOp::Never => vk::CompareOp::NEVER,
+        CompareOp::Less => vk::CompareOp::LESS,
+        CompareOp::Equal => vk::CompareOp::EQUAL,
+        CompareOp::LessOrEqual => vk::CompareOp::LESS_OR_EQUAL,
+        CompareOp::Greater => vk::CompareOp::GREATER,
+        CompareOp::NotEqual => vk::CompareOp::NOT_EQUAL,
+        CompareOp::GreaterOrEqual => vk::CompareOp::GREATER_OR_EQUAL,
+        CompareOp::Always => vk::CompareOp::ALWAYS,
     }
 }
 
@@ -1358,23 +1340,26 @@ fn render_pass(raw: &ash::Device, key: PassKey) -> Result<vk::RenderPass, String
     let references = [vk::AttachmentReference::default()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
-    let depth_reference = vk::AttachmentReference::default()
-        .attachment(1)
-        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-    let mut attachments = vec![
-        vk::AttachmentDescription::default()
-            .format(vk_format(key.format))
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL),
-    ];
-    let mut subpass = vk::SubpassDescription::default()
-        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&references);
+    let depth_attachment = key.depth.map(|_| if key.format.is_some() { 1 } else { 0 });
+    let depth_reference = depth_attachment.map(|attachment| {
+        vk::AttachmentReference::default()
+            .attachment(attachment)
+            .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+    });
+    let mut attachments = Vec::with_capacity(2);
+    if let Some(format) = key.format {
+        attachments.push(
+            vk::AttachmentDescription::default()
+                .format(vk_format(format))
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL),
+        );
+    }
     if let Some((load, store)) = key.depth {
         attachments.push(
             vk::AttachmentDescription::default()
@@ -1397,7 +1382,14 @@ fn render_pass(raw: &ash::Device, key: PassKey) -> Result<vk::RenderPass, String
                 })
                 .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
         );
-        subpass = subpass.depth_stencil_attachment(&depth_reference);
+    }
+    let mut subpass =
+        vk::SubpassDescription::default().pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS);
+    if key.format.is_some() {
+        subpass = subpass.color_attachments(&references);
+    }
+    if let Some(reference) = &depth_reference {
+        subpass = subpass.depth_stencil_attachment(reference);
     }
     unsafe {
         raw.create_render_pass(
@@ -1772,10 +1764,12 @@ impl Device {
                         .binding(spec.binding)
                         .descriptor_type(match spec.kind {
                             dome_shader::shader::BindingKind::SampledImage
+                            | dome_shader::shader::BindingKind::DepthImage
                             | dome_shader::shader::BindingKind::SampledImageTable => {
                                 vk::DescriptorType::SAMPLED_IMAGE
                             }
                             dome_shader::shader::BindingKind::Sampler
+                            | dome_shader::shader::BindingKind::ComparisonSampler
                             | dome_shader::shader::BindingKind::SamplerTable => {
                                 vk::DescriptorType::SAMPLER
                             }
@@ -1885,7 +1879,7 @@ impl Device {
                     image_infos.push(
                         vk::DescriptorImageInfo::default()
                             .image_view(native.view)
-                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+                            .image_layout(native.sampled_layout()),
                     );
                 }
                 BoundResource::Sampler(sampler) => {
@@ -1911,7 +1905,7 @@ impl Device {
                         image_infos.push(
                             vk::DescriptorImageInfo::default()
                                 .image_view(native.view)
-                                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+                                .image_layout(native.sampled_layout()),
                         );
                     }
                 }
@@ -1972,6 +1966,9 @@ impl Device {
             .address_mode_v(address(desc.address_v))
             .address_mode_w(address(desc.address_u))
             .max_lod(vk::LOD_CLAMP_NONE);
+        if let Some(compare) = desc.compare {
+            info = info.compare_enable(true).compare_op(compare_op(compare));
+        }
         if anisotropy > 1 {
             info = info
                 .anisotropy_enable(true)
@@ -1995,6 +1992,11 @@ impl Device {
         usages: TextureUsages,
     ) -> Texture {
         let declared = vk_format(format);
+        let aspect = if format.is_depth() {
+            vk::ImageAspectFlags::DEPTH
+        } else {
+            vk::ImageAspectFlags::COLOR
+        };
         let mut flags = vk::ImageUsageFlags::empty();
         if usages.contains(TextureUsages::SAMPLED) {
             flags |= vk::ImageUsageFlags::SAMPLED;
@@ -2006,7 +2008,11 @@ impl Device {
             flags |= vk::ImageUsageFlags::TRANSFER_DST;
         }
         if usages.contains(TextureUsages::RENDER_ATTACHMENT) {
-            flags |= vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC;
+            flags |= if format.is_depth() {
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+            } else {
+                vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC
+            };
         }
         let (image, block, view) = self.attachment(Image {
             name: label,
@@ -2015,7 +2021,7 @@ impl Device {
             mip_levels,
             format: declared,
             usage: flags,
-            aspect: vk::ImageAspectFlags::COLOR,
+            aspect,
         });
         let targets = if usages.contains(TextureUsages::RENDER_ATTACHMENT) {
             (0..mip_levels)
@@ -2033,7 +2039,7 @@ impl Device {
                                         .view_type(vk::ImageViewType::TYPE_2D)
                                         .format(declared)
                                         .subresource_range(vk::ImageSubresourceRange {
-                                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                                            aspect_mask: aspect,
                                             base_mip_level: level,
                                             level_count: 1,
                                             base_array_layer: 0,
@@ -2070,6 +2076,7 @@ impl Device {
                 mip_levels,
                 format,
                 usages,
+                aspect,
                 present: false,
                 state: Mutex::new(TextureState {
                     layout: vk::ImageLayout::UNDEFINED,
@@ -2079,37 +2086,76 @@ impl Device {
         }
     }
 
-    pub(crate) fn create_depth_texture(&self, label: &str, width: u32, height: u32) -> Depth {
-        let (image, block, view) = self.attachment(Image {
-            name: label,
-            width,
-            height,
-            mip_levels: 1,
-            format: DEPTH_FORMAT,
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            aspect: vk::ImageAspectFlags::DEPTH,
-        });
-        Depth {
-            resource: Arc::new(DepthResource {
-                _block: block,
+    pub(crate) fn create_texture_view(&self, texture: &Texture, level: u32) -> Texture {
+        let held = &texture.resource;
+        assert!(
+            level < held.mip_levels,
+            "a texture of {} levels views no level {level}",
+            held.mip_levels,
+        );
+        let width = (held.width >> level).max(1);
+        let height = (held.height >> level).max(1);
+        let view = unsafe {
+            self.core
+                .create_image_view(
+                    &vk::ImageViewCreateInfo::default()
+                        .image(held.image)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(vk_format(held.format))
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: held.aspect,
+                            base_mip_level: level,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        }),
+                    None,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("creating the Vulkan view of level {level}: {error:?}")
+                })
+        };
+        Texture {
+            resource: Arc::new(TextureResource {
+                block: None,
                 core: self.core.clone(),
-                image,
+                image: held.image,
                 view,
-                content: Mutex::new(DepthContent::Unused),
-                access: Mutex::new(Access::default()),
+                targets: Vec::new(),
+                width,
+                height,
+                mip_levels: 1,
+                format: held.format,
+                usages: held.usages,
+                aspect: held.aspect,
+                present: false,
+                state: Mutex::new(TextureState {
+                    layout: vk::ImageLayout::UNDEFINED,
+                    access: Access::default(),
+                }),
             }),
         }
     }
 
     fn framing(
         &self,
-        target: &Target,
+        color: Option<&Target>,
         key: PassKey,
-        depth: Option<&Arc<DepthResource>>,
+        depth: Option<&Arc<TextureResource>>,
     ) -> (vk::RenderPass, vk::Framebuffer) {
         let render_pass = self.render_pass(key);
-        let mut held = target
-            .framebuffers
+        let (cache, width, height) = match color {
+            Some(target) => (&target.framebuffers, target.width, target.height),
+            None => {
+                let held = depth.expect("a depth only pass names its depth texture");
+                let target = held
+                    .targets
+                    .first()
+                    .expect("a depth attachment renders into its own level");
+                (&target.framebuffers, held.width, held.height)
+            }
+        };
+        let mut held = cache
             .lock()
             .expect("the Vulkan framebuffers of a target are never poisoned");
         let matching = held.iter().find(|frame| {
@@ -2120,17 +2166,20 @@ impl Device {
         if let Some(frame) = matching {
             return (frame.render_pass, frame.raw);
         }
-        let attachments: Vec<vk::ImageView> = match depth {
-            Some(held) => vec![target.view, held.view],
-            None => vec![target.view],
-        };
+        let mut attachments = Vec::with_capacity(2);
+        if let Some(target) = color {
+            attachments.push(target.view);
+        }
+        if let Some(texture) = depth {
+            attachments.push(texture.view);
+        }
         let raw = unsafe {
             self.core.create_framebuffer(
                 &vk::FramebufferCreateInfo::default()
                     .render_pass(render_pass)
                     .attachments(&attachments)
-                    .width(target.width)
-                    .height(target.height)
+                    .width(width)
+                    .height(height)
                     .layers(1),
                 None,
             )
@@ -2337,6 +2386,7 @@ impl Device {
                 mip_levels: 1,
                 format,
                 usages: TextureUsages::RENDER_ATTACHMENT,
+                aspect: vk::ImageAspectFlags::COLOR,
                 present: true,
                 state: Mutex::new(TextureState {
                     layout: vk::ImageLayout::UNDEFINED,
@@ -2426,7 +2476,7 @@ impl Device {
     pub(crate) fn create_graphics_pipeline(
         self: &Arc<Self>,
         program: &GraphicsProgram,
-        format: TextureFormat,
+        format: Option<TextureFormat>,
         state: PipelineState,
         depth: bool,
     ) -> GraphicsPipeline {
@@ -2560,6 +2610,11 @@ impl Device {
                 .src_alpha_blend_factor(source_alpha)
                 .dst_alpha_blend_factor(destination_alpha)
                 .alpha_blend_op(vk::BlendOp::ADD)];
+            let blend_attachments = if pipeline.resource.format.is_some() {
+                &blend[..]
+            } else {
+                &[][..]
+            };
             let input = vk::PipelineVertexInputStateCreateInfo::default();
             let assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
                 .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
@@ -2583,7 +2638,8 @@ impl Device {
                     DepthState::TestCovered => vk::CompareOp::LESS_OR_EQUAL,
                     _ => vk::CompareOp::LESS,
                 });
-            let color = vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend);
+            let color =
+                vk::PipelineColorBlendStateCreateInfo::default().attachments(blend_attachments);
             let dynamic = vk::PipelineDynamicStateCreateInfo::default()
                 .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]);
             let info = vk::GraphicsPipelineCreateInfo::default()
@@ -2749,51 +2805,61 @@ impl Device {
                     depth,
                     draws,
                 } => {
-                    let texture = native_texture(target.native());
-                    let target_frame = texture
-                        .targets
-                        .get(*level as usize)
-                        .expect("a render level names a level its target holds");
-                    let extent = vk::Extent2D {
-                        width: target_frame.width,
-                        height: target_frame.height,
+                    let color = target.as_ref().map(|target| {
+                        let texture = native_texture(target.native());
+                        texture
+                            .targets
+                            .get(*level as usize)
+                            .expect("a render level names a level its target holds")
+                    });
+                    let depth_texture = depth
+                        .as_ref()
+                        .map(|(held, _)| native_texture(held.native()));
+                    let (width, height) = match (color, &depth_texture) {
+                        (Some(frame), _) => (frame.width, frame.height),
+                        (None, Some(held)) => (held.width, held.height),
+                        (None, None) => unreachable!("a render pass names an attachment"),
                     };
+                    let extent = vk::Extent2D { width, height };
                     let key = PassKey {
-                        format: texture.format,
+                        format: color.map(|_| {
+                            native_texture(
+                                target
+                                    .as_ref()
+                                    .expect("a colour attachment names its target")
+                                    .native(),
+                            )
+                            .format
+                        }),
                         depth: depth.as_ref().map(|(_, ops)| (ops.load, ops.store)),
                     };
-                    let held = depth.as_ref().map(|(held, _)| {
-                        let NativeDepth::Vulkan(native) = held.native();
-                        Arc::clone(&native.resource)
-                    });
-                    if let (Some((_, ops)), Some(native)) = (&depth, &held) {
-                        let mut content = native
-                            .content
+                    if let (Some((_, ops)), Some(held)) = (&depth, &depth_texture)
+                        && ops.load == DepthLoad::Keep
+                    {
+                        let state = held
+                            .state
                             .lock()
-                            .expect("the Vulkan depth of a render pass is never poisoned");
+                            .expect("a Vulkan texture layout is never poisoned");
                         assert!(
-                            ops.load == DepthLoad::Clear || *content == DepthContent::Stored,
-                            "a render pass loads a depth texture no storing pass left",
+                            state.layout == vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                            "a render pass keeps a depth texture no storing pass left",
                         );
-                        *content = if ops.store {
-                            DepthContent::Stored
-                        } else {
-                            DepthContent::Unused
-                        };
                     }
-                    let (render_pass, framebuffer) = self.framing(target_frame, key, held.as_ref());
-                    let clears = [
-                        vk::ClearValue {
+                    let (render_pass, framebuffer) = self.framing(color, key, depth_texture);
+                    let mut clears = Vec::with_capacity(2);
+                    if color.is_some() {
+                        clears.push(vk::ClearValue {
                             color: vk::ClearColorValue { float32: *clear },
-                        },
-                        vk::ClearValue {
+                        });
+                    }
+                    if depth.is_some() {
+                        clears.push(vk::ClearValue {
                             depth_stencil: vk::ClearDepthStencilValue {
                                 depth: 1.0,
                                 stencil: 0,
                             },
-                        },
-                    ];
-                    let clears = &clears[..if depth.is_some() { 2 } else { 1 }];
+                        });
+                    }
                     let info = vk::RenderPassBeginInfo::default()
                         .render_pass(render_pass)
                         .framebuffer(framebuffer)
@@ -2801,14 +2867,14 @@ impl Device {
                             offset: vk::Offset2D { x: 0, y: 0 },
                             extent,
                         })
-                        .clear_values(clears);
+                        .clear_values(&clears);
                     for draw in draws {
                         for bindings in &draw.groups {
                             let group = group_resource(&bindings.native);
                             for held in &group.textures {
                                 pending.transition(
                                     held,
-                                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                                    held.sampled_layout(),
                                     Access::read(
                                         vk::PipelineStageFlags::FRAGMENT_SHADER,
                                         vk::AccessFlags::SHADER_READ,
@@ -2835,15 +2901,18 @@ impl Device {
                             );
                         }
                     }
-                    texture.record(
-                        &mut pending,
-                        Access::write(
-                            vk::PipelineStageFlags::ALL_COMMANDS,
-                            vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::MEMORY_WRITE,
-                        ),
-                    );
-                    if let Some(held) = &held {
-                        held.record(
+                    if let Some(target) = &target {
+                        native_texture(target.native()).record(
+                            &mut pending,
+                            Access::write(
+                                vk::PipelineStageFlags::ALL_COMMANDS,
+                                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                                    | vk::AccessFlags::MEMORY_WRITE,
+                            ),
+                        );
+                    }
+                    if let Some(texture) = &depth_texture {
+                        texture.record(
                             &mut pending,
                             Access::write(
                                 vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
@@ -2855,10 +2924,10 @@ impl Device {
                         );
                     }
                     pending.flush(&self.core, command);
-                    if let Some(held) = &held {
+                    if let Some(texture) = &depth_texture {
                         frame
                             .resources
-                            .push(Arc::clone(held) as Arc<dyn Any + Send + Sync>);
+                            .push(Arc::clone(texture) as Arc<dyn Any + Send + Sync>);
                     }
                     unsafe {
                         self.core.cmd_begin_render_pass(
@@ -2944,12 +3013,22 @@ impl Device {
                         }
                     }
                     unsafe { self.core.cmd_end_render_pass(command) };
-                    texture
-                        .state
-                        .lock()
-                        .expect("a Vulkan texture layout is never poisoned")
-                        .layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-                    frame.resources.push(texture.clone());
+                    if let Some(target) = &target {
+                        let texture = native_texture(target.native());
+                        texture
+                            .state
+                            .lock()
+                            .expect("a Vulkan texture layout is never poisoned")
+                            .layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+                        frame.resources.push(texture.clone());
+                    }
+                    if let Some(texture) = &depth_texture {
+                        texture
+                            .state
+                            .lock()
+                            .expect("a Vulkan texture layout is never poisoned")
+                            .layout = vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                    }
                 }
                 Command::WriteTexture {
                     texture,
@@ -3004,7 +3083,7 @@ impl Device {
                     if texture.usages.contains(TextureUsages::SAMPLED) {
                         pending.transition(
                             texture,
-                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            texture.sampled_layout(),
                             Access::read(
                                 vk::PipelineStageFlags::FRAGMENT_SHADER,
                                 vk::AccessFlags::SHADER_READ,
@@ -3099,7 +3178,7 @@ impl Device {
                     for texture in &group.textures {
                         pending.transition(
                             texture,
-                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            texture.sampled_layout(),
                             Access::read(
                                 vk::PipelineStageFlags::COMPUTE_SHADER,
                                 vk::AccessFlags::SHADER_READ,
@@ -3453,6 +3532,7 @@ fn vk_format(format: TextureFormat) -> vk::Format {
         TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
         TextureFormat::Rgba16Float => vk::Format::R16G16B16A16_SFLOAT,
         TextureFormat::R32Float => vk::Format::R32_SFLOAT,
+        TextureFormat::Depth32Float => DEPTH_FORMAT,
     }
 }
 

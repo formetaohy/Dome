@@ -17,7 +17,7 @@ pub(super) struct ChannelFrame<'a> {
     pub(super) line_groups: &'a [BindGroup],
     pub(super) line_vertices: u32,
     pub(super) probe_count: u32,
-    pub(super) depth: DepthTexture,
+    pub(super) depth: Texture,
 }
 
 pub(super) struct Channels {
@@ -375,11 +375,7 @@ impl Renderer {
                 ))
             })
             .collect::<Vec<_>>();
-        submission.render(
-            Pass::new(&self.shadow_map, [1.0, 0.0, 0.0, 1.0])
-                .depth(&self.shadow_depth, DepthOps::CLEAR_STORED),
-            &cast,
-        );
+        submission.render(Pass::depth_only(&self.shadow_map), &cast);
         if point_light_count > 0 {
             let palette = self.palettes.binding();
             let materials = self
@@ -433,11 +429,7 @@ impl Renderer {
                     .viewport(self.point_shadows.viewport(cell))
                 })
                 .collect::<Vec<_>>();
-            submission.render(
-                Pass::new(self.point_shadows.atlas(), self.point_shadows.clear())
-                    .depth(self.point_shadows.depth(), DepthOps::CLEAR_STORED),
-                &draws,
-            );
+            submission.render(Pass::depth_only(self.point_shadows.atlas()), &draws);
         }
         if depth_batches < batches.len() as u32 {
             self.transparency.clear_layers(submission);

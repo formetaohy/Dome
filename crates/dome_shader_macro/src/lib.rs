@@ -337,7 +337,9 @@ struct Storage {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ResourceKind {
     Texture,
+    Depth,
     Sampler,
+    ComparisonSampler,
     TextureTable,
     SamplerTable,
 }
@@ -463,7 +465,9 @@ fn resource_kind(ty: &syn::Type) -> Option<ResourceKind> {
     };
     match path.path.get_ident()?.to_string().as_str() {
         "Texture2D" => Some(ResourceKind::Texture),
+        "Depth2D" => Some(ResourceKind::Depth),
         "Sampler" => Some(ResourceKind::Sampler),
+        "ComparisonSampler" => Some(ResourceKind::ComparisonSampler),
         "TextureTable" => Some(ResourceKind::TextureTable),
         "SamplerTable" => Some(ResourceKind::SamplerTable),
         _ => None,
@@ -608,10 +612,10 @@ fn bindings(entry: &mut syn::ItemFn, stage: EntryStage) -> syn::Result<Bindings>
             continue;
         }
         if let Some(kind) = resource_kind(&arg.ty) {
-            if stage != EntryStage::Fragment {
+            if stage == EntryStage::Vertex {
                 return Err(syn::Error::new_spanned(
                     &arg.ty,
-                    "a texture or sampler belongs to the fragment stage",
+                    "a texture or sampler belongs to the fragment or compute stage",
                 ));
             }
             if stage == EntryStage::Compute
@@ -723,7 +727,9 @@ fn storage_declarations(storages: &[Storage], offset: u32) -> Vec<Tokens> {
 fn resource_type(kind: ResourceKind) -> syn::Type {
     match kind {
         ResourceKind::Texture => syn::parse_quote!(::dome_shader::Texture2D),
+        ResourceKind::Depth => syn::parse_quote!(::dome_shader::Depth2D),
         ResourceKind::Sampler => syn::parse_quote!(::dome_shader::Sampler),
+        ResourceKind::ComparisonSampler => syn::parse_quote!(::dome_shader::ComparisonSampler),
         ResourceKind::TextureTable => syn::parse_quote!(::dome_shader::TextureTable),
         ResourceKind::SamplerTable => syn::parse_quote!(::dome_shader::SamplerTable),
     }
@@ -734,8 +740,14 @@ fn resource_declaration(name: &str, kind: ResourceKind, group: u32, slot: u32) -
         ResourceKind::Texture => {
             quote!(compiler.texture(#name, ::dome_shader::BindingSpec::sampled_image(#group, #slot));)
         }
+        ResourceKind::Depth => {
+            quote!(compiler.depth_image(#name, ::dome_shader::BindingSpec::depth_image(#group, #slot));)
+        }
         ResourceKind::Sampler => {
             quote!(compiler.sampler(#name, ::dome_shader::BindingSpec::sampler(#group, #slot));)
+        }
+        ResourceKind::ComparisonSampler => {
+            quote!(compiler.comparison_sampler(#name, ::dome_shader::BindingSpec::comparison_sampler(#group, #slot));)
         }
         ResourceKind::TextureTable => {
             quote!(compiler.texture_table(#name, ::dome_shader::BindingSpec::sampled_image_table(#group, #slot, ::dome_shader::TEXTURE_TABLE_CAPACITY));)

@@ -8,18 +8,27 @@ pub enum TextureFormat {
     Bgra8Unorm,
     Rgba16Float,
     R32Float,
+    Depth32Float,
 }
 
 impl TextureFormat {
     pub const fn bytes_per_texel(self) -> u32 {
         match self {
-            Self::Rgba8Unorm | Self::Rgba8UnormSrgb | Self::Bgra8Unorm | Self::R32Float => 4,
+            Self::Rgba8Unorm
+            | Self::Rgba8UnormSrgb
+            | Self::Bgra8Unorm
+            | Self::R32Float
+            | Self::Depth32Float => 4,
             Self::Rgba16Float => 8,
         }
     }
 
     pub const fn is_srgb(self) -> bool {
         matches!(self, Self::Rgba8UnormSrgb)
+    }
+
+    pub const fn is_depth(self) -> bool {
+        matches!(self, Self::Depth32Float)
     }
 }
 
@@ -62,6 +71,10 @@ impl Texture {
             "a {label} texture of {width} by {height} texels holds {mip_levels} mip levels",
         );
         assert!(!usages.is_empty(), "a {label} texture names no use");
+        assert!(
+            !format.is_depth() || !usages.contains(TextureUsages::COPY_DST),
+            "a {label} depth texture takes no texel upload",
+        );
         assert!(
             u64::from(width)
                 <= device.limits().max_buffer_size / u64::from(format.bytes_per_texel()),
@@ -247,6 +260,31 @@ impl Texture {
             }
         }
         rgba
+    }
+
+    pub fn level(&self, level: u32) -> Self {
+        assert!(
+            level < self.state.mip_levels,
+            "a texture of {} mip levels views no level {level}",
+            self.state.mip_levels,
+        );
+        let (width, height) = self.level_extent(level);
+        Self {
+            state: Arc::new(TextureState {
+                native: self
+                    .state
+                    .device
+                    .native()
+                    .create_texture_view(&self.state.native, level),
+                device: self.state.device.clone(),
+                width,
+                height,
+                mip_levels: 1,
+                format: self.state.format,
+                usages: self.state.usages,
+                identity: ResourceId::next(),
+            }),
+        }
     }
 
     pub(crate) fn device(&self) -> &Device {

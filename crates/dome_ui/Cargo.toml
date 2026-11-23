@@ -17,3 +17,4 @@ dome_window = { workspace = true }
 dome_text = { workspace = true }
 bytemuck = { workspace = true }
 slotmap = { workspace = true }
+unicode-segmentation = { workspace = true }

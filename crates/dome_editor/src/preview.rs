@@ -8,7 +8,7 @@ use dome_gpu::{
 };
 use dome_math::{Quat, Transform, Vec3};
 use dome_render::{Camera, DirectionalLight, PointLight, Renderer, Target};
-use dome_scene::{Changed, Scene};
+use dome_scene::Scene;
 use dome_schema::{Registry, SceneSync};
 use dome_ui::Ui;
 use std::collections::BTreeSet;
@@ -22,6 +22,7 @@ pub(crate) const PREVIEW_SAMPLER: SamplerDesc = SamplerDesc {
     mip_filter: Filter::Linear,
     address_u: AddressMode::ClampToEdge,
     address_v: AddressMode::ClampToEdge,
+    compare: None,
 };
 
 pub(crate) struct Preview {
@@ -74,14 +75,9 @@ impl Preview {
         preview
     }
 
-    pub(crate) fn refresh(&mut self, scene: &Scene) -> Refresh {
+    pub(crate) fn refresh(&mut self, scene: &Scene) {
         self.wanted = Some(scene.clone());
         self.start();
-        Refresh {
-            applied: true,
-            changed: Changed::none(),
-            errors: Vec::new(),
-        }
     }
 
     pub(crate) fn poll(&mut self) -> Option<Refresh> {

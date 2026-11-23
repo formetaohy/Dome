@@ -1,4 +1,5 @@
 mod commit;
+mod placeholder;
 mod plan;
 mod prepare;
 mod work;
@@ -68,7 +69,6 @@ pub struct AssetError {
     pub kind: &'static str,
     pub id: String,
     pub message: String,
-    pub fatal: bool,
 }
 
 impl fmt::Display for AssetError {
@@ -209,7 +209,6 @@ impl Library {
                     kind: "asset",
                     id: String::from("worker"),
                     message,
-                    fatal: true,
                 }],
             }),
         }
@@ -329,17 +328,17 @@ impl Library {
         format: TextureFormat,
         color: ColorSpace,
         textures: &HashMap<String, Arc<ImageMips>>,
-    ) -> Result<Texture, String> {
+    ) -> Texture {
         let key = (String::from(id), format, color);
         if let Some(texture) = self.textures.get(&key) {
-            return Ok(texture.clone());
+            return texture.clone();
         }
-        let mips = textures.get(id).ok_or_else(|| {
-            format!("the material samples the image {id}, whose pixels the library holds none")
-        })?;
+        let mips = textures.get(id).unwrap_or_else(|| {
+            panic!("the material samples the image {id}, which the library does not hold")
+        });
         let levels = mips
             .levels(color)
-            .ok_or_else(|| format!("the image {id} holds no {color:?} levels for its material"))?;
+            .unwrap_or_else(|| panic!("the image {id} holds no {color:?} levels for its material"));
         let held = levels.iter().map(Vec::as_slice).collect::<Vec<_>>();
         let texture = renderer.texture(
             id,
@@ -351,7 +350,7 @@ impl Library {
         );
         renderer.write_texture(&texture, &held);
         self.textures.insert(key, texture.clone());
-        Ok(texture)
+        texture
     }
 
     fn material_desc(
@@ -359,7 +358,7 @@ impl Library {
         renderer: &Renderer,
         entry: &MaterialEntry,
         textures: &HashMap<String, Arc<ImageMips>>,
-    ) -> Result<MaterialDesc, String> {
+    ) -> MaterialDesc {
         let asset = &entry.asset;
         let mut desc = MaterialDesc::new(asset.base_color)
             .alpha(asset.alpha)
@@ -377,7 +376,7 @@ impl Library {
                 TextureFormat::Rgba8UnormSrgb,
                 ColorSpace::Srgb,
                 textures,
-            )?);
+            ));
         }
         if let Some(image) = &asset.metallic_roughness_image {
             desc = desc.metallic_roughness_image(self.material_image(
@@ -386,7 +385,7 @@ impl Library {
                 TextureFormat::Rgba8Unorm,
                 ColorSpace::Linear,
                 textures,
-            )?);
+            ));
         }
         if let Some(image) = &asset.normal_image {
             desc = desc.normal_image(self.material_image(
@@ -395,7 +394,7 @@ impl Library {
                 TextureFormat::Rgba8Unorm,
                 ColorSpace::Linear,
                 textures,
-            )?);
+            ));
         }
         if let Some(image) = &asset.occlusion_image {
             desc = desc.occlusion_image(self.material_image(
@@ -404,7 +403,7 @@ impl Library {
                 TextureFormat::Rgba8Unorm,
                 ColorSpace::Linear,
                 textures,
-            )?);
+            ));
         }
         if let Some(image) = &asset.emissive_image {
             desc = desc.emissive_image(self.material_image(
@@ -413,9 +412,9 @@ impl Library {
                 TextureFormat::Rgba8UnormSrgb,
                 ColorSpace::Srgb,
                 textures,
-            )?);
+            ));
         }
-        Ok(desc)
+        desc
     }
 
     fn material_image(
@@ -425,15 +424,15 @@ impl Library {
         format: TextureFormat,
         color: ColorSpace,
         textures: &HashMap<String, Arc<ImageMips>>,
-    ) -> Result<MaterialImage, String> {
+    ) -> MaterialImage {
         let sampler = self
             .images
             .get(id)
             .map(|held| held.image.sampler)
-            .ok_or_else(|| format!("the scene samples the image {id}, which it does not hold"))?;
+            .unwrap_or_else(|| panic!("the scene samples the image {id}, which it does not hold"));
         let sampler = self.sampler(renderer, sampler);
-        let texture = self.texture(renderer, id, format, color, textures)?;
-        Ok(MaterialImage::new(texture, sampler))
+        let texture = self.texture(renderer, id, format, color, textures);
+        MaterialImage::new(texture, sampler)
     }
 }
 
@@ -517,6 +516,11 @@ impl Library {
         let refresh = library.refresh(scene, renderer);
         assert!(
             refresh.applied,
+            "the library adopts the assets of its scene: {}",
+            refresh.message(),
+        );
+        assert!(
+            refresh.errors.is_empty(),
             "the scene builds its assets: {}",
             refresh.message(),
         );

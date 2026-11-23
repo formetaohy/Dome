@@ -33,6 +33,7 @@ slotmap = "1"
 swash = "0.2"
 syn = { version = "2", features = ["full", "visit-mut", "extra-traits"] }
 toml = { version = "1", features = ["preserve_order"] }
+unicode-segmentation = "1"
 windows = "0.62"
 winit = { version = "0.30.13", default-features = false }
 dome_animation = { version = "0.1.0", path = "crates/dome_animation" }

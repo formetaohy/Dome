@@ -20,6 +20,7 @@ pub(crate) fn sampler(sampler: Sampler) -> SamplerDesc {
         mip_filter: filter(sampler.mip_filter),
         address_u: wrap(sampler.wrap_u),
         address_v: wrap(sampler.wrap_v),
+        compare: None,
     }
 }
 

@@ -52,7 +52,7 @@ use crate::transparency::Transparency;
 use crate::view::View;
 use dome_ecs::{Entity, World};
 use dome_gpu::{
-    AddressMode, BindGroup, Binding, BufferUsages, DepthOps, DepthTexture, Device, Draw, Filter,
+    AddressMode, BindGroup, Binding, BufferUsages, CompareOp, DepthOps, Device, Draw, Filter,
     GpuBuffer, GpuContext, GraphicsPipeline, Pass, PipelineHandle, PipelineState, Queue,
     ResourceId, Sampler, SamplerDesc, Submission, SurfaceFrame, Texture, TextureFormat,
     TextureUsages, Viewport,
@@ -104,7 +104,7 @@ pub struct Renderer {
     draw: GraphicsPipeline,
     capture_draw: GraphicsPipeline,
     transparent_draw: GraphicsPipeline,
-    scene_depth: Option<DepthTexture>,
+    scene_depth: Option<Texture>,
     sky: GraphicsPipeline,
     sky_view: BindGroup,
     sky_record: GpuBuffer,
@@ -124,7 +124,6 @@ pub struct Renderer {
     shade: BindGroup,
     transparent_shade: BindGroup,
     shadow_map: Texture,
-    shadow_depth: DepthTexture,
     views: GpuBuffer,
     shadow_views: GpuBuffer,
     light: GpuBuffer,
@@ -180,7 +179,7 @@ impl Renderer {
             SHADOW_ATLAS,
             SHADOW_ATLAS,
             1,
-            TextureFormat::R32Float,
+            TextureFormat::Depth32Float,
             TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED,
         );
         let shadow_sampler = Sampler::new(
@@ -191,6 +190,7 @@ impl Renderer {
                 mip_filter: Filter::Nearest,
                 address_u: AddressMode::ClampToEdge,
                 address_v: AddressMode::ClampToEdge,
+                compare: Some(CompareOp::LessOrEqual),
             },
         );
         assert!(
@@ -240,14 +240,11 @@ impl Renderer {
             TextureFormat::Rgba16Float,
             PipelineState::COVERED,
         );
-        let shadow = GraphicsPipeline::new_depth(
+        let shadow = GraphicsPipeline::new_depth_only(
             &device,
             program::shadowing(),
-            TextureFormat::R32Float,
             PipelineState::DEPTH_WRITE,
         );
-        let shadow_depth =
-            DepthTexture::new(&device, "dome shadow depth", SHADOW_ATLAS, SHADOW_ATLAS);
         let depth = GraphicsPipeline::new_depth(
             &device,
             program::depth_prepass(),
@@ -274,6 +271,7 @@ impl Renderer {
                 mip_filter: Filter::Nearest,
                 address_u: AddressMode::ClampToEdge,
                 address_v: AddressMode::ClampToEdge,
+                compare: None,
             },
         );
         let shading = Shading::new(&device, &queue);
@@ -367,7 +365,6 @@ impl Renderer {
             shade,
             transparent_shade,
             shadow_map,
-            shadow_depth,
             views,
             shadow_views,
             light,
@@ -547,14 +544,22 @@ impl Renderer {
         self.materials_changed();
     }
 
-    fn scene_depth(&mut self, width: u32, height: u32) -> DepthTexture {
+    fn scene_depth(&mut self, width: u32, height: u32) -> Texture {
         if let Some(held) = &self.scene_depth
             && held.width() == width
             && held.height() == height
         {
             return held.clone();
         }
-        let depth = DepthTexture::new(&self.device, "dome scene depth", width, height);
+        let depth = Texture::new(
+            &self.device,
+            "dome scene depth",
+            width,
+            height,
+            1,
+            TextureFormat::Depth32Float,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED,
+        );
         self.scene_depth = Some(depth.clone());
         depth
     }

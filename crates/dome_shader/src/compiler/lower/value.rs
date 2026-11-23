@@ -138,7 +138,7 @@ impl FunctionLower<'_> {
 
     fn element_type(&self, ty: TypeId) -> TypeId {
         match self.compiler.module().ty(ty).clone() {
-            Type::Array { element, .. } => element,
+            Type::Array { element, .. } | Type::Block { element, .. } => element,
             Type::Vector { scalar, .. } => self
                 .compiler
                 .module()
@@ -650,6 +650,27 @@ impl FunctionLower<'_> {
                     sampler: sampler.value,
                     coordinates: coordinates.value,
                     level: Some(level.value),
+                    result,
+                })
+            }
+            Intrinsic::SampleCompare => {
+                assert_eq!(
+                    self.stage,
+                    Some(crate::shader::Stage::Fragment),
+                    "comparison sampling belongs to the fragment stage"
+                );
+                let depth = self.value(&args[0]);
+                let sampler = self.value(&args[1]);
+                let coordinates_type = self.compiler.ty("fvec2");
+                let coordinates = self.value_with_hint(&args[2], Some(coordinates_type));
+                let reference_type = self.compiler.scalar("f32");
+                let reference = self.value_with_hint(&args[3], Some(reference_type));
+                let ty = self.compiler.scalar("f32");
+                self.emit(ty, |result| ShaderInstruction::SampleCompare {
+                    depth: depth.value,
+                    sampler: sampler.value,
+                    coordinates: coordinates.value,
+                    reference: reference.value,
                     result,
                 })
             }

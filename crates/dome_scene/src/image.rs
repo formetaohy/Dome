@@ -61,6 +61,7 @@ pub fn material_sampler() -> SamplerDesc {
         mip_filter: Filter::Linear,
         address_u: AddressMode::Repeat,
         address_v: AddressMode::Repeat,
+        compare: None,
     }
 }
 

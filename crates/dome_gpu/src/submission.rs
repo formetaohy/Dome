@@ -1,7 +1,6 @@
 use crate::buffer::GpuBuffer;
 use crate::capability::{BufferUsages, TextureUsages};
 use crate::context::{Device, Queue};
-use crate::depth::DepthTexture;
 use crate::graphics::{Count, DepthOps, Draw, Pass, Scissor, Viewport};
 use crate::native::NativeBuffer;
 use crate::pipeline::{BindGroup, GraphicsSlot, Owner, PipelineHandle};
@@ -53,10 +52,10 @@ pub(crate) enum Command {
         groups: [u32; 3],
     },
     Render {
-        target: Texture,
+        target: Option<Texture>,
         level: u32,
         clear: [f32; 4],
-        depth: Option<(DepthTexture, DepthOps)>,
+        depth: Option<(Texture, DepthOps)>,
         draws: Vec<RecordedDraw>,
     },
     CopyTexture {
@@ -199,22 +198,38 @@ impl Submission {
             depth,
         } = pass;
         assert!(
-            target.device().same(&self.device),
-            "a render pass crosses devices"
+            target.is_some() || depth.is_some(),
+            "a render pass paints a colour or a depth attachment"
         );
-        assert!(
-            target.usages().contains(TextureUsages::RENDER_ATTACHMENT),
-            "a render pass draws into a render attachment"
-        );
-        assert!(
-            level < target.mip_count(),
-            "a render pass draws into the level {level} of a {} level texture",
-            target.mip_count(),
-        );
-        let (width, height) = target.level_extent(level);
+        for held in target.iter() {
+            assert!(
+                held.device().same(&self.device),
+                "a render pass crosses devices"
+            );
+            assert!(
+                held.usages().contains(TextureUsages::RENDER_ATTACHMENT),
+                "a render pass draws into a render attachment"
+            );
+            assert!(
+                level < held.mip_count(),
+                "a render pass draws into the level {level} of a {} level texture",
+                held.mip_count(),
+            );
+        }
         if let Some((held, _)) = &depth {
             assert!(
-                held.width() == width && held.height() == height,
+                held.usages().contains(TextureUsages::RENDER_ATTACHMENT),
+                "a render pass tests against a render attachment"
+            );
+        }
+        let (width, height) = match (target, &depth) {
+            (Some(held), _) => held.level_extent(level),
+            (None, Some((held, _))) => (held.width(), held.height()),
+            (None, None) => unreachable!("a render pass names an attachment"),
+        };
+        if let Some((held, _)) = &depth {
+            assert!(
+                held.level_extent(0) == (width, height),
                 "a {width} by {height} pass loads a {} by {} depth texture",
                 held.width(),
                 held.height(),
@@ -230,10 +245,10 @@ impl Submission {
                 );
                 assert_eq!(
                     pipeline.format,
-                    target.format(),
+                    target.map(|held| held.format()),
                     "a draw writes the {:?} format of its pipeline into a {:?} target",
                     pipeline.format,
-                    target.format(),
+                    target.map(|held| held.format()),
                 );
                 assert_eq!(
                     pipeline.depth,
@@ -320,7 +335,7 @@ impl Submission {
             })
             .collect();
         self.commands.push(Command::Render {
-            target: target.clone(),
+            target: target.cloned(),
             level,
             clear,
             depth: depth.map(|(held, ops)| (held.clone(), ops)),

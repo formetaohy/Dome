@@ -12,8 +12,8 @@ mod lower;
 mod resource;
 
 pub use resource::{
-    AtomicU32, Fvec2, Fvec4, In, Out, Position, Read, ReadWrite, Sampler, SamplerTable, Texture2D,
-    TextureTable, Uvec3, Uvec4, Workgroup,
+    AtomicU32, ComparisonSampler, Depth2D, Fvec2, Fvec4, In, Out, Position, Read, ReadWrite,
+    Sampler, SamplerTable, Texture2D, TextureTable, Uvec3, Uvec4, Workgroup,
 };
 
 pub struct Compiler {
@@ -49,7 +49,9 @@ impl Compiler {
             scalars.insert(name.to_owned(), held);
         }
         scalars.insert("Texture2D".to_owned(), module.image());
+        scalars.insert("Depth2D".to_owned(), module.depth_image());
         scalars.insert("Sampler".to_owned(), module.sampler());
+        scalars.insert("ComparisonSampler".to_owned(), module.comparison_sampler());
         Self {
             module,
             records: HashMap::new(),
@@ -94,7 +96,7 @@ impl Compiler {
     }
 
     pub(crate) fn array(&mut self, element: TypeId, count: u32) -> TypeId {
-        self.module.array(element, Some(count))
+        self.module.array(element, count)
     }
 
     pub(crate) fn pointer(&mut self, space: Space, base: TypeId) -> TypeId {
@@ -138,7 +140,7 @@ impl Compiler {
 
     pub fn storage_array(&mut self, name: &str, element: &str, spec: BindingSpec) {
         let element = self.ty(element);
-        let ty = self.module.array(element, None);
+        let ty = self.module.block(name, element);
         self.storage(name, ty, spec);
     }
 
@@ -152,8 +154,18 @@ impl Compiler {
         self.uniform_constant(name, ty, spec);
     }
 
+    pub fn depth_image(&mut self, name: &str, spec: BindingSpec) {
+        let ty = self.ty("Depth2D");
+        self.uniform_constant(name, ty, spec);
+    }
+
     pub fn sampler(&mut self, name: &str, spec: BindingSpec) {
         let ty = self.ty("Sampler");
+        self.uniform_constant(name, ty, spec);
+    }
+
+    pub fn comparison_sampler(&mut self, name: &str, spec: BindingSpec) {
+        let ty = self.ty("ComparisonSampler");
         self.uniform_constant(name, ty, spec);
     }
 
@@ -164,7 +176,7 @@ impl Compiler {
             "the texture table {name} binds a sampled image table"
         );
         let element = self.ty("Texture2D");
-        let ty = self.module.array(element, Some(spec.count));
+        let ty = self.module.array(element, spec.count);
         self.uniform_constant_table(name, ty, spec);
     }
 
@@ -175,7 +187,7 @@ impl Compiler {
             "the sampler table {name} binds a sampler table"
         );
         let element = self.ty("Sampler");
-        let ty = self.module.array(element, Some(spec.count));
+        let ty = self.module.array(element, spec.count);
         self.uniform_constant_table(name, ty, spec);
     }
 
@@ -188,7 +200,10 @@ impl Compiler {
         assert!(
             matches!(
                 spec.kind,
-                crate::shader::BindingKind::SampledImage | crate::shader::BindingKind::Sampler
+                crate::shader::BindingKind::SampledImage
+                    | crate::shader::BindingKind::Sampler
+                    | crate::shader::BindingKind::DepthImage
+                    | crate::shader::BindingKind::ComparisonSampler
             ),
             "a uniform constant {name} reads a texture or a sampler"
         );
@@ -206,7 +221,9 @@ impl Compiler {
                 BindingKind::ReadWriteStorage => Access::ReadWrite,
                 BindingKind::TableStorage => Access::Table,
                 BindingKind::SampledImage
+                | BindingKind::DepthImage
                 | BindingKind::Sampler
+                | BindingKind::ComparisonSampler
                 | BindingKind::SampledImageTable
                 | BindingKind::SamplerTable => {
                     panic!("a storage binding reads a texture or a sampler")
@@ -252,7 +269,7 @@ impl Compiler {
 
     pub fn workgroup(&mut self, name: &str, element: &str, count: u32) {
         let element = self.ty(element);
-        let ty = self.module.array(element, Some(count));
+        let ty = self.module.array(element, count);
         let index = self.module.add_global(Global {
             name: name.to_owned(),
             ty,

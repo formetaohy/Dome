@@ -245,6 +245,7 @@ fn image(value: Toml, what: &str) -> ImageEntry {
         mip_filter,
         address_u: wrap_u,
         address_v: wrap_v,
+        compare: None,
     };
     let entry = match (path, model, index) {
         (Some(path), None, None) => ImageEntry::new(

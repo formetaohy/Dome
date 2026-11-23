@@ -14,7 +14,6 @@ pub fn write(module: &Module) -> Vec<u32> {
 pub(crate) struct Global {
     pub(crate) id: u32,
     pub(crate) pointer: u32,
-    pub(crate) wrapped: bool,
 }
 
 pub(crate) struct Writer<'m> {
@@ -30,7 +29,9 @@ pub(crate) struct Writer<'m> {
     pub(crate) locals: Vec<Vec<(u32, u32)>>,
     pub(crate) function_ids: Vec<u32>,
     pub(crate) globals: Vec<Global>,
-    sampled_image: Option<u32>,
+    blocks: HashMap<TypeId, (u32, u32)>,
+    sampled_images: HashMap<u32, u32>,
+    sampler: Option<u32>,
     builtins: BTreeMap<u32, u32>,
     entry_builtins: Vec<Vec<u32>>,
     used: Vec<HashSet<u32>>,
@@ -67,7 +68,9 @@ impl<'m> Writer<'m> {
             locals: vec![Vec::new(); module.functions().len()],
             function_ids: Vec::new(),
             globals: Vec::new(),
-            sampled_image: None,
+            blocks: HashMap::new(),
+            sampled_images: HashMap::new(),
+            sampler: None,
             builtins: BTreeMap::new(),
             entry_builtins: Vec::new(),
             used: vec![HashSet::new(); module.functions().len()],
@@ -158,16 +161,21 @@ impl<'m> Writer<'m> {
             Type::Array { element, count } => {
                 let element = self.ty(element);
                 let id = self.id();
-                let instruction = match count {
-                    Some(count) => {
-                        let count = self.integer(Scalar::U32, count);
-                        Instruction::defined(TYPE_ARRAY, id)
-                            .operand(element)
-                            .operand(count)
-                    }
-                    None => Instruction::defined(TYPE_RUNTIME_ARRAY, id).operand(element),
-                };
-                self.declare(instruction);
+                let count = self.integer(Scalar::U32, count);
+                self.declare(
+                    Instruction::defined(TYPE_ARRAY, id)
+                        .operand(element)
+                        .operand(count),
+                );
+                id
+            }
+            Type::Block { element, .. } => {
+                let element = self.ty(element);
+                let array = self.id();
+                self.declare(Instruction::defined(TYPE_RUNTIME_ARRAY, array).operand(element));
+                let id = self.id();
+                self.declare(Instruction::defined(TYPE_STRUCT, id).operand(array));
+                self.blocks.insert(ty, (id, array));
                 id
             }
             Type::Struct { members, .. } => {
@@ -181,26 +189,9 @@ impl<'m> Writer<'m> {
                 id
             }
             Type::Atomic(scalar) => self.scalar_type(scalar),
-            Type::Image => {
-                let component = self.scalar_type(Scalar::F32);
-                let id = self.id();
-                self.declare(
-                    Instruction::defined(TYPE_IMAGE, id)
-                        .operand(component)
-                        .word(dimension::TYPE_2D)
-                        .word(0u32)
-                        .word(0u32)
-                        .word(0u32)
-                        .word(1u32)
-                        .word(image_format::UNKNOWN),
-                );
-                id
-            }
-            Type::Sampler => {
-                let id = self.id();
-                self.declare(Instruction::defined(TYPE_SAMPLER, id));
-                id
-            }
+            Type::Image => self.image_type(0),
+            Type::DepthImage => self.image_type(1),
+            Type::Sampler | Type::ComparisonSampler => self.sampler_type(),
             Type::Pointer { space, base } => {
                 let base = self.ty(base);
                 let id = self.id();
@@ -260,19 +251,40 @@ impl<'m> Writer<'m> {
         id
     }
 
-    pub(crate) fn sampled_image(&mut self) -> u32 {
-        if let Some(id) = self.sampled_image {
+    fn image_type(&mut self, depth: u32) -> u32 {
+        let component = self.scalar_type(Scalar::F32);
+        let id = self.id();
+        self.declare(
+            Instruction::defined(TYPE_IMAGE, id)
+                .operand(component)
+                .word(dimension::TYPE_2D)
+                .word(depth)
+                .word(0u32)
+                .word(0u32)
+                .word(1u32)
+                .word(image_format::UNKNOWN),
+        );
+        id
+    }
+
+    fn sampler_type(&mut self) -> u32 {
+        if let Some(id) = self.sampler {
             return id;
         }
-        let image = self
-            .module
-            .type_ids()
-            .find(|ty| matches!(self.module.ty(*ty), Type::Image))
-            .expect("a sampled image type exists");
-        let image = self.ty(image);
         let id = self.id();
-        self.declare(Instruction::defined(TYPE_SAMPLED_IMAGE, id).operand(image));
-        self.sampled_image = Some(id);
+        self.declare(Instruction::defined(TYPE_SAMPLER, id));
+        self.sampler = Some(id);
+        id
+    }
+
+    pub(crate) fn sampled_image(&mut self, image: TypeId) -> u32 {
+        let key = self.ty(image);
+        if let Some(id) = self.sampled_images.get(&key) {
+            return *id;
+        }
+        let id = self.id();
+        self.declare(Instruction::defined(TYPE_SAMPLED_IMAGE, id).operand(key));
+        self.sampled_images.insert(key, id);
         id
     }
 
@@ -342,16 +354,16 @@ impl<'m> Writer<'m> {
         let mut decorated = Decoration::default();
         for index in 0..self.module.globals().len() as u32 {
             let global = self.module.global(index).clone();
-            let (pointee, wrapper) = match global.space {
-                Space::WorkGroup => (self.ty(global.ty), false),
+            let pointee = match global.space {
+                Space::WorkGroup => self.ty(global.ty),
                 Space::Storage => self.storage_pointee(&global, &mut decorated),
-                Space::UniformConstant => (self.ty(global.ty), false),
-                Space::Input | Space::Output => (self.ty(global.ty), false),
+                Space::UniformConstant => self.ty(global.ty),
+                Space::Input | Space::Output => self.ty(global.ty),
                 Space::Function => panic!("a module global cannot live in function memory"),
             };
-            let _ = wrapper;
-            let pointer = match wrapper {
-                true => {
+            let pointer = match self.module.pointer_type(global.space, global.ty) {
+                Some(declared) => self.ty(declared),
+                None => {
                     let pointer = self.id();
                     self.declare(
                         Instruction::defined(TYPE_POINTER, pointer)
@@ -360,18 +372,6 @@ impl<'m> Writer<'m> {
                     );
                     pointer
                 }
-                false => match self.module.pointer_type(global.space, global.ty) {
-                    Some(declared) => self.ty(declared),
-                    None => {
-                        let pointer = self.id();
-                        self.declare(
-                            Instruction::defined(TYPE_POINTER, pointer)
-                                .word(storage_class(global.space))
-                                .operand(pointee),
-                        );
-                        pointer
-                    }
-                },
             };
             let id = self.id();
             self.declare(
@@ -435,11 +435,7 @@ impl<'m> Writer<'m> {
                     );
                 }
             }
-            self.globals.push(Global {
-                id,
-                pointer,
-                wrapped: wrapper,
-            });
+            self.globals.push(Global { id, pointer });
         }
         self.assert_workgroup_left_undecorated(&decorated);
     }
@@ -448,20 +444,20 @@ impl<'m> Writer<'m> {
         &mut self,
         global: &crate::shader::Global,
         decorated: &mut Decoration,
-    ) -> (u32, bool) {
+    ) -> u32 {
         match self.module.ty(global.ty).clone() {
-            Type::Array {
-                count: None,
-                element,
-            } => {
-                let array = self.ty(global.ty);
-                let wrapper = self.id();
-                self.declare(Instruction::defined(TYPE_STRUCT, wrapper).operand(array));
-                decorated.block(&mut self.annotations, wrapper);
-                decorated.offset(&mut self.annotations, wrapper, 0, 0);
+            Type::Block { element, .. } => {
+                let pointee = self.ty(global.ty);
+                let array = self
+                    .blocks
+                    .get(&global.ty)
+                    .expect("a storage block declares its runtime array")
+                    .1;
+                decorated.block(&mut self.annotations, pointee);
+                decorated.offset(&mut self.annotations, pointee, 0, 0);
                 decorated.stride(&mut self.annotations, array, self.module.stride(element));
                 self.layout(element, decorated);
-                (wrapper, true)
+                pointee
             }
             Type::Struct { members, .. } => {
                 let pointee = self.ty(global.ty);
@@ -479,7 +475,7 @@ impl<'m> Writer<'m> {
                 for ty in pending {
                     self.layout(ty, decorated);
                 }
-                (pointee, false)
+                pointee
             }
             other => panic!(
                 "the shader storage global {} holds {}",
@@ -592,8 +588,8 @@ impl<'m> Writer<'m> {
             } => {
                 let held = &self.globals[*index as usize];
                 let expected = held.pointer;
-                assert!(
-                    held.wrapped || declared == expected,
+                assert_eq!(
+                    declared, expected,
                     "the shader global {index} carries another type than its value records"
                 );
                 expected

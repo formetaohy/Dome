@@ -19,14 +19,14 @@ mod instanced {
 
     #[binding]
     fn shade(
-        shadows: Texture2D,
-        shadower: Sampler,
+        shadows: Depth2D,
+        shadower: ComparisonSampler,
         radiance: Texture2D,
         radiance_sampler: Sampler,
         brdf: Texture2D,
         brdf_sampler: Sampler,
-        point_shadows: Texture2D,
-        point_shadower: Sampler,
+        point_shadows: Depth2D,
+        point_shadower: ComparisonSampler,
     ) {
     }
 
@@ -836,8 +836,8 @@ mod instanced {
     }
 
     fn shadowed(
-        shadows: Texture2D,
-        shadower: Sampler,
+        shadows: Depth2D,
+        shadower: ComparisonSampler,
         at: Fvec2,
         depth: f32,
         texel: f32,
@@ -863,8 +863,8 @@ mod instanced {
     }
 
     fn point_visible(
-        atlas: Texture2D,
-        atlas_sampler: Sampler,
+        atlas: Depth2D,
+        atlas_sampler: ComparisonSampler,
         fragment: Fvec4,
         center: Fvec4,
         shadow: Fvec4,
@@ -938,18 +938,21 @@ mod instanced {
         total * (1.0 / 9.0)
     }
 
-    fn point_compared(atlas: Texture2D, atlas_sampler: Sampler, at: Fvec2, depth: f32) -> f32 {
-        let stored = sample(atlas, atlas_sampler, at);
-        if stored.x < depth { 0.0 } else { 1.0 }
+    fn point_compared(
+        atlas: Depth2D,
+        atlas_sampler: ComparisonSampler,
+        at: Fvec2,
+        depth: f32,
+    ) -> f32 {
+        sample_compare(atlas, atlas_sampler, at, depth)
     }
 
     fn clamped(value: f32, low: f32, high: f32) -> f32 {
         min(max(value, low), high)
     }
 
-    fn compared(shadows: Texture2D, shadower: Sampler, at: Fvec2, depth: f32) -> f32 {
-        let stored = sample(shadows, shadower, at);
-        if stored.x < depth { 0.0 } else { 1.0 }
+    fn compared(shadows: Depth2D, shadower: ComparisonSampler, at: Fvec2, depth: f32) -> f32 {
+        sample_compare(shadows, shadower, at, depth)
     }
 }
 #[dome_shader::graphics]
@@ -971,7 +974,6 @@ mod casting {
         drawn: Read<DrawRecord>,
         vertices: Read<f32>,
         position: Out<Position>,
-        clip: Out<Fvec4>,
         surface: Out<Fvec4>,
     ) {
         let held = drawn[instance];
@@ -1007,28 +1009,23 @@ mod casting {
                 + held.clip2 * local.z
                 + held.clip3 * local.w;
             position = moved;
-            clip = moved;
         } else {
             let moved = held.clip0 * rest.x
                 + held.clip1 * rest.y
                 + held.clip2 * rest.z
                 + held.clip3 * rest.w;
             position = moved;
-            clip = moved;
         }
         surface = shaped;
     }
 
     #[fragment]
     fn fragment(
-        space: In<Fvec4>,
         shaped: In<Fvec4>,
         materials: Read<MaterialRecord>,
         textures: TextureTable,
         samplers: SamplerTable,
-        target: Out<Fvec4>,
     ) {
-        let placed = space;
         let shape = shaped;
         let material = shape.z as u32;
         let entry = materials[material];
@@ -1042,7 +1039,6 @@ mod casting {
                 discard();
             }
         }
-        target = fvec4(placed.z / placed.w, 0.0, 0.0, 1.0);
     }
 }
 #[dome_shader::graphics]

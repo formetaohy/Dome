@@ -14,6 +14,7 @@ const SAMPLER: SamplerDesc = SamplerDesc {
     mip_filter: Filter::Nearest,
     address_u: AddressMode::ClampToEdge,
     address_v: AddressMode::ClampToEdge,
+    compare: None,
 };
 
 #[test]

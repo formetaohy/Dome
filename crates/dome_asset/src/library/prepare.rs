@@ -1,4 +1,3 @@
-use super::AssetError;
 use super::work::EnvironmentData;
 use crate::digest::{Digest, DigestBuilder};
 use crate::source::Sources;
@@ -437,11 +436,7 @@ pub(super) fn environment_data(
             )))
         }
         EnvironmentSource::Atmosphere(atmosphere) => Ok(EnvironmentData::Atmosphere(*atmosphere)),
-        EnvironmentSource::Capture => Ok(EnvironmentData::Panorama(Panorama::new(
-            1,
-            1,
-            &[0.0, 0.0, 0.0],
-        ))),
+        EnvironmentSource::Capture => Ok(EnvironmentData::Empty),
     }
 }
 
@@ -479,21 +474,6 @@ pub(super) fn environment_fingerprint(entry: &EnvironmentEntry, digest: Option<D
 
 fn positions(vertices: &[Vertex]) -> Vec<[f32; 3]> {
     vertices.iter().map(|vertex| vertex.position).collect()
-}
-
-pub(super) fn fail(
-    errors: &mut Vec<AssetError>,
-    kind: &'static str,
-    id: &str,
-    message: String,
-    fatal: bool,
-) {
-    errors.push(AssetError {
-        kind,
-        id: String::from(id),
-        message,
-        fatal,
-    });
 }
 
 pub(super) fn panic_message(payload: &(dyn Any + Send)) -> String {

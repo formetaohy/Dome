@@ -994,16 +994,23 @@ impl Editor {
         let scale = window.scale_factor() as f32;
         let logical = Vec2::new(width as f32 / scale, height as f32 / scale);
         let time = self.origin.elapsed().as_secs_f64();
-        let actions = {
+        let (actions, asset_error) = {
             let Some(session) = self.session.as_mut() else {
                 return Flow::Continue;
             };
-            session.preview.poll();
+            let asset_error = session
+                .preview
+                .poll()
+                .filter(|refresh| !refresh.errors.is_empty())
+                .map(|refresh| refresh.message());
             session.register_textures(&self.scene);
             session.preview.advance(real);
-            session.ui.update(logical, scale, time)
+            (session.ui.update(logical, scale, time), asset_error)
         };
         self.apply_actions(actions);
+        if let Some(error) = asset_error {
+            self.error = Some(error);
+        }
         self.sync_title(window);
 
         let camera = self.orbit.view();

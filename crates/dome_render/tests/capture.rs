@@ -444,6 +444,7 @@ fn placeholder(renderer: &mut Renderer) -> Environment {
         mip_filter: Filter::Nearest,
         address_u: AddressMode::Repeat,
         address_v: AddressMode::ClampToEdge,
+        compare: None,
     });
     Environment::new(radiance, panorama, sampler, 1, [Vec3::ZERO; 9]).local(0.5)
 }

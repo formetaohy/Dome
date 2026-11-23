@@ -67,6 +67,7 @@ fn reset(device: &Device, backend: Backend) {
         mip_filter: Filter::Nearest,
         address_u: AddressMode::ClampToEdge,
         address_v: AddressMode::ClampToEdge,
+        compare: None,
     };
     let linear = SamplerDesc {
         min_filter: Filter::Linear,

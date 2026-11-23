@@ -1,8 +1,10 @@
+use super::AssetError;
+use super::placeholder;
 use super::prepare::{
     ImageBytes, Prepare, animation_data, animation_fingerprint, atmosphere_fingerprint,
-    environment_data, environment_fingerprint, fail, image_data_of, image_fingerprint,
-    image_source, material_fingerprint, mesh_data, mesh_fingerprint, skin_data, skin_fingerprint,
-    sound_data, sound_fingerprint, validate_material,
+    environment_data, environment_fingerprint, image_data_of, image_fingerprint, image_source,
+    material_fingerprint, mesh_data, mesh_fingerprint, skin_data, skin_fingerprint, sound_data,
+    sound_fingerprint, validate_material,
 };
 use super::work::{
     ImageMips, Job, Prepared, PreparedAnimation, PreparedEnvironment, PreparedImage,
@@ -51,19 +53,15 @@ pub(super) fn plan(job: Job) -> Prepared {
                 &mut prepare.sources,
             )
         });
-        match prepared {
-            Ok(_) => {
-                effective_images.insert(entry.id.clone(), fingerprint);
-                changed_images.insert(entry.id.clone());
-                pending_images.push((entry.clone(), fingerprint));
-            }
-            Err(message) => {
-                fail(&mut errors, "image", &entry.id, message, previous.is_none());
-                if let Some(previous) = previous {
-                    effective_images.insert(entry.id.clone(), previous);
-                }
-            }
+        if let Err(message) = prepared {
+            fail(&mut errors, "image", &entry.id, message);
+            prepare
+                .images
+                .insert(entry.id.clone(), Arc::new(placeholder::image()));
         }
+        effective_images.insert(entry.id.clone(), fingerprint);
+        changed_images.insert(entry.id.clone());
+        pending_images.push((entry.clone(), fingerprint));
     }
 
     let mut pending_materials = Vec::new();
@@ -84,30 +82,20 @@ pub(super) fn plan(job: Job) -> Prepared {
         if previous == Some(fingerprint) {
             continue;
         }
-        if let Some(image) = missing {
-            fail(
-                &mut errors,
-                "material",
-                &entry.id,
-                format!(
-                    "the material {} samples the image {image}, which the scene builds none",
-                    entry.id,
-                ),
-                previous.is_none(),
-            );
-            continue;
+        let rejected = match missing {
+            Some(image) => Some(format!(
+                "the material {} samples the image {image}, which the scene builds none",
+                entry.id,
+            )),
+            None => validate_material(entry).err(),
+        };
+        match rejected {
+            Some(message) => {
+                fail(&mut errors, "material", &entry.id, message);
+                pending_materials.push((placeholder::material(entry), fingerprint));
+            }
+            None => pending_materials.push((entry.clone(), fingerprint)),
         }
-        if let Err(message) = validate_material(entry) {
-            fail(
-                &mut errors,
-                "material",
-                &entry.id,
-                message,
-                previous.is_none(),
-            );
-            continue;
-        }
-        pending_materials.push((entry.clone(), fingerprint));
     }
 
     let mut modes: HashMap<String, HashSet<ColorSpace>> = HashMap::new();
@@ -140,7 +128,7 @@ pub(super) fn plan(job: Job) -> Prepared {
                 &mut prepare.sources,
             ) {
                 Ok(data) => data,
-                Err(_) => continue,
+                Err(_) => Arc::new(placeholder::image()),
             },
         };
         textures.insert(id, Arc::new(mips(&data, &colors)));
@@ -149,9 +137,10 @@ pub(super) fn plan(job: Job) -> Prepared {
 
     let mut images = Vec::new();
     for (entry, fingerprint) in pending_images {
-        let Some(mips) = textures.get(&entry.id).cloned() else {
-            continue;
-        };
+        let mips = textures
+            .get(&entry.id)
+            .cloned()
+            .expect("a pending image holds the levels its colour modes build");
         images.push(PreparedImage {
             entry,
             fingerprint,
@@ -159,30 +148,10 @@ pub(super) fn plan(job: Job) -> Prepared {
         });
     }
 
-    pending_materials.retain(|(entry, _)| {
-        let missing = image_modes(entry).into_iter().find_map(|(id, color)| {
-            let id = id?;
-            let key = (String::from(id), format_of(color), color);
-            (!cached_textures.contains(&key) && !textures.contains_key(id)).then_some(id)
-        });
-        match missing {
-            Some(image) => {
-                let previous = fingerprints.materials.contains_key(&entry.id);
-                fail(
-                    &mut errors,
-                    "material",
-                    &entry.id,
-                    format!(
-                        "the material {} samples the image {image}, which the scene builds none",
-                        entry.id
-                    ),
-                    !previous,
-                );
-                false
-            }
-            None => true,
-        }
-    });
+    let materials = pending_materials
+        .into_iter()
+        .map(|(entry, fingerprint)| PreparedMaterial { entry, fingerprint })
+        .collect();
 
     let mut meshes = Vec::new();
     for entry in scene.meshes() {
@@ -204,14 +173,18 @@ pub(super) fn plan(job: Job) -> Prepared {
         }
         let prepared =
             model.and_then(|_| mesh_data(entry, &mut prepare.models, &mut prepare.sources));
-        match prepared {
-            Ok(data) => meshes.push(PreparedMesh {
-                entry: entry.clone(),
-                fingerprint,
-                data,
-            }),
-            Err(message) => fail(&mut errors, "mesh", &entry.id, message, previous.is_none()),
-        }
+        let data = match prepared {
+            Ok(data) => data,
+            Err(message) => {
+                fail(&mut errors, "mesh", &entry.id, message);
+                placeholder::mesh()
+            }
+        };
+        meshes.push(PreparedMesh {
+            entry: entry.clone(),
+            fingerprint,
+            data,
+        });
     }
 
     let mut skins = Vec::new();
@@ -233,14 +206,18 @@ pub(super) fn plan(job: Job) -> Prepared {
                 .load(entry.asset.model_of().as_str(), &mut prepare.sources)?;
             skin_data(entry, model)
         });
-        match prepared {
-            Ok(data) => skins.push(PreparedSkin {
-                entry: entry.clone(),
-                fingerprint,
-                data,
-            }),
-            Err(message) => fail(&mut errors, "skin", &entry.id, message, previous.is_none()),
-        }
+        let data = match prepared {
+            Ok(data) => data,
+            Err(message) => {
+                fail(&mut errors, "skin", &entry.id, message);
+                placeholder::skin(entry)
+            }
+        };
+        skins.push(PreparedSkin {
+            entry: entry.clone(),
+            fingerprint,
+            data,
+        });
     }
 
     let mut animations = Vec::new();
@@ -262,20 +239,18 @@ pub(super) fn plan(job: Job) -> Prepared {
                 .load(entry.asset.model_of().as_str(), &mut prepare.sources)?;
             animation_data(entry, model)
         });
-        match prepared {
-            Ok(clip) => animations.push(PreparedAnimation {
-                entry: entry.clone(),
-                fingerprint,
-                clip,
-            }),
-            Err(message) => fail(
-                &mut errors,
-                "animation",
-                &entry.id,
-                message,
-                previous.is_none(),
-            ),
-        }
+        let clip = match prepared {
+            Ok(clip) => clip,
+            Err(message) => {
+                fail(&mut errors, "animation", &entry.id, message);
+                placeholder::animation(&scene, entry)
+            }
+        };
+        animations.push(PreparedAnimation {
+            entry: entry.clone(),
+            fingerprint,
+            clip,
+        });
     }
 
     let mut sounds = Vec::new();
@@ -289,14 +264,18 @@ pub(super) fn plan(job: Job) -> Prepared {
             continue;
         }
         let prepared = digest.and_then(|_| sound_data(&scene, entry, &mut prepare.sources));
-        match prepared {
-            Ok(source) => sounds.push(PreparedSound {
-                entry: entry.clone(),
-                fingerprint,
-                source,
-            }),
-            Err(message) => fail(&mut errors, "sound", &entry.id, message, previous.is_none()),
-        }
+        let source = match prepared {
+            Ok(source) => source,
+            Err(message) => {
+                fail(&mut errors, "sound", &entry.id, message);
+                placeholder::sound()
+            }
+        };
+        sounds.push(PreparedSound {
+            entry: entry.clone(),
+            fingerprint,
+            source,
+        });
     }
 
     let mut environments = Vec::new();
@@ -319,20 +298,18 @@ pub(super) fn plan(job: Job) -> Prepared {
             .as_ref()
             .map_err(|message| message.clone())
             .and_then(|_| environment_data(&scene, entry, &mut prepare.sources));
-        match prepared {
-            Ok(data) => environments.push(PreparedEnvironment {
-                entry: entry.clone(),
-                fingerprint,
-                data,
-            }),
-            Err(message) => fail(
-                &mut errors,
-                "environment",
-                &entry.id,
-                message,
-                previous.is_none(),
-            ),
-        }
+        let data = match prepared {
+            Ok(data) => data,
+            Err(message) => {
+                fail(&mut errors, "environment", &entry.id, message);
+                placeholder::environment()
+            }
+        };
+        environments.push(PreparedEnvironment {
+            entry: entry.clone(),
+            fingerprint,
+            data,
+        });
     }
 
     let removed = Removed {
@@ -358,41 +335,22 @@ pub(super) fn plan(job: Job) -> Prepared {
             entry.id.as_str()
         }),
     };
-    let applied = !errors.iter().any(|error| error.fatal);
 
-    let mut prepared = Prepared {
-        applied,
+    Prepared {
         errors,
-        images: Vec::new(),
-        materials: Vec::new(),
-        meshes: Vec::new(),
-        skins: Vec::new(),
-        animations: Vec::new(),
-        sounds: Vec::new(),
-        environments: Vec::new(),
-        textures: HashMap::new(),
-        changed_images: HashSet::new(),
-        removed: Removed::default(),
+        images,
+        materials,
+        meshes,
+        skins,
+        animations,
+        sounds,
+        environments,
+        textures,
+        changed_images,
+        removed,
         sources: prepare.sources,
         files,
-    };
-    if !applied {
-        return prepared;
     }
-    prepared.images = images;
-    prepared.materials = pending_materials
-        .into_iter()
-        .map(|(entry, fingerprint)| PreparedMaterial { entry, fingerprint })
-        .collect();
-    prepared.meshes = meshes;
-    prepared.skins = skins;
-    prepared.animations = animations;
-    prepared.sounds = sounds;
-    prepared.environments = environments;
-    prepared.textures = textures;
-    prepared.changed_images = changed_images;
-    prepared.removed = removed;
-    prepared
 }
 
 fn mips(data: &ImageBytes, colors: &HashSet<ColorSpace>) -> ImageMips {
@@ -404,6 +362,14 @@ fn mips(data: &ImageBytes, colors: &HashSet<ColorSpace>) -> ImageMips {
             .contains(&ColorSpace::Linear)
             .then(|| mip_chain(data.width, data.height, ColorSpace::Linear, &data.rgba)),
     }
+}
+
+fn fail(errors: &mut Vec<AssetError>, kind: &'static str, id: &str, message: String) {
+    errors.push(AssetError {
+        kind,
+        id: String::from(id),
+        message,
+    });
 }
 
 fn absent<T>(
@@ -419,4 +385,176 @@ fn absent<T>(
         .filter(|id| !present.contains(*id))
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::work::Fingerprints;
+    use super::*;
+    use crate::source::Sources;
+    use dome_scene::{ReferenceKind, Scene, Shape};
+
+    const SCENE: &str = r#"format = "dome_scene"
+
+images = [
+    { id = "broken_image", path = "missing.png", min_filter = "linear", mag_filter = "linear", mip_filter = "linear", wrap_u = "repeat", wrap_v = "repeat" },
+]
+
+[[models]]
+id = "missing_model"
+path = "missing.gltf"
+
+[[meshes]]
+id = "broken_mesh"
+model = "missing_model"
+mesh = 0
+primitive = 0
+
+[[meshes]]
+id = "cube"
+shape = "cube"
+
+[[materials]]
+id = "grey"
+base_color = [0.8, 0.8, 0.8]
+alpha = 1.0
+alpha_mode = "opaque"
+alpha_cutoff = 0.5
+metallic = 0.0
+roughness = 0.5
+normal_scale = 1.0
+occlusion_strength = 1.0
+emissive = [0.0, 0.0, 0.0]
+base_color_image = "broken_image"
+
+[[nodes]]
+id = "camera"
+"#;
+
+    #[test]
+    fn a_broken_asset_lands_a_placeholder_where_its_siblings_commit() {
+        let root = std::env::temp_dir().join(format!("dome_plan_absent_{}", std::process::id()));
+        let scene = Scene::parse(
+            SCENE,
+            root,
+            "the plan test scene",
+            Arc::new(dome_schema::Registry::default()),
+        );
+        let prepared = plan(Job {
+            scene: scene.clone(),
+            fingerprints: Fingerprints::default(),
+            textures: HashSet::new(),
+            sources: Sources::new(),
+        });
+
+        let failed = |kind: &str, id: &str| {
+            prepared
+                .errors
+                .iter()
+                .any(|error| error.kind == kind && error.id == id)
+        };
+        assert!(
+            failed("image", "broken_image"),
+            "a broken image reports itself"
+        );
+        assert!(
+            failed("mesh", "broken_mesh"),
+            "a broken mesh reports itself"
+        );
+
+        let image = prepared
+            .images
+            .iter()
+            .find(|item| item.entry.id == "broken_image")
+            .expect("a broken image commits its placeholder");
+        assert_eq!((image.mips.width, image.mips.height), (1, 1));
+        assert_eq!(image.mips.srgb, vec![vec![255, 0, 255, 255]]);
+
+        let mesh = prepared
+            .meshes
+            .iter()
+            .find(|item| item.entry.id == "broken_mesh")
+            .expect("a broken mesh commits its placeholder");
+        assert_eq!(
+            mesh.data.vertices.len(),
+            Shape::Cube.vertices().len(),
+            "a broken mesh commits the unit cube",
+        );
+        assert_eq!(
+            mesh.data.skin.as_ref().map(Vec::len),
+            Some(mesh.data.vertices.len()),
+            "a placeholder cube carries one weight record per vertex",
+        );
+
+        assert!(
+            prepared.meshes.iter().any(|item| item.entry.id == "cube"),
+            "the mesh of the scene still commits",
+        );
+        assert!(
+            prepared
+                .materials
+                .iter()
+                .any(|item| item.entry.id == "grey"),
+            "a material sampling a broken image still commits",
+        );
+
+        let changed = prepared.changed();
+        for (kind, id) in [
+            (ReferenceKind::Image, "broken_image"),
+            (ReferenceKind::Mesh, "broken_mesh"),
+            (ReferenceKind::Mesh, "cube"),
+            (ReferenceKind::Material, "grey"),
+        ] {
+            assert!(changed.touches(kind, id), "the batch changes {kind:?}.{id}");
+        }
+
+        let fingerprints = Fingerprints {
+            images: prepared
+                .images
+                .iter()
+                .map(|item| (item.entry.id.clone(), item.fingerprint))
+                .collect(),
+            materials: prepared
+                .materials
+                .iter()
+                .map(|item| (item.entry.id.clone(), item.fingerprint))
+                .collect(),
+            meshes: prepared
+                .meshes
+                .iter()
+                .map(|item| (item.entry.id.clone(), item.fingerprint))
+                .collect(),
+            skins: prepared
+                .skins
+                .iter()
+                .map(|item| (item.entry.id.clone(), item.fingerprint))
+                .collect(),
+            animations: prepared
+                .animations
+                .iter()
+                .map(|item| (item.entry.id.clone(), item.fingerprint))
+                .collect(),
+            sounds: prepared
+                .sounds
+                .iter()
+                .map(|item| (item.entry.id.clone(), item.fingerprint))
+                .collect(),
+            environments: prepared
+                .environments
+                .iter()
+                .map(|item| (item.entry.id.clone(), item.fingerprint))
+                .collect(),
+        };
+
+        let retried = plan(Job {
+            scene,
+            fingerprints,
+            textures: HashSet::new(),
+            sources: Sources::new(),
+        });
+        assert!(
+            retried.errors.is_empty() && !retried.changed().any(),
+            "an unchanged broken input stays on its committed placeholder",
+        );
+    }
 }

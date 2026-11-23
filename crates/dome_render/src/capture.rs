@@ -15,7 +15,7 @@ use crate::view::View;
 use dome_ecs::{Entity, World};
 use dome_gpu::ClipSpace;
 use dome_gpu::{
-    AddressMode, BufferBinding, BufferUsages, DepthTexture, Device, Filter, GpuBuffer, GpuContext,
+    AddressMode, BufferBinding, BufferUsages, CompareOp, Device, Filter, GpuBuffer, GpuContext,
     GraphicsPipeline, PipelineState, Queue, Sampler, SamplerDesc, Texture, TextureFormat,
     TextureUsages,
 };
@@ -123,9 +123,8 @@ pub(crate) struct Pending {
 
 pub(crate) struct Captures {
     pub(crate) atlas: Texture,
-    pub(crate) depth: DepthTexture,
+    pub(crate) depth: Texture,
     pub(crate) shadow: Texture,
-    pub(crate) shadow_depth: DepthTexture,
     pub(crate) shadow_sampler: Sampler,
     pub(crate) views: GpuBuffer,
     pub(crate) skies: GpuBuffer,
@@ -153,6 +152,7 @@ impl Captures {
         let device = context.device();
         let queue = Queue::of(device);
         let attachment = TextureUsages::SAMPLED | TextureUsages::RENDER_ATTACHMENT;
+        let depth_attachment = TextureUsages::SAMPLED | TextureUsages::RENDER_ATTACHMENT;
         let storage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
         let sky_span = crate::span::padded(
             device
@@ -181,21 +181,23 @@ impl Captures {
                 TextureFormat::Rgba16Float,
                 attachment,
             ),
-            depth: DepthTexture::new(device, "dome capture depth", PROBE_WIDTH, PROBE_RESOLUTION),
+            depth: Texture::new(
+                device,
+                "dome capture depth",
+                PROBE_WIDTH,
+                PROBE_RESOLUTION,
+                1,
+                TextureFormat::Depth32Float,
+                depth_attachment,
+            ),
             shadow: Texture::new(
                 device,
                 "dome capture shadow",
                 SHADOW_SIDE,
                 SHADOW_SIDE,
                 1,
-                TextureFormat::R32Float,
-                attachment,
-            ),
-            shadow_depth: DepthTexture::new(
-                device,
-                "dome capture shadow depth",
-                SHADOW_SIDE,
-                SHADOW_SIDE,
+                TextureFormat::Depth32Float,
+                depth_attachment,
             ),
             shadow_sampler: Sampler::new(
                 device,
@@ -205,6 +207,7 @@ impl Captures {
                     mip_filter: Filter::Nearest,
                     address_u: AddressMode::ClampToEdge,
                     address_v: AddressMode::ClampToEdge,
+                    compare: Some(CompareOp::LessOrEqual),
                 },
             ),
             views: GpuBuffer::new(
@@ -255,6 +258,7 @@ impl Captures {
                     mip_filter: Filter::Nearest,
                     address_u: AddressMode::ClampToEdge,
                     address_v: AddressMode::ClampToEdge,
+                    compare: None,
                 },
             ),
             results: Vec::new(),

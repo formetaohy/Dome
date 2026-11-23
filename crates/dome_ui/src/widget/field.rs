@@ -4,6 +4,7 @@ use crate::content::{Content, FieldContent};
 use crate::edit::Edit;
 use crate::element::{Element, Layout, Length, Size};
 use crate::geometry::{Corners, Rect};
+use crate::grapheme::{self, Boundary};
 use crate::node::Runtime;
 use crate::paint::Painter;
 use crate::style::{Border, State};
@@ -61,32 +62,27 @@ pub(crate) fn caret_at(
     rect: Rect,
     pointer: Vec2,
     layout: &mut crate::text::Text,
-) -> usize {
+) -> Boundary {
     let text = edit.text();
     let caret = edit.caret();
     let inner = inner(rect);
     let preedit_width = preedit.map_or(0.0, |composed| width(composed, style, layout));
     if !multiline {
-        let caret_x = width(prefix(text, caret), style, layout);
+        let caret_x = width(&text[..caret.byte()], style, layout);
         let shift = shift(caret_x, preedit_width, inner.width());
         return column(text, pointer.x - inner.min.x + shift, style, layout);
     }
     let line_height = style.font.leading.max(style.font.size * 1.28);
     let row = ((pointer.y - inner.min.y) / line_height).floor().max(0.0) as usize;
-    let chars = text.chars().collect::<Vec<_>>();
-    let spans = line_spans(&chars);
-    let (_, line_x) = caret_x_of(style, &chars, &spans, caret, layout);
+    let lines = lines(text);
+    let (_, line_x) = caret_x_of(text, &lines, caret, style, layout);
     let shift = shift(line_x, preedit_width, inner.width());
     let x = pointer.x - inner.min.x + shift;
-    let mut base = 0usize;
-    for (index, (start, end)) in spans.iter().enumerate() {
-        if index == row {
-            let line = chars[*start..*end].iter().collect::<String>();
-            return base + column(&line, x, style, layout);
-        }
-        base += end - start + 1;
-    }
-    text.chars().count()
+    let Some(line) = lines.get(row) else {
+        return Boundary::end(text);
+    };
+    let relative = column(&text[line.start..line.end], x, style, layout);
+    Boundary::nearest(text, line.start + relative.byte())
 }
 
 fn inner(rect: Rect) -> Rect {
@@ -97,45 +93,88 @@ fn shift(caret_x: f32, preedit_width: f32, width: f32) -> f32 {
     (caret_x + preedit_width + 2.0 - width).max(0.0)
 }
 
-fn caret_x_of(
-    style: TextStyle,
-    chars: &[char],
-    spans: &[(usize, usize)],
-    caret: usize,
-    layout: &mut crate::text::Text,
-) -> (usize, f32) {
-    let caret = caret.min(chars.len());
-    let mut line = spans.len().saturating_sub(1);
-    for (index, (_, end)) in spans.iter().enumerate() {
-        if caret <= *end {
-            line = index;
-            break;
-        }
-    }
-    let start = spans[line].0;
-    let text = chars[start..caret].iter().collect::<String>();
-    (line, width(&text, style, layout))
+#[derive(Clone, Copy, Debug)]
+struct Line {
+    start: usize,
+    end: usize,
 }
 
-fn column(line: &str, x: f32, style: TextStyle, layout: &mut crate::text::Text) -> usize {
-    let count = line.chars().count();
-    let (mut low, mut high) = (0usize, count);
+fn lines(text: &str) -> Vec<Line> {
+    let mut lines = Vec::new();
+    let mut start = 0usize;
+    for (offset, character) in text.char_indices() {
+        if character == '\n' {
+            lines.push(Line { start, end: offset });
+            start = offset + 1;
+        }
+    }
+    lines.push(Line {
+        start,
+        end: text.len(),
+    });
+    lines
+}
+
+fn line_at(lines: &[Line], caret: Boundary) -> usize {
+    lines
+        .iter()
+        .position(|line| caret.byte() <= line.end)
+        .expect("a caret sits inside a line")
+}
+
+fn line_prefix<'a>(text: &'a str, lines: &[Line], line: usize, caret: Boundary) -> &'a str {
+    let start = lines[line].start;
+    &text[start..caret.byte().clamp(start, lines[line].end)]
+}
+
+fn caret_x_of(
+    text: &str,
+    lines: &[Line],
+    caret: Boundary,
+    style: TextStyle,
+    layout: &mut crate::text::Text,
+) -> (usize, f32) {
+    let line = line_at(lines, caret);
+    (
+        line,
+        width(line_prefix(text, lines, line, caret), style, layout),
+    )
+}
+
+fn caret_xy(
+    painter: &mut Painter,
+    style: TextStyle,
+    text: &str,
+    lines: &[Line],
+    caret: Boundary,
+) -> (usize, f32) {
+    let line = line_at(lines, caret);
+    (
+        line,
+        text_width(painter, style, line_prefix(text, lines, line, caret)),
+    )
+}
+
+fn column(text: &str, x: f32, style: TextStyle, layout: &mut crate::text::Text) -> Boundary {
+    let boundaries = grapheme::boundaries(text);
+    let (mut low, mut high) = (0usize, boundaries.len() - 1);
     while low < high {
         let middle = (low + high).div_ceil(2);
-        if width(prefix(line, middle), style, layout) <= x {
+        if width(&text[..boundaries[middle].byte()], style, layout) <= x {
             low = middle;
         } else {
             high = middle - 1;
         }
     }
-    let before = width(prefix(line, low), style, layout);
-    if low < count {
-        let after = width(prefix(line, low + 1), style, layout);
-        if (after - x).abs() < (before - x).abs() {
-            return low + 1;
-        }
+    let before = width(&text[..boundaries[low].byte()], style, layout);
+    let Some(after) = boundaries.get(low + 1) else {
+        return boundaries[low];
+    };
+    if (width(&text[..after.byte()], style, layout) - x).abs() < (before - x).abs() {
+        *after
+    } else {
+        boundaries[low]
     }
-    low
 }
 
 fn width(text: &str, style: TextStyle, layout: &mut crate::text::Text) -> f32 {
@@ -155,12 +194,12 @@ fn width(text: &str, style: TextStyle, layout: &mut crate::text::Text) -> f32 {
         .x
 }
 
-fn prefix(text: &str, index: usize) -> &str {
-    let offset = text
-        .char_indices()
-        .nth(index)
-        .map_or(text.len(), |(offset, _)| offset);
-    &text[..offset]
+fn text_width(painter: &mut Painter, style: TextStyle, text: &str) -> f32 {
+    if text.is_empty() {
+        0.0
+    } else {
+        painter.measure(text, style).x
+    }
 }
 
 pub(super) fn paint_field(
@@ -205,18 +244,17 @@ pub(super) fn paint_field(
             let preedit = info.preedit.filter(|composed| !composed.is_empty());
             let preedit_width = preedit.map_or(0.0, |composed| painter.measure(composed, style).x);
             let line_height = style.font.leading.max(style.font.size * 1.28);
-            let chars: Vec<char> = text.chars().collect();
-            let spans = line_spans(&chars);
-            let (_, line_x) = caret_xy(painter, style, &chars, &spans, caret);
-            let offset = shift(line_x, preedit_width, inner.width());
-            let selection = anchor.min(caret)..anchor.max(caret);
+            let lines = lines(text);
+            let (caret_line, caret_x) = caret_xy(painter, style, text, &lines, caret);
+            let offset = shift(caret_x, preedit_width, inner.width());
+            let selection = anchor.min(caret).byte()..anchor.max(caret).byte();
             if selection.start != selection.end {
-                for (index, (start, end)) in spans.iter().enumerate() {
-                    let low = selection.start.max(*start);
-                    let high = selection.end.min(*end);
+                for (index, line) in lines.iter().enumerate() {
+                    let low = selection.start.max(line.start);
+                    let high = selection.end.min(line.end);
                     if low < high {
-                        let left = line_width(painter, style, &chars, *start, low);
-                        let right = line_width(painter, style, &chars, *start, high);
+                        let left = text_width(painter, style, &text[line.start..low]);
+                        let right = text_width(painter, style, &text[line.start..high]);
                         painter.rect(
                             Rect::from_min_size(
                                 Vec2::new(
@@ -231,9 +269,8 @@ pub(super) fn paint_field(
                     }
                 }
             }
-            for (index, (start, end)) in spans.iter().enumerate() {
-                let line = chars[*start..*end].iter().collect::<String>();
-                let layout = painter.layout(&line, style, 0.0);
+            for (index, line) in lines.iter().enumerate() {
+                let layout = painter.layout(&text[line.start..line.end], style, 0.0);
                 painter.text(
                     &layout,
                     Vec2::new(
@@ -243,8 +280,6 @@ pub(super) fn paint_field(
                     style.color,
                 );
             }
-            let (_, caret_x) = caret_xy(painter, style, &chars, &spans, caret);
-            let caret_line = caret_line_of(&chars, caret);
             if let Some(composed) = preedit {
                 let layout = painter.layout(composed, style, 0.0);
                 let origin = Vec2::new(
@@ -308,21 +343,16 @@ pub(crate) fn paint_single_line_edit(
     painter: &mut Painter,
 ) -> Rect {
     let text = edit.text();
-    let caret = edit.caret();
-    let anchor = edit.anchor();
-    let before = prefix(text, caret);
-    let caret_x = if before.is_empty() {
-        0.0
-    } else {
-        painter.measure(before, style).x
-    };
+    let caret = edit.caret().byte();
+    let anchor = edit.anchor().byte();
+    let caret_x = text_width(painter, style, &text[..caret]);
     let preedit = preedit.filter(|composed| !composed.is_empty());
     let preedit_width = preedit.map_or(0.0, |composed| painter.measure(composed, style).x);
     let offset = shift(caret_x, preedit_width, inner.width());
     let selection = anchor.min(caret)..anchor.max(caret);
     if selection.start != selection.end {
-        let left = text_width(painter, style, prefix(text, selection.start));
-        let right = text_width(painter, style, prefix(text, selection.end));
+        let left = text_width(painter, style, &text[..selection.start]);
+        let right = text_width(painter, style, &text[..selection.end]);
         painter.rect(
             Rect::from_min_size(
                 Vec2::new(inner.min.x + left - offset, inner.min.y + 2.0),
@@ -365,67 +395,4 @@ pub(crate) fn paint_single_line_edit(
         painter.rect(caret_rect, Corners::ZERO, accent);
     }
     caret_rect
-}
-
-fn line_spans(chars: &[char]) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
-    let mut start = 0;
-    for (index, character) in chars.iter().enumerate() {
-        if *character == '\n' {
-            spans.push((start, index));
-            start = index + 1;
-        }
-    }
-    spans.push((start, chars.len()));
-    spans
-}
-
-fn caret_line_of(chars: &[char], caret: usize) -> usize {
-    chars
-        .iter()
-        .take(caret.min(chars.len()))
-        .filter(|c| **c == '\n')
-        .count()
-}
-
-fn caret_xy(
-    painter: &mut Painter,
-    style: TextStyle,
-    chars: &[char],
-    spans: &[(usize, usize)],
-    caret: usize,
-) -> (usize, f32) {
-    let caret = caret.min(chars.len());
-    let mut line = spans.len().saturating_sub(1);
-    for (index, (_, end)) in spans.iter().enumerate() {
-        if caret <= *end {
-            line = index;
-            break;
-        }
-    }
-    let start = spans[line].0;
-    let x = line_width(painter, style, chars, start, caret);
-    (line, x)
-}
-
-fn line_width(
-    painter: &mut Painter,
-    style: TextStyle,
-    chars: &[char],
-    start: usize,
-    end: usize,
-) -> f32 {
-    if start >= end {
-        return 0.0;
-    }
-    let line = chars[start..end].iter().collect::<String>();
-    painter.measure(&line, style).x
-}
-
-fn text_width(painter: &mut Painter, style: TextStyle, text: &str) -> f32 {
-    if text.is_empty() {
-        0.0
-    } else {
-        painter.measure(text, style).x
-    }
 }

@@ -15,12 +15,25 @@ pub enum AddressMode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum CompareOp {
+    Never,
+    Less,
+    Equal,
+    LessOrEqual,
+    Greater,
+    NotEqual,
+    GreaterOrEqual,
+    Always,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct SamplerDesc {
     pub min_filter: Filter,
     pub mag_filter: Filter,
     pub mip_filter: Filter,
     pub address_u: AddressMode,
     pub address_v: AddressMode,
+    pub compare: Option<CompareOp>,
 }
 
 impl SamplerDesc {

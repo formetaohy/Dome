@@ -9,6 +9,7 @@ use dome_render::{
     Environment, Renderer, Sampler, SamplerDesc, SkinVertexRecord, Texture, TextureFormat,
     TextureUsages, Vertex,
 };
+use dome_scene::Changed;
 use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 use std::sync::Arc;
@@ -42,7 +43,8 @@ struct PendingEnvironment {
 
 pub(super) struct Commit {
     prepared: Prepared,
-    refresh: Refresh,
+    changed: Changed,
+    errors: Vec<AssetError>,
     stage: Stage,
     index: usize,
     spent: u64,
@@ -52,14 +54,12 @@ pub(super) struct Commit {
 
 impl Commit {
     pub(super) fn new(mut prepared: Prepared) -> Self {
-        let refresh = Refresh {
-            applied: prepared.applied,
-            changed: prepared.changed(),
-            errors: std::mem::take(&mut prepared.errors),
-        };
+        let changed = prepared.changed();
+        let errors = std::mem::take(&mut prepared.errors);
         Self {
             prepared,
-            refresh,
+            changed,
+            errors,
             stage: Stage::Remove,
             index: 0,
             spent: 0,
@@ -76,10 +76,6 @@ impl Commit {
     ) -> Option<Refresh> {
         self.spent = 0;
         self.items = 0;
-        if !self.prepared.applied {
-            library.adopt(&mut self.prepared);
-            return Some(self.finish());
-        }
         loop {
             if self.items >= ITEM_LIMIT {
                 return None;
@@ -107,16 +103,7 @@ impl Commit {
                     if !self.allows(cost, budget) {
                         return None;
                     }
-                    if let Err(message) =
-                        library.commit_material(renderer, item, &self.prepared.textures)
-                    {
-                        self.refresh.errors.push(AssetError {
-                            kind: "material",
-                            id: item.entry.id.clone(),
-                            message,
-                            fatal: false,
-                        });
-                    }
+                    library.commit_material(renderer, item, &self.prepared.textures);
                     self.charge(cost);
                 }
                 Stage::Meshes => {
@@ -244,9 +231,9 @@ impl Commit {
 
     fn finish(&mut self) -> Refresh {
         Refresh {
-            applied: self.refresh.applied,
-            changed: std::mem::take(&mut self.refresh.changed),
-            errors: std::mem::take(&mut self.refresh.errors),
+            applied: true,
+            changed: std::mem::take(&mut self.changed),
+            errors: std::mem::take(&mut self.errors),
         }
     }
 
@@ -278,40 +265,29 @@ impl Commit {
                 mip_filter: dome_render::Filter::Linear,
                 address_u: dome_render::AddressMode::Repeat,
                 address_v: dome_render::AddressMode::ClampToEdge,
+                compare: None,
             },
         );
-        if item.entry.capture() {
-            let empty = |label: &str| {
-                let texture = renderer.texture(
-                    label,
-                    1,
-                    1,
-                    1,
-                    TextureFormat::Rgba16Float,
-                    TextureUsages::SAMPLED | TextureUsages::COPY_DST,
-                );
-                renderer.write_texture(&texture, &[EMPTY_TEXEL]);
-                texture
-            };
-            let radiance = empty(&item.entry.id);
-            let panorama = empty(&format!("{}.panorama", item.entry.id));
-            library.environments.insert(
-                item.entry.id.clone(),
-                super::EnvironmentRecord {
-                    fingerprint: item.fingerprint,
-                    capture: true,
-                    environment: Environment::new(
-                        radiance,
-                        panorama,
-                        sampler,
-                        1,
-                        [dome_math::Vec3::ZERO; 9],
-                    ),
-                },
-            );
-            return;
-        }
         let (panorama, background, atmosphere) = match &item.data {
+            EnvironmentData::Empty => {
+                let radiance = empty_texture(renderer, &item.entry.id);
+                let panorama = empty_texture(renderer, &format!("{}.panorama", item.entry.id));
+                library.environments.insert(
+                    item.entry.id.clone(),
+                    super::EnvironmentRecord {
+                        fingerprint: item.fingerprint,
+                        capture: item.entry.capture(),
+                        environment: Environment::new(
+                            radiance,
+                            panorama,
+                            sampler,
+                            1,
+                            [dome_math::Vec3::ZERO; 9],
+                        ),
+                    },
+                );
+                return;
+            }
             EnvironmentData::Panorama(panorama) => {
                 let texture = panorama.texture(renderer, &item.entry.id);
                 (texture.clone(), texture, None)
@@ -435,8 +411,8 @@ impl Library {
         renderer: &mut Renderer,
         item: &PreparedMaterial,
         textures: &HashMap<String, Arc<ImageMips>>,
-    ) -> Result<(), String> {
-        let desc = self.material_desc(renderer, &item.entry, textures)?;
+    ) {
+        let desc = self.material_desc(renderer, &item.entry, textures);
         let material = match self.materials.get(&item.entry.id) {
             Some(previous) => {
                 renderer.update_material(previous.material, desc);
@@ -451,7 +427,6 @@ impl Library {
                 material,
             },
         );
-        Ok(())
     }
 
     fn commit_mesh(&mut self, renderer: &mut Renderer, item: &PreparedMesh) {
@@ -512,11 +487,25 @@ impl Library {
 
 fn environment_bytes(item: &PreparedEnvironment) -> u64 {
     match &item.data {
+        EnvironmentData::Empty => 0,
         EnvironmentData::Panorama(panorama) => {
             u64::from(panorama.width()) * u64::from(panorama.height()) * 8
         }
         EnvironmentData::Atmosphere(_) => 0,
     }
+}
+
+fn empty_texture(renderer: &Renderer, label: &str) -> Texture {
+    let texture = renderer.texture(
+        label,
+        1,
+        1,
+        1,
+        TextureFormat::Rgba16Float,
+        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+    );
+    renderer.write_texture(&texture, &[EMPTY_TEXEL]);
+    texture
 }
 
 fn mesh_bytes(item: &PreparedMesh) -> u64 {

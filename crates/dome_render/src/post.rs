@@ -97,6 +97,7 @@ impl Post {
                     mip_filter: Filter::Nearest,
                     address_u: AddressMode::ClampToEdge,
                     address_v: AddressMode::ClampToEdge,
+                    compare: None,
                 },
             ),
             vertical: crate::frame::vertical(device),

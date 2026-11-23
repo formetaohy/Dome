@@ -79,19 +79,12 @@ pub(crate) enum NativePipeline {
     Metal(metal::Pipeline),
 }
 
+#[derive(Clone)]
 pub(crate) enum NativeTexture {
     #[cfg(vulkan_backend)]
     Vulkan(vulkan::Texture),
     #[cfg(metal_backend)]
     Metal(metal::Texture),
-}
-
-#[derive(Clone)]
-pub(crate) enum NativeDepth {
-    #[cfg(vulkan_backend)]
-    Vulkan(vulkan::Depth),
-    #[cfg(metal_backend)]
-    Metal(metal::Depth),
 }
 
 pub(crate) enum NativeSurface {
@@ -400,6 +393,19 @@ impl NativeDevice {
         }
     }
 
+    pub(crate) fn create_texture_view(&self, texture: &NativeTexture, level: u32) -> NativeTexture {
+        match (self, texture) {
+            #[cfg(vulkan_backend)]
+            (Self::Vulkan(device), NativeTexture::Vulkan(texture)) => {
+                NativeTexture::Vulkan(device.create_texture_view(texture, level))
+            }
+            #[cfg(metal_backend)]
+            (Self::Metal(device), NativeTexture::Metal(texture)) => {
+                NativeTexture::Metal(device.create_texture_view(texture, level))
+            }
+        }
+    }
+
     pub(crate) fn create_surface(&self, width: u32, height: u32) -> NativeSurface {
         match self {
             #[cfg(vulkan_backend)]
@@ -509,7 +515,7 @@ impl NativeDevice {
     pub(crate) fn create_graphics_pipeline(
         &self,
         program: &GraphicsProgram,
-        format: crate::texture::TextureFormat,
+        format: Option<crate::texture::TextureFormat>,
         state: crate::graphics::PipelineState,
         depth: bool,
     ) -> NativeGraphicsPipeline {
@@ -522,19 +528,6 @@ impl NativeDevice {
             Self::Metal(device) => NativeGraphicsPipeline::Metal(
                 device.create_graphics_pipeline(program, format, state, depth),
             ),
-        }
-    }
-
-    pub(crate) fn create_depth_texture(&self, label: &str, width: u32, height: u32) -> NativeDepth {
-        match self {
-            #[cfg(vulkan_backend)]
-            Self::Vulkan(device) => {
-                NativeDepth::Vulkan(device.create_depth_texture(label, width, height))
-            }
-            #[cfg(metal_backend)]
-            Self::Metal(device) => {
-                NativeDepth::Metal(device.create_depth_texture(label, width, height))
-            }
         }
     }
 

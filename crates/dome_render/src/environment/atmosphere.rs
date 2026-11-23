@@ -225,6 +225,7 @@ impl AtmosphereBaker {
                 mip_filter: Filter::Nearest,
                 address_u: AddressMode::ClampToEdge,
                 address_v: AddressMode::ClampToEdge,
+                compare: None,
             },
         );
         let transmittance_pass = GraphicsPipeline::new(

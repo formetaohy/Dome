@@ -394,6 +394,13 @@ pub enum Instruction {
         level: Option<ValueId>,
         result: ValueId,
     },
+    SampleCompare {
+        depth: ValueId,
+        sampler: ValueId,
+        coordinates: ValueId,
+        reference: ValueId,
+        result: ValueId,
+    },
     Barrier(Barrier),
     MatrixFill {
         value: ValueId,
@@ -482,6 +489,7 @@ impl Instruction {
             | Self::Load { result, .. }
             | Self::AtomicLoad { result, .. }
             | Self::Sample { result, .. }
+            | Self::SampleCompare { result, .. }
             | Self::Unary { result, .. }
             | Self::Derivative { result, .. }
             | Self::Binary { result, .. }
@@ -568,6 +576,13 @@ impl Instruction {
                 Some(level) => vec![*image, *sampler, *coordinates, *level],
                 None => vec![*image, *sampler, *coordinates],
             },
+            Self::SampleCompare {
+                depth,
+                sampler,
+                coordinates,
+                reference,
+                ..
+            } => vec![*depth, *sampler, *coordinates, *reference],
             Self::MatrixLoad {
                 pointer, stride, ..
             } => vec![*pointer, *stride],

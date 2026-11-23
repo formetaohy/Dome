@@ -13,9 +13,8 @@ use crate::capability::{
 use crate::gate::Gate;
 use crate::graphics::{BlendState, DepthLoad, DepthState, PipelineState};
 use crate::host::{HostAdvance, metal_identity};
-use crate::native::NativeDepth;
 use crate::pipeline::BoundResource;
-use crate::sampler::{AddressMode, Filter, SamplerDesc};
+use crate::sampler::{AddressMode, CompareOp, Filter, SamplerDesc};
 use crate::submission::{Command, RecordedCount, Write};
 use crate::surface::WindowHandle;
 use crate::texture::TextureFormat;
@@ -178,18 +177,6 @@ pub(crate) struct Texture {
 struct Target {
     view: Retained<ProtocolObject<dyn MTLTexture>>,
 }
-
-#[derive(Clone)]
-pub(crate) struct Depth {
-    raw: Arc<DepthTexture>,
-}
-
-struct DepthTexture {
-    raw: Retained<ProtocolObject<dyn MTLTexture>>,
-}
-
-unsafe impl Send for DepthTexture {}
-unsafe impl Sync for DepthTexture {}
 
 pub(crate) struct Surface {
     device: Arc<Device>,
@@ -363,15 +350,12 @@ fn native_sampler(native: &crate::NativeSampler) -> &Sampler {
 unsafe impl Send for TextureResource {}
 unsafe impl Sync for TextureResource {}
 
-unsafe impl Send for Depth {}
-unsafe impl Sync for Depth {}
-
 pub(crate) struct GraphicsPipeline {
     resource: Arc<GraphicsPipelineResource>,
 }
 
 struct GraphicsPipelineResource {
-    format: TextureFormat,
+    format: Option<TextureFormat>,
     state: PipelineState,
     depth_attachment: bool,
     compiled: OnceLock<Retained<ProtocolObject<dyn MTLRenderPipelineState>>>,
@@ -461,6 +445,7 @@ fn metal_format(format: TextureFormat) -> MTLPixelFormat {
         TextureFormat::Bgra8Unorm => MTLPixelFormat::BGRA8Unorm,
         TextureFormat::Rgba16Float => MTLPixelFormat::RGBA16Float,
         TextureFormat::R32Float => MTLPixelFormat::R32Float,
+        TextureFormat::Depth32Float => MTLPixelFormat::Depth32Float,
     }
 }
 
@@ -644,6 +629,16 @@ impl Device {
             AddressMode::Repeat => MTLSamplerAddressMode::Repeat,
             AddressMode::MirrorRepeat => MTLSamplerAddressMode::MirrorRepeat,
         };
+        let compare = |compare: CompareOp| match compare {
+            CompareOp::Never => MTLCompareFunction::Never,
+            CompareOp::Less => MTLCompareFunction::Less,
+            CompareOp::Equal => MTLCompareFunction::Equal,
+            CompareOp::LessOrEqual => MTLCompareFunction::LessEqual,
+            CompareOp::Greater => MTLCompareFunction::Greater,
+            CompareOp::NotEqual => MTLCompareFunction::NotEqual,
+            CompareOp::GreaterOrEqual => MTLCompareFunction::GreaterEqual,
+            CompareOp::Always => MTLCompareFunction::Always,
+        };
         let descriptor = MTLSamplerDescriptor::new();
         descriptor.setSupportArgumentBuffers(true);
         descriptor.setMinFilter(filter(desc.min_filter));
@@ -652,6 +647,9 @@ impl Device {
         descriptor.setSAddressMode(address(desc.address_u));
         descriptor.setTAddressMode(address(desc.address_v));
         descriptor.setRAddressMode(address(desc.address_u));
+        if let Some(held) = desc.compare {
+            descriptor.setCompareFunction(compare(held));
+        }
         if anisotropy > 1 {
             descriptor.setMaxAnisotropy(anisotropy as usize);
         }
@@ -867,24 +865,33 @@ impl Device {
         }
     }
 
-    pub(crate) fn create_depth_texture(&self, label: &str, width: u32, height: u32) -> Depth {
-        let descriptor = MTLTextureDescriptor::new();
-        descriptor.setTextureType(MTLTextureType::Type2D);
-        descriptor.setPixelFormat(MTLPixelFormat::Depth32Float);
-        unsafe {
-            descriptor.setWidth(width as usize);
-            descriptor.setHeight(height as usize);
-        }
-        descriptor.setUsage(MTLTextureUsage::RenderTarget);
-        descriptor.setStorageMode(MTLStorageMode::Private);
-        Depth {
-            raw: Arc::new(DepthTexture {
-                raw: self
-                    .raw
-                    .newTextureWithDescriptor(&descriptor)
-                    .unwrap_or_else(|| {
-                        panic!("allocating the {label} depth texture of {width} by {height} failed")
-                    }),
+    pub(crate) fn create_texture_view(&self, texture: &Texture, level: u32) -> Texture {
+        let held = &texture.resource;
+        let width = (held.width >> level).max(1);
+        let height = (held.height >> level).max(1);
+        let view = unsafe {
+            held.raw
+                .newTextureViewWithPixelFormat_textureType_levels_slices(
+                    metal_format(held.format),
+                    MTLTextureType::Type2D,
+                    NSRange {
+                        location: level as usize,
+                        length: 1,
+                    },
+                    NSRange {
+                        location: 0,
+                        length: 1,
+                    },
+                )
+                .unwrap_or_else(|| panic!("a Metal texture views its own level {level}"))
+        };
+        Texture {
+            resource: Arc::new(TextureResource {
+                raw: view,
+                targets: Vec::new(),
+                width,
+                height,
+                format: held.format,
             }),
         }
     }
@@ -892,7 +899,7 @@ impl Device {
     pub(crate) fn create_graphics_pipeline(
         self: &Arc<Self>,
         _program: &GraphicsProgram,
-        format: TextureFormat,
+        format: Option<TextureFormat>,
         state: PipelineState,
         depth: bool,
     ) -> GraphicsPipeline {
@@ -966,42 +973,47 @@ impl Device {
             descriptor.setLabel(Some(&NSString::from_str(program.label())));
             descriptor.setVertexFunction(Some(&vertex_function));
             descriptor.setFragmentFunction(Some(&fragment_function));
-            let attachment = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
-            attachment.setPixelFormat(metal_format(pipeline.resource.format));
-            let (source, destination, source_alpha, destination_alpha) =
-                match pipeline.resource.state.blend {
-                    BlendState::Opaque => (
-                        MTLBlendFactor::One,
-                        MTLBlendFactor::Zero,
-                        MTLBlendFactor::One,
-                        MTLBlendFactor::Zero,
-                    ),
-                    BlendState::Premultiplied => (
-                        MTLBlendFactor::One,
-                        MTLBlendFactor::OneMinusSourceAlpha,
-                        MTLBlendFactor::OneMinusDestinationAlpha,
-                        MTLBlendFactor::One,
-                    ),
-                    BlendState::Preserve => (
-                        MTLBlendFactor::Zero,
-                        MTLBlendFactor::One,
-                        MTLBlendFactor::Zero,
-                        MTLBlendFactor::One,
-                    ),
-                };
-            attachment
-                .setBlendingEnabled(!matches!(pipeline.resource.state.blend, BlendState::Opaque));
-            attachment.setSourceRGBBlendFactor(source);
-            attachment.setDestinationRGBBlendFactor(destination);
-            attachment.setRgbBlendOperation(MTLBlendOperation::Add);
-            attachment.setSourceAlphaBlendFactor(source_alpha);
-            attachment.setDestinationAlphaBlendFactor(destination_alpha);
-            attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
-            attachment.setWriteMask(if pipeline.resource.state.alpha {
-                MTLColorWriteMask::All
-            } else {
-                MTLColorWriteMask::Red | MTLColorWriteMask::Green | MTLColorWriteMask::Blue
-            });
+            if let Some(format) = pipeline.resource.format {
+                let attachment =
+                    unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+                attachment.setPixelFormat(metal_format(format));
+                let (source, destination, source_alpha, destination_alpha) =
+                    match pipeline.resource.state.blend {
+                        BlendState::Opaque => (
+                            MTLBlendFactor::One,
+                            MTLBlendFactor::Zero,
+                            MTLBlendFactor::One,
+                            MTLBlendFactor::Zero,
+                        ),
+                        BlendState::Premultiplied => (
+                            MTLBlendFactor::One,
+                            MTLBlendFactor::OneMinusSourceAlpha,
+                            MTLBlendFactor::OneMinusDestinationAlpha,
+                            MTLBlendFactor::One,
+                        ),
+                        BlendState::Preserve => (
+                            MTLBlendFactor::Zero,
+                            MTLBlendFactor::One,
+                            MTLBlendFactor::Zero,
+                            MTLBlendFactor::One,
+                        ),
+                    };
+                attachment.setBlendingEnabled(!matches!(
+                    pipeline.resource.state.blend,
+                    BlendState::Opaque
+                ));
+                attachment.setSourceRGBBlendFactor(source);
+                attachment.setDestinationRGBBlendFactor(destination);
+                attachment.setRgbBlendOperation(MTLBlendOperation::Add);
+                attachment.setSourceAlphaBlendFactor(source_alpha);
+                attachment.setDestinationAlphaBlendFactor(destination_alpha);
+                attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
+                attachment.setWriteMask(if pipeline.resource.state.alpha {
+                    MTLColorWriteMask::All
+                } else {
+                    MTLColorWriteMask::Red | MTLColorWriteMask::Green | MTLColorWriteMask::Blue
+                });
+            }
             if pipeline.resource.depth_attachment {
                 descriptor.setDepthAttachmentPixelFormat(MTLPixelFormat::Depth32Float);
             }
@@ -1231,26 +1243,30 @@ impl Device {
                     depth,
                     draws,
                 } => {
-                    let texture = native_texture(target.native());
-                    let target = texture
-                        .targets
-                        .get(*level as usize)
-                        .expect("a render level names a level its target holds");
                     let pass = MTLRenderPassDescriptor::renderPassDescriptor();
-                    let attachment = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
-                    attachment.setTexture(Some(&target.view));
-                    attachment.setLoadAction(MTLLoadAction::Clear);
-                    attachment.setStoreAction(MTLStoreAction::Store);
-                    attachment.setClearColor(MTLClearColor {
-                        red: f64::from(clear[0]),
-                        green: f64::from(clear[1]),
-                        blue: f64::from(clear[2]),
-                        alpha: f64::from(clear[3]),
-                    });
+                    if let Some(target) = target {
+                        let texture = native_texture(target.native());
+                        let frame_target = texture
+                            .targets
+                            .get(*level as usize)
+                            .expect("a render level names a level its target holds");
+                        let attachment =
+                            unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
+                        attachment.setTexture(Some(&frame_target.view));
+                        attachment.setLoadAction(MTLLoadAction::Clear);
+                        attachment.setStoreAction(MTLStoreAction::Store);
+                        attachment.setClearColor(MTLClearColor {
+                            red: f64::from(clear[0]),
+                            green: f64::from(clear[1]),
+                            blue: f64::from(clear[2]),
+                            alpha: f64::from(clear[3]),
+                        });
+                        frame.resources.push(texture.clone());
+                    }
                     if let Some((held, ops)) = depth {
-                        let NativeDepth::Metal(held) = held.native();
+                        let texture = native_texture(held.native());
                         let attachment = pass.depthAttachment();
-                        attachment.setTexture(Some(&held.raw.raw));
+                        attachment.setTexture(Some(&texture.raw));
                         attachment.setLoadAction(match ops.load {
                             DepthLoad::Clear => MTLLoadAction::Clear,
                             DepthLoad::Keep => MTLLoadAction::Load,
@@ -1261,9 +1277,7 @@ impl Device {
                             MTLStoreAction::DontCare
                         });
                         attachment.setClearDepth(1.0);
-                        frame
-                            .resources
-                            .push(Arc::clone(&held.raw) as Arc<dyn Any + Send + Sync>);
+                        frame.resources.push(texture.clone());
                     }
                     let encoder = command
                         .renderCommandEncoderWithDescriptor(&pass)
@@ -1428,7 +1442,6 @@ impl Device {
                         frame.resources.push(pipeline.clone());
                     }
                     encoder.endEncoding();
-                    frame.resources.push(texture.clone());
                 }
                 Command::WriteTexture {
                     texture,

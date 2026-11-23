@@ -187,11 +187,7 @@ impl Renderer {
                     )
                 })
                 .collect::<Vec<_>>();
-            submission.render(
-                Pass::new(&self.captures.shadow, [1.0, 0.0, 0.0, 1.0])
-                    .depth(&self.captures.shadow_depth, DepthOps::CLEAR_STORED),
-                &casters,
-            );
+            submission.render(Pass::depth_only(&self.captures.shadow), &casters);
         }
         let mut skies = Vec::with_capacity(crate::capture::FACES as usize);
         for face in 0..crate::capture::FACES {

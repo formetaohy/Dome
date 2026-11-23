@@ -103,7 +103,7 @@ pub(crate) struct GraphicsSlot {
     pub(crate) native: NativeGraphicsPipeline,
     pub(crate) program: Arc<GraphicsProgram>,
     pub(crate) device: Device,
-    pub(crate) format: TextureFormat,
+    pub(crate) format: Option<TextureFormat>,
     pub(crate) depth: bool,
     identity: ResourceId,
 }
@@ -207,7 +207,7 @@ impl GraphicsPipeline {
         format: TextureFormat,
         state: PipelineState,
     ) -> Self {
-        Self::layered(device, program, format, state, false)
+        Self::layered(device, program, Some(format), state, false)
     }
 
     pub fn new_depth(
@@ -216,13 +216,17 @@ impl GraphicsPipeline {
         format: TextureFormat,
         state: PipelineState,
     ) -> Self {
-        Self::layered(device, program, format, state, true)
+        Self::layered(device, program, Some(format), state, true)
+    }
+
+    pub fn new_depth_only(device: &Device, program: GraphicsProgram, state: PipelineState) -> Self {
+        Self::layered(device, program, None, state, true)
     }
 
     fn layered(
         device: &Device,
         program: GraphicsProgram,
-        format: TextureFormat,
+        format: Option<TextureFormat>,
         state: PipelineState,
         depth: bool,
     ) -> Self {
@@ -233,6 +237,14 @@ impl GraphicsPipeline {
                 .filter(|binding| binding.kind.storage())
                 .count() as u32
                 <= device.limits().max_storage_buffers_per_shader_stage
+        );
+        assert_eq!(
+            program.targets(),
+            u32::from(format.is_some()),
+            "the graphics program {} writes {} fragment targets into {} colour attachment",
+            program.label(),
+            program.targets(),
+            if format.is_some() { "one" } else { "no" },
         );
         let native = device
             .native()
@@ -251,7 +263,7 @@ impl GraphicsPipeline {
         pipeline
     }
 
-    pub fn format(&self) -> TextureFormat {
+    pub fn format(&self) -> Option<TextureFormat> {
         self.slot.format
     }
 
@@ -393,12 +405,46 @@ fn bounded(
                         texture.usages().contains(TextureUsages::SAMPLED),
                         "a sampled image binding requires a sampled texture"
                     );
+                    assert!(
+                        !texture.format().is_depth(),
+                        "a sampled image binding requires a colour texture"
+                    );
+                    BoundResource::Texture(texture.clone())
+                }
+                (BindingKind::DepthImage, Resource::Texture(texture)) => {
+                    assert!(
+                        texture.device().same(device),
+                        "a bind group cannot reference a different device"
+                    );
+                    assert!(
+                        texture.usages().contains(TextureUsages::SAMPLED),
+                        "a depth image binding requires a sampled texture"
+                    );
+                    assert!(
+                        texture.format().is_depth(),
+                        "a depth image binding requires a depth texture"
+                    );
                     BoundResource::Texture(texture.clone())
                 }
                 (BindingKind::Sampler, Resource::Sampler(sampler)) => {
                     assert!(
                         sampler.device().same(device),
                         "a bind group cannot reference a different device"
+                    );
+                    assert!(
+                        sampler.desc().compare.is_none(),
+                        "a plain sampler binding requires a sampler that compares no depth"
+                    );
+                    BoundResource::Sampler(sampler.clone())
+                }
+                (BindingKind::ComparisonSampler, Resource::Sampler(sampler)) => {
+                    assert!(
+                        sampler.device().same(device),
+                        "a bind group cannot reference a different device"
+                    );
+                    assert!(
+                        sampler.desc().compare.is_some(),
+                        "a comparison sampler binding requires a sampler that compares depth"
                     );
                     BoundResource::Sampler(sampler.clone())
                 }
@@ -430,7 +476,9 @@ fn bounded(
                     "{label} binds the wrong resource where a {} belongs",
                     match kind {
                         BindingKind::SampledImage => "sampled image",
+                        BindingKind::DepthImage => "depth image",
                         BindingKind::Sampler => "sampler",
+                        BindingKind::ComparisonSampler => "comparison sampler",
                         BindingKind::SampledImageTable => "sampled image table",
                         BindingKind::SamplerTable => "sampler table",
                         _ => "storage buffer",

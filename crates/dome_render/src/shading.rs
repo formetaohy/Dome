@@ -41,6 +41,7 @@ impl Shading {
                 mip_filter: Filter::Nearest,
                 address_u: AddressMode::ClampToEdge,
                 address_v: AddressMode::ClampToEdge,
+                compare: None,
             },
         );
         let fallback = Texture::new(
@@ -62,6 +63,7 @@ impl Shading {
                 mip_filter: Filter::Linear,
                 address_u: AddressMode::Repeat,
                 address_v: AddressMode::ClampToEdge,
+                compare: None,
             },
         );
         Self {

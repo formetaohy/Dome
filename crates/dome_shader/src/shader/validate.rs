@@ -162,16 +162,23 @@ impl<'m> Verifier<'m> {
                 global.space.name()
             );
             match global.space {
-                Space::Storage => {}
+                Space::Storage => assert!(
+                    matches!(self.module.ty(global.ty), Type::Block { .. }),
+                    "the storage global {} holds {} instead of a storage block",
+                    global.name,
+                    element_name(self.module.ty(global.ty))
+                ),
                 Space::UniformConstant => assert!(
-                    matches!(self.module.ty(global.ty), Type::Image | Type::Sampler)
-                        || matches!(
-                            self.module.ty(global.ty),
-                            Type::Array { element, .. } if matches!(
-                                self.module.ty(*element),
-                                Type::Image | Type::Sampler
-                            )
-                        ),
+                    matches!(
+                        self.module.ty(global.ty),
+                        Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler
+                    ) || matches!(
+                        self.module.ty(global.ty),
+                        Type::Array { element, .. } if matches!(
+                            self.module.ty(*element),
+                            Type::Image | Type::Sampler
+                        )
+                    ),
                     "the uniform constant {} holds {}",
                     global.name,
                     element_name(self.module.ty(global.ty))
@@ -192,23 +199,13 @@ impl<'m> Verifier<'m> {
                 "the read-only shader global {} claims to be coherent",
                 global.name
             );
-            let table = matches!(
-                self.module.ty(global.ty),
-                Type::Array { element, .. } if matches!(
-                    self.module.ty(*element),
-                    Type::Image | Type::Sampler
-                )
-            );
-            if !matches!(self.module.ty(global.ty), Type::Image | Type::Sampler) && !table {
-                self.storable(global.ty, &format!("the shader global {}", global.name));
-            }
-            if global.space == Space::Storage {
-                let direct = matches!(self.module.ty(global.ty), Type::Array { count: None, .. });
-                assert!(
-                    direct || !self.runtime_array_inside(global.ty),
-                    "the shader global {} holds a runtime sized array beyond its own span",
-                    global.name
-                );
+            let subject = format!("the shader global {}", global.name);
+            match self.module.ty(global.ty) {
+                Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler => {}
+                Type::Array { element, .. }
+                    if matches!(self.module.ty(*element), Type::Image | Type::Sampler) => {}
+                Type::Block { element, .. } => self.storable(*element, &subject),
+                _ => self.storable(global.ty, &subject),
             }
         }
         for ty in self.module.types() {
@@ -242,18 +239,6 @@ impl<'m> Verifier<'m> {
         }
     }
 
-    fn runtime_array_inside(&self, ty: TypeId) -> bool {
-        match self.module.ty(ty) {
-            Type::Array { element, count } => {
-                count.is_none() || self.runtime_array_inside(*element)
-            }
-            Type::Struct { members, .. } => members
-                .iter()
-                .any(|member| self.runtime_array_inside(member.ty)),
-            _ => false,
-        }
-    }
-
     fn storable(&self, ty: TypeId, subject: &str) {
         match self.module.ty(ty) {
             Type::Scalar(scalar) => assert!(
@@ -272,12 +257,18 @@ impl<'m> Verifier<'m> {
                     self.storable(member.ty, subject);
                 }
             }
+            Type::Block { .. } => {
+                panic!(
+                    "{subject} holds {} beyond its own block",
+                    element_name(self.module.ty(ty))
+                )
+            }
             Type::Atomic(scalar) => assert!(
                 scalar.integer(),
                 "{subject} atomically holds the non-integer {}",
                 scalar.name()
             ),
-            Type::Image | Type::Sampler => {
+            Type::Image | Type::DepthImage | Type::Sampler | Type::ComparisonSampler => {
                 panic!("{subject} holds {}", element_name(self.module.ty(ty)))
             }
             Type::Pointer { .. } => panic!("{subject} holds a shader pointer"),
@@ -407,8 +398,12 @@ impl<'m> Checker<'m> {
             Instruction::Load { pointer, .. } => {
                 let (_, base) = self.pointee(*pointer, "a load");
                 assert!(
-                    !matches!(self.module.ty(base), Type::Array { .. }),
-                    "a shader array is read as a whole instead of element by element"
+                    !matches!(
+                        self.module.ty(base),
+                        Type::Array { .. } | Type::Block { .. }
+                    ),
+                    "{} is read as a whole instead of element by element",
+                    element_name(self.module.ty(base))
                 );
                 assert!(
                     !matches!(self.module.ty(base), Type::Atomic(_)),
@@ -534,6 +529,55 @@ impl<'m> Checker<'m> {
                         }
                     ),
                     "a shader sample yields {}",
+                    element_name(self.module.ty(self.ty(*result)))
+                );
+            }
+            Instruction::SampleCompare {
+                depth,
+                sampler,
+                coordinates,
+                reference,
+                result,
+            } => {
+                assert!(
+                    !matches!(
+                        self.module.stage_of(self.index),
+                        Some(crate::shader::Stage::Vertex | crate::shader::Stage::Compute)
+                    ),
+                    "comparison sampling belongs to the fragment stage"
+                );
+                assert!(
+                    matches!(self.module.ty(self.ty(*depth)), Type::DepthImage),
+                    "a shader comparison reads {} as its depth image",
+                    element_name(self.module.ty(self.ty(*depth)))
+                );
+                assert!(
+                    matches!(self.module.ty(self.ty(*sampler)), Type::ComparisonSampler),
+                    "a shader comparison reads {} as its sampler",
+                    element_name(self.module.ty(self.ty(*sampler)))
+                );
+                assert!(
+                    matches!(
+                        self.module.ty(self.ty(*coordinates)),
+                        Type::Vector {
+                            scalar: Scalar::F32,
+                            length: 2
+                        }
+                    ),
+                    "a shader comparison takes {} as its coordinates",
+                    element_name(self.module.ty(self.ty(*coordinates)))
+                );
+                assert!(
+                    matches!(
+                        self.module.ty(self.ty(*reference)),
+                        Type::Scalar(Scalar::F32)
+                    ),
+                    "a shader comparison compares against {}",
+                    element_name(self.module.ty(self.ty(*reference)))
+                );
+                assert!(
+                    matches!(self.module.ty(self.ty(*result)), Type::Scalar(Scalar::F32)),
+                    "a shader comparison yields {}",
                     element_name(self.module.ty(self.ty(*result)))
                 );
             }

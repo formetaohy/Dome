@@ -1,5 +1,4 @@
 use crate::buffer::BufferBinding;
-use crate::depth::DepthTexture;
 use crate::pipeline::{BindGroup, GraphicsPipeline};
 use crate::texture::Texture;
 
@@ -186,19 +185,37 @@ impl DepthOps {
 }
 
 pub struct Pass<'a> {
-    pub color: &'a Texture,
+    pub color: Option<&'a Texture>,
     pub level: u32,
     pub clear: [f32; 4],
-    pub depth: Option<(&'a DepthTexture, DepthOps)>,
+    pub depth: Option<(&'a Texture, DepthOps)>,
 }
 
 impl<'a> Pass<'a> {
     pub fn new(color: &'a Texture, clear: [f32; 4]) -> Self {
+        assert!(
+            !color.format().is_depth(),
+            "a render pass paints into a colour attachment, not a {} one",
+            "depth",
+        );
         Self {
-            color,
+            color: Some(color),
             level: 0,
             clear,
             depth: None,
+        }
+    }
+
+    pub fn depth_only(depth: &'a Texture) -> Self {
+        assert!(
+            depth.format().is_depth(),
+            "a depth only pass writes into a depth attachment",
+        );
+        Self {
+            color: None,
+            level: 0,
+            clear: [0.0; 4],
+            depth: Some((depth, DepthOps::CLEAR_STORED)),
         }
     }
 
@@ -206,7 +223,11 @@ impl<'a> Pass<'a> {
         Self { level, ..self }
     }
 
-    pub fn depth(self, texture: &'a DepthTexture, ops: DepthOps) -> Self {
+    pub fn depth(self, texture: &'a Texture, ops: DepthOps) -> Self {
+        assert!(
+            texture.format().is_depth(),
+            "a render pass tests against a depth attachment",
+        );
         Self {
             depth: Some((texture, ops)),
             ..self

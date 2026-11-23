@@ -265,6 +265,7 @@ impl MaterialLibrary {
                 mip_filter: Filter::Nearest,
                 address_u: AddressMode::ClampToEdge,
                 address_v: AddressMode::ClampToEdge,
+                compare: None,
             },
         );
         let textures = TextureTable::new(device, TEXTURE_TABLE_CAPACITY, &white_srgb);
