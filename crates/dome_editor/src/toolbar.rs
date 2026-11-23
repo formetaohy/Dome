@@ -108,6 +108,14 @@ pub(crate) fn build(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Elemen
         .press(Action::ToggleSheet(Sheet::Inspector));
 
     let bar_surface = theme.surface(Role::FloatingToolbar, UiState::Rest);
+    let mut items = vec![outliner, modes, space, debug, history, save, inspector];
+    if state.conflict {
+        items.push(
+            widget::icon_button(Icon::Reset, 32.0, Role::Error, "Reload from Disk (Ctrl+R)")
+                .key(Key::new("toolbar.reload"))
+                .press(Action::Reload),
+        );
+    }
     let island = Element::row()
         .key(Key::new("toolbar"))
         .layer(Layer::Chrome)
@@ -116,7 +124,7 @@ pub(crate) fn build(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Elemen
         .gap(6.0)
         .align(Align::Center)
         .background(bar_surface)
-        .children([outliner, modes, space, debug, history, save, inspector]);
+        .children(items);
 
     let run = if state.playing {
         widget::icon_button(Icon::Pause, 44.0, Role::Error, "Stop (F5)")

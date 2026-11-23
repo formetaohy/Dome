@@ -1,4 +1,4 @@
-use crate::element::{Element, Key};
+use crate::element::{Axis, Element, Flow, Key, Layout, Length, Size};
 use crate::geometry::Edges;
 
 pub fn popup<'a, A>(
@@ -6,14 +6,15 @@ pub fn popup<'a, A>(
     width: f32,
     children: impl IntoIterator<Item = Element<'a, A>>,
 ) -> Element<'a, A> {
-    Element::new(crate::element::Layout {
-        flow: crate::element::Flow::Column,
-        size: crate::element::Size::new(crate::element::Length::Fill, crate::element::Length::Auto),
+    Element::new(Layout {
+        flow: Flow::Column,
+        size: Size::new(Length::Fill, Length::Auto),
         padding: Edges::all(8.0),
         gap: 2.0,
-        ..crate::element::Layout::column()
+        ..Layout::column()
     })
     .popup(anchor, width)
+    .scroll(Axis::Column, Length::Fill, None)
     .layer(crate::element::Layer::Popup)
     .children(children)
 }

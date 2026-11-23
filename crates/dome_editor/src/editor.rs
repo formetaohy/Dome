@@ -70,6 +70,7 @@ pub struct Editor {
     path: PathBuf,
     selected: Option<Target>,
     dirty: bool,
+    conflict: bool,
     titled_dirty: Option<bool>,
     error: Option<String>,
     child: Option<Child>,
@@ -122,6 +123,7 @@ impl Editor {
             path,
             selected,
             dirty: !exists,
+            conflict: false,
             titled_dirty: None,
             error: None,
             child: None,
@@ -227,6 +229,7 @@ impl Editor {
         self.scene.save(&self.path);
         self.rewatch();
         self.dirty = false;
+        self.conflict = false;
     }
 
     fn reload(&mut self) {
@@ -239,6 +242,7 @@ impl Editor {
                 self.scene = scene;
                 self.history.reset();
                 self.dirty = false;
+                self.conflict = false;
                 self.rewatch();
                 self.clamp();
                 self.refresh_preview();
@@ -254,6 +258,11 @@ impl Editor {
             return;
         };
         if change.scene {
+            if self.dirty {
+                self.conflict = true;
+                self.refresh_preview();
+                return;
+            }
             let registry = self.scene.schema_arc();
             match catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry))) {
                 Ok(scene) => {
@@ -261,7 +270,7 @@ impl Editor {
                     self.drag = None;
                     self.property = None;
                     self.history.reset();
-                    self.dirty = false;
+                    self.conflict = false;
                     self.clamp();
                     self.refresh_preview();
                 }
@@ -972,6 +981,7 @@ impl Editor {
             scene: &self.scene,
             selected: self.selected.as_ref(),
             dirty: self.dirty,
+            conflict: self.conflict,
             playing: self.child.is_some(),
             can_undo: self.history.can_undo(),
             can_redo: self.history.can_redo(),

@@ -22,6 +22,7 @@ pub(crate) struct State<'a> {
     pub(crate) scene: &'a Scene,
     pub(crate) selected: Option<&'a Target>,
     pub(crate) dirty: bool,
+    pub(crate) conflict: bool,
     pub(crate) playing: bool,
     pub(crate) can_undo: bool,
     pub(crate) can_redo: bool,

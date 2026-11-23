@@ -677,7 +677,8 @@ impl LayoutEngine<'_> {
             tree.hits = true;
             tree.modal = true;
         }
-        let mut cursor = rect.min + Vec2::new(padding.left, padding.top);
+        let scroll_offset = tree.nodes[id].scroll.map_or(0.0, |scroll| scroll.offset);
+        let mut cursor = rect.min + Vec2::new(padding.left, padding.top - scroll_offset);
         for index in 0..tree.nodes[id].children.len() {
             let child = tree.nodes[id].children[index];
             let size = tree.nodes[child].measured;

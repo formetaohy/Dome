@@ -1,7 +1,7 @@
 use crate::bus::{AudioBus, BusState};
 use crate::command::{Command, Event, VoiceId};
 use crate::component::{AudioListener, AudioSource};
-use crate::device::{Output, OutputFormat, Stream};
+use crate::device::{Output, Stream};
 use crate::graph::{self, BusParams, Layout};
 use crate::mixer::{MAX_VOICES, Mixer};
 use crate::ring;
@@ -12,11 +12,65 @@ use dome_math::Transform;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub use crate::device::Unavailable as AudioUnavailable;
 
 const COMMAND_CAPACITY: usize = 8192;
 const EVENT_CAPACITY: usize = 4096;
+const RETRY: Duration = Duration::from_secs(1);
+
+struct Deck {
+    stream: Stream,
+    commands: Mutex<ring::Producer<Command>>,
+    events: Mutex<ring::Consumer<Event>>,
+    active: Arc<AtomicUsize>,
+}
+
+impl Deck {
+    fn open() -> Result<Self, AudioUnavailable> {
+        let output = Output::open()?;
+        let format = output.format();
+        let (commands, command_consumer) = ring::channel(COMMAND_CAPACITY);
+        let (event_producer, events) = ring::channel(EVENT_CAPACITY);
+        let active = Arc::new(AtomicUsize::new(0));
+        let mut mixer = Mixer::new(
+            format.sample_rate(),
+            command_consumer,
+            event_producer,
+            Arc::clone(&active),
+        );
+        let stream = output.start(Box::new(move |out: &mut [f32]| mixer.render(out)))?;
+        Ok(Self {
+            stream,
+            commands: Mutex::new(commands),
+            events: Mutex::new(events),
+            active,
+        })
+    }
+
+    fn alive(&self) -> bool {
+        self.stream.alive()
+    }
+
+    fn send(&self, command: Command) {
+        let mut commands = self
+            .commands
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if commands.send(command).is_err() {
+            panic!("the audio mixer holds every command the frame sends");
+        }
+    }
+
+    fn take_events(&self) -> impl Iterator<Item = Event> {
+        let mut events = self
+            .events
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        std::iter::from_fn(move || events.take())
+    }
+}
 
 struct Playing {
     voice: u32,
@@ -60,70 +114,60 @@ struct Params {
 }
 
 pub struct Audio {
-    stream: Stream,
-    commands: Mutex<ring::Producer<Command>>,
-    events: Mutex<ring::Consumer<Event>>,
+    deck: Option<Deck>,
+    failure: Option<AudioUnavailable>,
+    retry: Instant,
     voices: BTreeMap<Entity, Playing>,
     suspended: BTreeMap<Entity, (u64, u64)>,
     owners: BTreeMap<u32, Entity>,
     next: u32,
-    format: OutputFormat,
     master: f32,
     paused: bool,
-    active: Arc<AtomicUsize>,
     layout: Arc<Layout>,
     bus_entities: Vec<Entity>,
     buses: Vec<BusParams>,
     scratch: Vec<BusParams>,
     fingerprint: u64,
     revision: u64,
+    reopen: bool,
 }
 
 impl Audio {
-    pub fn open() -> Result<Self, AudioUnavailable> {
-        let output = Output::open()?;
-        let format = output.format();
-        let (commands, command_consumer) = ring::channel(COMMAND_CAPACITY);
-        let (event_producer, events) = ring::channel(EVENT_CAPACITY);
-        let active = Arc::new(AtomicUsize::new(0));
-        let mut mixer = Mixer::new(
-            format.sample_rate(),
-            command_consumer,
-            event_producer,
-            Arc::clone(&active),
-        );
-        let stream = output.start(Box::new(move |out: &mut [f32]| mixer.render(out)))?;
-        Ok(Self {
-            stream,
-            commands: Mutex::new(commands),
-            events: Mutex::new(events),
+    pub fn open() -> Self {
+        let mut audio = Self {
+            deck: None,
+            failure: None,
+            retry: Instant::now(),
             voices: BTreeMap::new(),
             suspended: BTreeMap::new(),
             owners: BTreeMap::new(),
             next: 0,
-            format,
             master: 1.0,
             paused: false,
-            active,
             layout: Arc::new(Layout::master()),
             bus_entities: Vec::new(),
             buses: vec![BusParams::default()],
             scratch: Vec::new(),
             fingerprint: 0,
             revision: 0,
-        })
+            reopen: true,
+        };
+        audio.acquire();
+        audio
     }
 
-    pub fn format(&self) -> OutputFormat {
-        self.format
+    pub fn unavailable(&self) -> Option<&AudioUnavailable> {
+        self.failure.as_ref()
     }
 
     pub fn alive(&self) -> bool {
-        self.stream.alive()
+        self.deck.as_ref().is_some_and(Deck::alive)
     }
 
     pub fn active(&self) -> usize {
-        self.active.load(Ordering::Relaxed)
+        self.deck
+            .as_ref()
+            .map_or(0, |deck| deck.active.load(Ordering::Relaxed))
     }
 
     fn lowest_priority(&self) -> Option<u8> {
@@ -179,25 +223,68 @@ impl Audio {
             })
     }
 
+    fn acquire(&mut self) {
+        self.retry = Instant::now() + RETRY;
+        match Deck::open() {
+            Ok(deck) => {
+                deck.send(Command::Master { gain: self.master });
+                deck.send(Command::Paused {
+                    paused: self.paused,
+                });
+                self.deck = Some(deck);
+                self.failure = None;
+                self.reopen = true;
+            }
+            Err(error) => {
+                self.deck = None;
+                self.failure = Some(error);
+            }
+        }
+    }
+
+    fn supervise(&mut self) {
+        if self.deck.as_ref().is_some_and(Deck::alive) {
+            return;
+        }
+        let now = Instant::now();
+        if now < self.retry {
+            return;
+        }
+        self.deck = None;
+        self.forget();
+        self.acquire();
+    }
+
+    fn forget(&mut self) {
+        if self.voices.is_empty() && self.suspended.is_empty() && self.owners.is_empty() {
+            return;
+        }
+        self.voices.clear();
+        self.suspended.clear();
+        self.owners.clear();
+        self.reopen = true;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     fn sync_buses(&mut self, world: &World) {
         let fingerprint = graph::fingerprint(world);
         let empty = world.count::<AudioBus>() == 0;
-        let rebuilt = if empty {
+        let mut rebuilt = std::mem::take(&mut self.reopen);
+        if empty {
             let synthetic = !self.layout.synthetic();
             if synthetic {
                 self.layout = Arc::new(Layout::master());
                 self.bus_entities.clear();
             }
-            synthetic
+            rebuilt |= synthetic;
         } else if self.layout.synthetic() || fingerprint != self.fingerprint {
             let (layout, entities) = graph::compile(world);
             self.layout = Arc::new(layout);
             self.bus_entities = entities;
-            true
+            rebuilt = true;
         } else {
             graph::entities(world, &self.layout, &mut self.bus_entities);
-            false
-        };
+        }
         self.fingerprint = fingerprint;
         if rebuilt {
             self.send(Command::Buses(Arc::clone(&self.layout)));
@@ -211,16 +298,15 @@ impl Audio {
     }
 
     fn send(&mut self, command: Command) {
-        let mut commands = self
-            .commands
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        if commands.send(command).is_err() {
-            panic!("the audio mixer holds every command the frame sends");
+        if let Some(deck) = &self.deck {
+            deck.send(command);
         }
     }
 
     fn start(&mut self, entity: Entity, source: &AudioSource, params: Params, start: u64) {
+        if self.deck.is_none() {
+            return;
+        }
         if !source.bus().is_empty() && self.layout.index(source.bus()).is_none() {
             panic!(
                 "the audio source of entity {} plays through the bus {}, which the mixer does not hold",
@@ -389,17 +475,10 @@ impl Audio {
     }
 
     fn take_finished(&mut self) -> Vec<Entity> {
-        let taken = {
-            let mut events = self
-                .events
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            let mut taken = Vec::new();
-            while let Some(event) = events.take() {
-                taken.push(event);
-            }
-            taken
+        let Some(deck) = &self.deck else {
+            return Vec::new();
         };
+        let taken = deck.take_events().collect::<Vec<_>>();
         let mut finished = Vec::new();
         for event in taken {
             self.settle(event, &mut finished);
@@ -469,6 +548,7 @@ pub fn sync(world: &mut World) {
     let Some(mut audio) = world.remove_resource::<Audio>() else {
         return;
     };
+    audio.supervise();
     audio.sync_buses(world);
     for entity in audio.take_finished() {
         if let Some(source) = world.get_mut::<AudioSource>(entity) {
@@ -526,7 +606,7 @@ fn listener(world: &World) -> Option<Listener> {
     let transform = world.get::<Transform>(entity).unwrap_or_else(|| {
         panic!(
             "the audio listener of entity {} holds no transform",
-            entity.index(),
+            entity.index()
         )
     });
     Some(Listener::of(transform))

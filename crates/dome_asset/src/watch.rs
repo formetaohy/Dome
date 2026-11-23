@@ -4,13 +4,26 @@ use dome_scene::Scene;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const SETTLE_POLLS: u32 = 2;
+const SWEEP_FILES: usize = 32;
+const SETTLE_SWEEPS: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Change {
     pub scene: bool,
     pub model: bool,
     pub asset: bool,
+}
+
+impl Change {
+    fn any(self) -> bool {
+        self.scene || self.model || self.asset
+    }
+
+    fn absorb(&mut self, other: Self) {
+        self.scene |= other.scene;
+        self.model |= other.model;
+        self.asset |= other.asset;
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +39,7 @@ pub struct Watch {
     files: Vec<(PathBuf, Kind, Option<Digest>)>,
     errors: Vec<String>,
     pending: Option<Change>,
+    cursor: usize,
     held: u32,
 }
 
@@ -37,6 +51,7 @@ impl Watch {
             files: Vec::new(),
             errors: Vec::new(),
             pending: None,
+            cursor: 0,
             held: 0,
         };
         watch.renew(root);
@@ -82,42 +97,53 @@ impl Watch {
         }
         self.files = files;
         self.pending = None;
+        self.cursor = 0;
         self.held = 0;
     }
 
     pub fn changed(&mut self) -> Option<Change> {
-        let changed = self.poll();
-        if changed.scene || changed.model || changed.asset {
-            let pending = self.pending.get_or_insert(Change::default());
-            pending.scene |= changed.scene;
-            pending.model |= changed.model;
-            pending.asset |= changed.asset;
+        let (polled, swept) = self.poll();
+        if polled.any() {
+            self.pending.get_or_insert(Change::default()).absorb(polled);
             self.held = 0;
             return None;
         }
         self.pending.as_ref()?;
-        self.held = self.held.saturating_add(1);
-        if self.held < SETTLE_POLLS {
+        if !swept {
+            return None;
+        }
+        self.held += 1;
+        if self.held < SETTLE_SWEEPS {
             return None;
         }
         self.held = 0;
         self.pending.take()
     }
 
-    fn poll(&mut self) -> Change {
+    fn poll(&mut self) -> (Change, bool) {
         let mut changed = Change::default();
-        for (path, kind, digest) in &mut self.files {
-            let current = self.sources.digest(path).ok();
-            if *digest != current {
-                *digest = current;
-                match kind {
-                    Kind::Scene => changed.scene = true,
-                    Kind::Model => changed.model = true,
-                    Kind::Asset => changed.asset = true,
-                }
+        let count = self.files.len();
+        if count == 0 {
+            return (changed, true);
+        }
+        let take = count.min(SWEEP_FILES);
+        let cursor = self.cursor;
+        let (files, sources) = (&mut self.files, &mut self.sources);
+        for offset in 0..take {
+            let (path, kind, digest) = &mut files[(cursor + offset) % count];
+            let current = sources.digest(path).ok();
+            if *digest == current {
+                continue;
+            }
+            *digest = current;
+            match kind {
+                Kind::Scene => changed.scene = true,
+                Kind::Model => changed.model = true,
+                Kind::Asset => changed.asset = true,
             }
         }
-        changed
+        self.cursor = (cursor + take) % count;
+        (changed, self.cursor == 0)
     }
 
     pub fn errors(&self) -> impl Iterator<Item = &str> + '_ {

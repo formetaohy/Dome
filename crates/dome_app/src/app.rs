@@ -222,11 +222,7 @@ impl LiveScene {
             self.messages.push(refresh.message());
             return Some(self.reloaded());
         }
-        let requested = failed?;
-        if self.wanted.as_ref() != Some(&requested) {
-            return None;
-        }
-        self.wanted = None;
+        let requested = failed.expect("a polled refresh completes the request the scene made");
         if !refresh.errors.is_empty() {
             self.messages.push(refresh.message());
         }
@@ -235,7 +231,10 @@ impl LiveScene {
         if changed {
             self.sync
                 .sync(&requested, world, &self.assets, &refresh.changed);
-            self.scene = requested;
+            self.scene = requested.clone();
+        }
+        if self.wanted.as_ref() == Some(&requested) {
+            self.wanted = None;
         }
         self.assets.release(renderer);
         Some(self.reloaded())
@@ -577,14 +576,7 @@ impl App {
             "a resumed application rebuilds the world a lost surface owned"
         );
         if self.config.audio {
-            match Audio::open() {
-                Ok(audio) => {
-                    self.world.insert_resource(audio);
-                }
-                Err(error) => {
-                    self.world.insert_resource(error);
-                }
-            }
+            self.world.insert_resource(Audio::open());
         }
         self.world
             .resource_mut::<Input>()

@@ -35,6 +35,17 @@ impl<A: Clone> Ui<A> {
             self.finish_edit(Finish::Write);
         }
         self.hover_scrollbars();
+        let primary = self.input.button(Button::Primary);
+        let press_pointer = self
+            .input
+            .press_position(Button::Primary)
+            .unwrap_or(self.pointer);
+        let editing = self.edit;
+        let inside_edit = primary.pressed
+            && editing.is_some_and(|node| self.tree.nodes[node].rect.contains(press_pointer));
+        if primary.pressed && !inside_edit {
+            self.begin_press(press_pointer);
+        }
         if self.drag_scrollbar() {
             self.wheel();
             if self.edit.is_some() {
@@ -77,35 +88,12 @@ impl<A: Clone> Ui<A> {
                 }
             }
         }
-        let primary = self.input.button(Button::Primary);
-        let press_pointer = self
-            .input
-            .press_position(Button::Primary)
-            .unwrap_or(pointer);
         let release_pointer = self
             .input
             .release_position(Button::Primary)
             .unwrap_or(pointer);
-        let editing = self.edit;
-        if primary.pressed
-            && let Some(node) = editing
-            && self.tree.nodes[node].rect.contains(press_pointer)
-        {
+        if inside_edit && let Some(node) = editing {
             self.edit_press(node, press_pointer);
-        } else if primary.pressed {
-            if let Some(previous) = self.press {
-                self.wake_animation(previous);
-            }
-            let pressed = hit::resolve(&self.hits, press_pointer).map(|hit| hit.node);
-            self.focus = pressed.filter(|node| self.tree.nodes[*node].interaction.is_focusable());
-            self.press = pressed;
-            if let Some(node) = self.press {
-                self.wake_animation(node);
-            }
-            self.press_at = press_pointer;
-            self.drag = None;
-            self.focus_visible = false;
-            self.dismiss_popups();
         } else if primary.down && self.edit_drag && self.input.delta() != Vec2::ZERO {
             self.edit_drag_to(pointer);
         }
@@ -501,6 +489,22 @@ impl<A: Clone> Ui<A> {
                 self.set_popup(popup, false);
             }
         }
+    }
+
+    fn begin_press(&mut self, press_pointer: Vec2) {
+        if let Some(previous) = self.press {
+            self.wake_animation(previous);
+        }
+        let pressed = hit::resolve(&self.hits, press_pointer).map(|hit| hit.node);
+        self.focus = pressed.filter(|node| self.tree.nodes[*node].interaction.is_focusable());
+        self.press = pressed;
+        if let Some(node) = self.press {
+            self.wake_animation(node);
+        }
+        self.press_at = press_pointer;
+        self.drag = None;
+        self.focus_visible = false;
+        self.dismiss_popups();
     }
 
     fn dismiss_popups(&mut self) {

@@ -100,11 +100,7 @@ impl Preview {
             }
             return Some(refresh);
         }
-        let requested = failed?;
-        if self.wanted.as_ref() != Some(&requested) {
-            return None;
-        }
-        self.wanted = None;
+        let requested = failed.expect("a polled refresh completes the request the preview made");
         {
             let library = self
                 .library
@@ -112,6 +108,9 @@ impl Preview {
                 .expect("a preview holds the assets its scene renders");
             self.binding
                 .sync(&requested, &mut self.world, library, &refresh.changed);
+        }
+        if self.wanted.as_ref() == Some(&requested) {
+            self.wanted = None;
         }
         let library = self
             .library
