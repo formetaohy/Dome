@@ -1,0 +1,14 @@
+[package]
+name = "dome_physics"
+version.workspace = true
+edition.workspace = true
+description = "Rigid bodies, their convex colliders and the solver a world steps through"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_ecs = { workspace = true }
+dome_math = { workspace = true }

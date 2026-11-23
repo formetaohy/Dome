@@ -1,0 +1,13 @@
+[package]
+name = "dome_toml"
+version.workspace = true
+edition.workspace = true
+description = "TOML documents, their parsing and deterministic writing"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+toml = { workspace = true }

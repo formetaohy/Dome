@@ -1,0 +1,22 @@
+[package]
+name = "dome_gltf"
+version.workspace = true
+edition.workspace = true
+description = "Three dimensional models read from the glTF interchange format"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_animation = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+jpeg-decoder = { workspace = true }
+dome_image = { workspace = true }
+dome_math = { workspace = true }
+dome_render = { workspace = true }

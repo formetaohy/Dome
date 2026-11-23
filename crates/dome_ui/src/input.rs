@@ -1,0 +1,284 @@
+use dome_math::Vec2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cursor {
+    Arrow,
+    Pointing,
+    Crosshair,
+    Grab,
+    Grabbing,
+    ResizeHorizontal,
+    ResizeVertical,
+    Move,
+    Text,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollDelta {
+    pub down: f32,
+    pub right: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Button {
+    Primary,
+    Secondary,
+    Middle,
+}
+
+impl Button {
+    fn index(self) -> usize {
+        match self {
+            Self::Primary => 0,
+            Self::Secondary => 1,
+            Self::Middle => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Key {
+    Escape,
+    Enter,
+    Tab,
+    Space,
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Backspace,
+    Delete,
+    Function(u8),
+    Character(char),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub control: bool,
+    pub alt: bool,
+    pub logo: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    Moved(Vec2),
+    Down(Button),
+    Up(Button),
+    Cancel,
+    Leave,
+    Scroll(ScrollDelta),
+    Modifiers(Modifiers),
+    Key {
+        key: Key,
+        pressed: bool,
+        repeat: bool,
+    },
+    Text(String),
+    Preedit(Option<String>),
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ButtonState {
+    pub down: bool,
+    pub pressed: bool,
+    pub released: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KeyEvent {
+    pub key: Option<Key>,
+    pub pressed: bool,
+    pub repeat: bool,
+}
+
+pub struct Input {
+    position: Vec2,
+    inside: bool,
+    delta: Vec2,
+    scroll: ScrollDelta,
+    buttons: [ButtonState; 3],
+    press: [Option<Vec2>; 3],
+    release: [Option<Vec2>; 3],
+    modifiers: Modifiers,
+    cancelled: bool,
+    events: Vec<Event>,
+    keys: Vec<KeyEvent>,
+    texts: Vec<String>,
+    preedit: Option<String>,
+    viewport: Vec2,
+    scale: f32,
+    time: f64,
+    elapsed: f32,
+}
+
+impl Input {
+    pub fn new() -> Self {
+        Self {
+            position: Vec2::ZERO,
+            inside: false,
+            delta: Vec2::ZERO,
+            scroll: ScrollDelta::default(),
+            buttons: [ButtonState::default(); 3],
+            press: [None; 3],
+            release: [None; 3],
+            modifiers: Modifiers::default(),
+            cancelled: false,
+            events: Vec::new(),
+            keys: Vec::new(),
+            texts: Vec::new(),
+            preedit: None,
+            viewport: Vec2::ZERO,
+            scale: 1.0,
+            time: 0.0,
+            elapsed: 0.0,
+        }
+    }
+
+    pub fn push(&mut self, event: Event) {
+        self.events.push(event);
+    }
+
+    pub fn begin(&mut self, viewport: Vec2, scale: f32, time: f64) -> f32 {
+        self.viewport = viewport;
+        self.scale = scale;
+        let elapsed = if self.time > 0.0 {
+            (time - self.time).clamp(0.0, 0.25) as f32
+        } else {
+            0.0
+        };
+        self.time = time;
+        self.elapsed = elapsed;
+        self.delta = Vec2::ZERO;
+        self.scroll = ScrollDelta::default();
+        self.cancelled = false;
+        self.keys.clear();
+        self.texts.clear();
+        self.release = [None; 3];
+        for button in self.buttons.iter_mut() {
+            button.pressed = false;
+            button.released = false;
+        }
+        for event in std::mem::take(&mut self.events) {
+            match event {
+                Event::Moved(position) => {
+                    if self.inside {
+                        self.delta += position - self.position;
+                    }
+                    self.position = position;
+                    self.inside = true;
+                }
+                Event::Down(button) => {
+                    let state = &mut self.buttons[button.index()];
+                    state.down = true;
+                    state.pressed = true;
+                    self.press[button.index()] = Some(self.position);
+                }
+                Event::Up(button) => {
+                    let state = &mut self.buttons[button.index()];
+                    state.down = false;
+                    state.released = true;
+                    self.release[button.index()] = Some(self.position);
+                }
+                Event::Cancel => {
+                    self.cancelled = true;
+                    for state in &mut self.buttons {
+                        state.down = false;
+                    }
+                }
+                Event::Leave => self.inside = false,
+                Event::Scroll(delta) => {
+                    self.scroll.down += delta.down;
+                    self.scroll.right += delta.right;
+                }
+                Event::Modifiers(modifiers) => self.modifiers = modifiers,
+                Event::Key {
+                    key,
+                    pressed,
+                    repeat,
+                } => self.keys.push(KeyEvent {
+                    key: Some(key),
+                    pressed,
+                    repeat,
+                }),
+                Event::Text(text) => self.texts.push(text),
+                Event::Preedit(text) => self.preedit = text,
+            }
+        }
+        elapsed
+    }
+
+    pub fn position(&self) -> Vec2 {
+        self.position
+    }
+
+    pub fn inside(&self) -> bool {
+        self.inside
+    }
+
+    pub fn delta(&self) -> Vec2 {
+        self.delta
+    }
+
+    pub fn scroll(&self) -> ScrollDelta {
+        self.scroll
+    }
+
+    pub fn cancelled(&self) -> bool {
+        self.cancelled
+    }
+
+    pub fn button(&self, button: Button) -> ButtonState {
+        self.buttons[button.index()]
+    }
+
+    pub fn press_position(&self, button: Button) -> Option<Vec2> {
+        self.press[button.index()]
+    }
+
+    pub fn release_position(&self, button: Button) -> Option<Vec2> {
+        self.release[button.index()]
+    }
+
+    pub fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+
+    pub fn keys(&self) -> &[KeyEvent] {
+        &self.keys
+    }
+
+    pub fn texts(&self) -> &[String] {
+        &self.texts
+    }
+
+    pub fn preedit(&self) -> Option<&str> {
+        self.preedit.as_deref()
+    }
+
+    pub(crate) fn clear_preedit(&mut self) {
+        self.preedit = None;
+    }
+
+    pub fn viewport(&self) -> Vec2 {
+        self.viewport
+    }
+
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    pub fn elapsed(&self) -> f32 {
+        self.elapsed
+    }
+}
+
+impl Default for Input {
+    fn default() -> Self {
+        Self::new()
+    }
+}

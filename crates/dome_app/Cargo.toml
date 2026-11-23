@@ -1,0 +1,26 @@
+[package]
+name = "dome_app"
+version.workspace = true
+edition.workspace = true
+description = "The application loop of the Dome engine"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_animation = { workspace = true }
+dome_audio = { workspace = true }
+dome_ecs = { workspace = true }
+dome_gpu_device = { workspace = true }
+dome_image = { workspace = true }
+dome_math = { workspace = true }
+dome_physics = { workspace = true }
+dome_render = { workspace = true }
+dome_scene = { workspace = true }
+dome_window = { workspace = true }

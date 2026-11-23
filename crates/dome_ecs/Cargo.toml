@@ -1,0 +1,13 @@
+[package]
+name = "dome_ecs"
+version.workspace = true
+edition.workspace = true
+description = "Entities, component columns, systems and the parent hierarchy they transform through"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_math = { workspace = true }

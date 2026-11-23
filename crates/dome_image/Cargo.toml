@@ -1,0 +1,16 @@
+[package]
+name = "dome_image"
+version.workspace = true
+edition.workspace = true
+description = "Portable network graphics and Radiance pictures decoded, encoded and mip chained"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+flate2 = { workspace = true }

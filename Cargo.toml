@@ -1,0 +1,71 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+description = "An ECS-driven, GPU-driven game engine"
+license = "MIT"
+repository = "https://github.com/formetaohy/DomeDev"
+
+[workspace.dependencies]
+ash = "0.38"
+bitflags = "2"
+bytemuck = { version = "1", features = ["derive"] }
+flate2 = "1"
+gpu-allocator = { version = "0.28", default-features = false, features = ["std", "vulkan"] }
+half = "2"
+jpeg-decoder = "0.3"
+lewton = "0.10"
+libloading = "0.8"
+objc2 = "0.6"
+objc2-core-foundation = "0.3"
+objc2-foundation = "0.3"
+objc2-metal = "0.3"
+objc2-quartz-core = "0.3"
+proc-macro2 = "1"
+quote = "1"
+raw-window-handle = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+slotmap = "1"
+swash = "0.2"
+syn = { version = "2", features = ["full", "visit-mut", "extra-traits"] }
+toml = { version = "1", features = ["preserve_order"] }
+windows = "0.62"
+winit = { version = "0.30.13", default-features = false }
+dome_animation = { version = "0.1.0", path = "crates/dome_animation" }
+dome_app = { version = "0.1.0", path = "crates/dome_app" }
+dome_audio = { version = "0.1.0", path = "crates/dome_audio" }
+dome_ecs = { version = "0.1.0", path = "crates/dome_ecs" }
+dome_editor = { version = "0.1.0", path = "crates/dome_editor" }
+dome_gltf = { version = "0.1.0", path = "crates/dome_gltf" }
+dome_gpu = { version = "0.1.0", path = "crates/dome_gpu" }
+dome_gpu_device = { version = "0.1.0", path = "crates/dome_gpu_device" }
+dome_gpu_macro = { version = "0.1.0", path = "crates/dome_gpu_macro" }
+dome_image = { version = "0.1.0", path = "crates/dome_image" }
+dome_math = { version = "0.1.0", path = "crates/dome_math" }
+dome_physics = { version = "0.1.0", path = "crates/dome_physics" }
+dome_render = { version = "0.1.0", path = "crates/dome_render" }
+dome_scene = { version = "0.1.0", path = "crates/dome_scene" }
+dome_scene_macro = { version = "0.1.0", path = "crates/dome_scene_macro" }
+dome_text = { version = "0.1.0", path = "crates/dome_text" }
+dome_toml = { version = "0.1.0", path = "crates/dome_toml" }
+dome_ui = { version = "0.1.0", path = "crates/dome_ui" }
+dome_window = { version = "0.1.0", path = "crates/dome_window" }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.dev.package."*"]
+opt-level = 3
+debug-assertions = false
+
+[profile.test]
+opt-level = 1
+debug = 0

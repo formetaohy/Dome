@@ -1,0 +1,20 @@
+[package]
+name = "dome_scene_macro"
+version.workspace = true
+edition.workspace = true
+description = "The derive that turns a component type into an authored scene component"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+test = false
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+syn = { workspace = true }

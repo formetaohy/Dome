@@ -1,0 +1,15 @@
+[package]
+name = "dome"
+version.workspace = true
+edition.workspace = true
+description = "The Dome engine executable"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_app = { workspace = true }
+dome_editor = { workspace = true }

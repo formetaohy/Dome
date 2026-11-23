@@ -1,0 +1,10 @@
+[package]
+name = "dome_math"
+version.workspace = true
+edition.workspace = true
+description = "Vectors, matrices, quaternions and affine transforms"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true

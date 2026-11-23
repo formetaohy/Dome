@@ -1,0 +1,19 @@
+[package]
+name = "dome_ui"
+version.workspace = true
+edition.workspace = true
+description = "The retained user interface framework"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_gpu = { workspace = true }
+dome_gpu_device = { workspace = true }
+dome_math = { workspace = true }
+dome_window = { workspace = true }
+dome_text = { workspace = true }
+bytemuck = { workspace = true }
+slotmap = { workspace = true }

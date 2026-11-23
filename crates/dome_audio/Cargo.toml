@@ -1,0 +1,31 @@
+[package]
+name = "dome_audio"
+version.workspace = true
+edition.workspace = true
+description = "Decoded sounds mixed through a bus graph, spatialized and played through the native audio device"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_ecs = { workspace = true }
+dome_math = { workspace = true }
+lewton = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_Multimedia",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = { workspace = true }

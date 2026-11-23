@@ -1,0 +1,14 @@
+[package]
+name = "dome_animation"
+version.workspace = true
+edition.workspace = true
+description = "Transform clips, their sampling and the entities they animate"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_ecs = { workspace = true }
+dome_math = { workspace = true }

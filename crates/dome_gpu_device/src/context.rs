@@ -1,0 +1,488 @@
+use crate::backend::Backend;
+use crate::buffer::GpuBuffer;
+use crate::cache::{ArtifactCache, DEFAULT_ARTIFACT_BYTES};
+use crate::capability::{
+    AdapterId, AdapterInfo, AdapterPolicy, Capability, ClipSpace, Limits, PowerPreference,
+};
+use crate::gate::QueueLock;
+use crate::group::GroupCache;
+use crate::host::{HostDevice, HostIdentity};
+use crate::library::PipelineLibrary;
+use crate::native::{self, NativeDevice};
+use crate::pipeline::PipelineHandle;
+use crate::submission::{Command, SubmissionIndex, Write};
+use crate::surface::{Surface, WindowHandle};
+use dome_gpu::shader::ComputeProgram;
+use std::fmt::{self, Display, Formatter};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::time::Duration;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LimitsPolicy {
+    Minimum,
+    Adapter,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct GpuRequest {
+    pub backend: Option<Backend>,
+    pub adapter: AdapterPolicy,
+    pub limits: LimitsPolicy,
+    pub artifacts: Option<PathBuf>,
+    pub artifact_bytes: u64,
+    pub surface: Option<WindowHandle>,
+}
+
+impl Default for GpuRequest {
+    fn default() -> Self {
+        Self {
+            backend: None,
+            adapter: AdapterPolicy::Power(PowerPreference::HighPerformance),
+            limits: LimitsPolicy::Adapter,
+            artifacts: None,
+            artifact_bytes: DEFAULT_ARTIFACT_BYTES,
+            surface: None,
+        }
+    }
+}
+
+impl GpuRequest {
+    pub fn minimum_limits(self) -> Self {
+        Self {
+            limits: LimitsPolicy::Minimum,
+            ..self
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GpuUnavailable {
+    NoAdapter {
+        reason: String,
+    },
+    AdapterMissing {
+        wanted: AdapterId,
+        offered: Vec<AdapterInfo>,
+    },
+    BackendMissing {
+        wanted: Backend,
+        offered: &'static [Backend],
+    },
+    BackendMismatch {
+        wanted: Backend,
+        host: Backend,
+    },
+    AdapterMismatch {
+        wanted: AdapterId,
+        host: AdapterInfo,
+    },
+    UnsupportedLimits {
+        info: AdapterInfo,
+        limits: Limits,
+    },
+    HostUnusable {
+        backend: Backend,
+        reason: String,
+    },
+    BorrowedSurface,
+}
+
+impl Display for GpuUnavailable {
+    fn fmt(&self, out: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoAdapter { reason } => write!(out, "no native compute device: {reason}"),
+            Self::AdapterMissing { wanted, offered } => {
+                write!(out, "the requested adapter {wanted} is missing")?;
+                if offered.is_empty() {
+                    return write!(out, ", and no requested backend offers an adapter");
+                }
+                for adapter in offered {
+                    write!(out, "; {adapter}")?;
+                }
+                Ok(())
+            }
+            Self::BackendMissing { wanted, offered } => write!(
+                out,
+                "the requested {wanted:?} backend is missing from a build that offers {offered:?}"
+            ),
+            Self::BackendMismatch { wanted, host } => write!(
+                out,
+                "the request names the {wanted:?} backend, and the host device is {host:?}"
+            ),
+            Self::AdapterMismatch { wanted, host } => write!(
+                out,
+                "the request names the adapter {wanted}, and the host device is {host}"
+            ),
+            Self::UnsupportedLimits { info, limits } => write!(
+                out,
+                "{} ({:?}) cannot provide the compute baseline: {limits:?}",
+                info.name, info.backend
+            ),
+            Self::HostUnusable { backend, reason } => write!(
+                out,
+                "the {backend:?} device of the host cannot run Dome compute: {reason}"
+            ),
+            Self::BorrowedSurface => {
+                write!(out, "a borrowed host device cannot own a window surface")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GpuUnavailable {}
+
+pub(crate) struct DeviceState {
+    pub(crate) writes: Mutex<Vec<Write>>,
+    pub(crate) native: NativeDevice,
+    pub(crate) info: AdapterInfo,
+    pub(crate) limits: Limits,
+    pub(crate) capability: Capability,
+    pub(crate) artifacts: ArtifactCache,
+    pub(crate) groups: GroupCache,
+    pub(crate) submitted: AtomicU64,
+}
+
+#[derive(Clone)]
+pub struct Device {
+    pub(crate) state: Arc<DeviceState>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum Origin {
+    Opened(GpuRequest),
+    Borrowed {
+        host: HostIdentity,
+        request: GpuRequest,
+    },
+}
+
+struct Registration {
+    origin: Origin,
+    state: Weak<DeviceState>,
+}
+
+static DEVICE_REGISTRY: LazyLock<Mutex<Vec<Registration>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+fn cache(request: &GpuRequest) -> ArtifactCache {
+    match &request.artifacts {
+        Some(root) => ArtifactCache::bounded(root.clone(), request.artifact_bytes),
+        None => ArtifactCache::default_location(request.artifact_bytes),
+    }
+}
+
+impl Device {
+    pub(crate) fn shared(request: &GpuRequest) -> Result<Self, GpuUnavailable> {
+        let mut registry = DEVICE_REGISTRY
+            .lock()
+            .expect("the shared device registry is never poisoned");
+        registry.retain(|entry| entry.state.strong_count() > 0);
+        let origin = Origin::Opened(request.clone());
+        if let Some(state) = registry
+            .iter()
+            .filter(|entry| entry.origin == origin)
+            .find_map(|entry| entry.state.upgrade())
+        {
+            return Ok(Self { state });
+        }
+        let device = Self::open(request)?;
+        registry.push(Registration {
+            origin,
+            state: Arc::downgrade(&device.state),
+        });
+        Ok(device)
+    }
+
+    pub fn open(request: &GpuRequest) -> Result<Self, GpuUnavailable> {
+        let artifacts = cache(request);
+        let (native, info, limits, capability) = native::open(request)?;
+        Self::assemble(native, info, limits, capability, artifacts, request)
+    }
+
+    pub fn borrow(host: HostDevice<'_>, request: &GpuRequest) -> Result<Self, GpuUnavailable> {
+        if request.surface.is_some() {
+            return Err(GpuUnavailable::BorrowedSurface);
+        }
+        let mut registry = DEVICE_REGISTRY
+            .lock()
+            .expect("the shared device registry is never poisoned");
+        registry.retain(|entry| entry.state.strong_count() > 0);
+        let origin = Origin::Borrowed {
+            host: host.identity(),
+            request: request.clone(),
+        };
+        if let Some(state) = registry
+            .iter()
+            .filter(|entry| entry.origin == origin)
+            .find_map(|entry| entry.state.upgrade())
+        {
+            return Ok(Self { state });
+        }
+        let artifacts = cache(request);
+        let (native, info, limits, capability) = native::borrow(host, request)?;
+        let device = Self::assemble(native, info, limits, capability, artifacts, request)?;
+        registry.push(Registration {
+            origin,
+            state: Arc::downgrade(&device.state),
+        });
+        Ok(device)
+    }
+
+    fn assemble(
+        native: NativeDevice,
+        info: AdapterInfo,
+        limits: Limits,
+        capability: Capability,
+        artifacts: ArtifactCache,
+        request: &GpuRequest,
+    ) -> Result<Self, GpuUnavailable> {
+        if !limits.supports(&Limits::BASELINE) {
+            return Err(GpuUnavailable::UnsupportedLimits { info, limits });
+        }
+        let limits = match request.limits {
+            LimitsPolicy::Minimum => limits.minimum(),
+            LimitsPolicy::Adapter => limits,
+        };
+        Ok(Self {
+            state: Arc::new(DeviceState {
+                writes: Mutex::new(Vec::new()),
+                native,
+                info,
+                limits,
+                capability,
+                artifacts,
+                groups: GroupCache::default(),
+                submitted: AtomicU64::new(0),
+            }),
+        })
+    }
+
+    pub fn adapter_info(&self) -> &AdapterInfo {
+        &self.state.info
+    }
+
+    pub fn limits(&self) -> &Limits {
+        &self.state.limits
+    }
+
+    pub fn capability(&self) -> &Capability {
+        &self.state.capability
+    }
+
+    pub fn has_surface(&self) -> bool {
+        self.state.native.has_surface()
+    }
+
+    pub fn surface(&self, width: u32, height: u32) -> Surface {
+        assert!(
+            self.has_surface(),
+            "a swapchain needs a device opened for a window"
+        );
+        Surface::new(self, width, height)
+    }
+
+    pub fn clip_space(&self) -> ClipSpace {
+        match self.state.info.backend {
+            Backend::Vulkan => ClipSpace::YDown,
+            Backend::Metal => ClipSpace::YUp,
+        }
+    }
+
+    pub fn artifact_cache(&self) -> &ArtifactCache {
+        &self.state.artifacts
+    }
+
+    pub(crate) fn native(&self) -> &NativeDevice {
+        &self.state.native
+    }
+
+    pub(crate) fn recording(&self) -> u64 {
+        self.state.submitted.load(Ordering::Acquire) + 1
+    }
+
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
+#[derive(Clone)]
+pub struct Queue {
+    device: Device,
+}
+
+impl Queue {
+    pub fn of(device: &Device) -> Self {
+        Self {
+            device: device.clone(),
+        }
+    }
+
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+
+    pub fn lock(&self) -> QueueLock {
+        self.device.native().gate().take()
+    }
+
+    pub(crate) fn write(&self, write: Write) {
+        self.device
+            .state
+            .writes
+            .lock()
+            .expect("the compute queue is never poisoned")
+            .push(write);
+    }
+
+    pub(crate) fn submit(&self, commands: &[Command]) -> SubmissionIndex {
+        let mut writes = self
+            .device
+            .state
+            .writes
+            .lock()
+            .expect("the compute queue is never poisoned");
+        let first_dispatch = commands.iter().any(|command| match command {
+            Command::Dispatch { pipeline, .. } => pipeline.first_dispatch(),
+            Command::Copy { .. }
+            | Command::Clear { .. }
+            | Command::Render { .. }
+            | Command::CopyTexture { .. }
+            | Command::WriteTexture { .. }
+            | Command::Present { .. } => false,
+        });
+        let index = self
+            .device
+            .native()
+            .submit(&writes, commands, first_dispatch);
+        writes.clear();
+        self.device.state.submitted.store(index, Ordering::Release);
+        self.retire();
+        SubmissionIndex(index)
+    }
+
+    pub fn wait(&self, submission: SubmissionIndex, timeout: Duration) {
+        self.device.native().wait(submission.0, timeout);
+        self.retire();
+    }
+
+    pub fn complete(&self, submission: SubmissionIndex) -> bool {
+        let complete = self.device.native().complete(submission.0);
+        self.retire();
+        complete
+    }
+
+    pub fn seconds(&self, submission: SubmissionIndex) -> f64 {
+        let seconds = self.device.native().seconds(submission.0);
+        self.retire();
+        seconds
+    }
+
+    pub(crate) fn read(
+        &self,
+        buffer: &GpuBuffer,
+        submission: SubmissionIndex,
+        bytes: u64,
+    ) -> Vec<u8> {
+        let _pending = self
+            .device
+            .state
+            .writes
+            .lock()
+            .expect("the compute queue is never poisoned");
+        self.device
+            .native()
+            .wait(submission.0, crate::readback::READBACK_TIMEOUT);
+        self.retire();
+        self.device.native().read(buffer.native(), bytes)
+    }
+
+    pub fn drain(&self) {
+        let index = self.submit(&[]);
+        self.wait(index, crate::readback::READBACK_TIMEOUT);
+    }
+
+    pub fn idle(&self) {
+        self.device.native().idle();
+        self.retire();
+    }
+
+    fn retire(&self) {
+        let completed = self.device.native().completed();
+        self.device.state.groups.retire(completed);
+    }
+}
+
+pub struct GpuContext {
+    device: Device,
+    queue: Queue,
+    pipelines: Mutex<PipelineLibrary>,
+}
+
+impl GpuContext {
+    pub fn open(request: &GpuRequest) -> Result<Self, GpuUnavailable> {
+        Device::shared(request).map(Self::of_device)
+    }
+
+    pub fn of_device(device: Device) -> Self {
+        Self {
+            queue: Queue::of(&device),
+            device,
+            pipelines: Mutex::new(PipelineLibrary::new()),
+        }
+    }
+
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &Queue {
+        &self.queue
+    }
+
+    pub fn adapter_info(&self) -> &AdapterInfo {
+        self.device.adapter_info()
+    }
+
+    pub fn limits(&self) -> &Limits {
+        self.device.limits()
+    }
+
+    pub fn capability(&self) -> &Capability {
+        self.device.capability()
+    }
+
+    pub fn artifact_cache(&self) -> &ArtifactCache {
+        self.device.artifact_cache()
+    }
+
+    pub fn binding_alignment(&self) -> u64 {
+        self.limits().min_storage_buffer_offset_alignment.max(16)
+    }
+
+    pub fn assert_alive(&self) {
+        self.device.native().assert_alive();
+    }
+
+    pub fn drain(&self) {
+        self.assert_alive();
+        self.queue.drain();
+        self.assert_alive();
+    }
+
+    pub fn declare(&self, program: ComputeProgram) -> PipelineHandle {
+        self.assert_alive();
+        self.pipelines
+            .lock()
+            .expect("a pipeline library is never poisoned")
+            .declare(&self.device, program)
+    }
+
+    pub fn declared_kernels(&self) -> usize {
+        self.pipelines
+            .lock()
+            .expect("a pipeline library is never poisoned")
+            .declared()
+    }
+}

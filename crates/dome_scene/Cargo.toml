@@ -1,0 +1,26 @@
+[package]
+name = "dome_scene"
+version.workspace = true
+edition.workspace = true
+description = "Authored scenes, the components they hold and the asset library they load through"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_animation = { workspace = true }
+dome_audio = { workspace = true }
+dome_ecs = { workspace = true }
+dome_gpu_device = { workspace = true }
+dome_math = { workspace = true }
+dome_gltf = { workspace = true }
+dome_physics = { workspace = true }
+dome_image = { workspace = true }
+dome_render = { workspace = true }
+dome_toml = { workspace = true }
+dome_scene_macro = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

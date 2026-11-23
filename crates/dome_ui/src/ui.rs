@@ -1,0 +1,566 @@
+use std::collections::HashMap;
+use std::time::Duration;
+
+use dome_math::Vec2;
+use slotmap::SecondaryMap;
+
+use crate::clipboard::{Clipboard, NullClipboard};
+use crate::element::{Axis, CanvasPaint, Element, Key, Layer, Layout, Length};
+use crate::geometry::Rect;
+use crate::input::{Cursor, Input, Key as InputKey};
+use crate::layout::LayoutEngine;
+use crate::motion::{Animated, Motion};
+use crate::node::NodeId;
+use crate::paint::{Instances, LayerBuffer};
+use crate::renderer::Renderer;
+use crate::text::{Text, TextLayout, TextStyle};
+use crate::texture::Textures;
+use crate::theme::Theme;
+use crate::tree::Tree;
+use dome_gpu_device::{Device, Queue, Submission, Texture, TextureFormat};
+
+pub(crate) const CLICK_SLOP: f32 = 3.0;
+pub(crate) const TOOLTIP_DELAY: f32 = 0.55;
+
+pub struct Ui<A = ()> {
+    pub(crate) renderer: Renderer,
+    pub(crate) textures: Textures,
+    pub(crate) text: Text,
+    pub(crate) theme: Theme,
+    pub(crate) input: Input,
+    pub(crate) tree: Tree<A>,
+    pub(crate) animations: HashMap<u64, Animated>,
+    pub(crate) layers: [LayerBuffer; Layer::ALL.len()],
+    pub(crate) scratch: Instances,
+    pub(crate) scrollbars: Vec<(Rect, Axis, crate::scroll::ScrollState)>,
+    pub(crate) overlay: LayerBuffer,
+    pub(crate) scale: f32,
+    pub(crate) size: Vec2,
+    pub(crate) time: f32,
+    pub(crate) elapsed: f32,
+    pub(crate) actions: Vec<A>,
+    pub(crate) hits: Vec<crate::hit::Hit>,
+    pub(crate) hover: Option<NodeId>,
+    pub(crate) press: Option<NodeId>,
+    pub(crate) drag: Option<NodeId>,
+    pub(crate) press_at: Vec2,
+    pub(crate) focus: Option<NodeId>,
+    pub(crate) focus_visible: bool,
+    pub(crate) focus_order: Vec<NodeId>,
+    pub(crate) modal: Option<NodeId>,
+    pub(crate) edit: Option<NodeId>,
+    pub(crate) edit_drag: bool,
+    pub(crate) edit_caret: Option<Rect>,
+    pub(crate) popup_anchors: HashMap<Key, NodeId>,
+    pub(crate) cursor: Cursor,
+    pub(crate) animating: bool,
+    pub(crate) wake_in: Option<f32>,
+    pub(crate) inside: bool,
+    pub(crate) pointer: Vec2,
+    pub(crate) occluders: Vec<Rect>,
+    pub(crate) hovered_since: Option<(NodeId, f32)>,
+    pub(crate) tooltip: Option<(NodeId, String)>,
+    pub(crate) clipboard: Box<dyn Clipboard>,
+    pub(crate) preedit: Option<String>,
+    pub(crate) animation: Vec<NodeId>,
+    pub(crate) scrolling: Vec<NodeId>,
+    pub(crate) scrollbar: Option<(NodeId, Vec2, f32)>,
+}
+
+impl<A: Clone> Ui<A> {
+    pub fn new(device: &Device, queue: &Queue, format: TextureFormat) -> Self {
+        Self {
+            renderer: Renderer::new(device, queue, format),
+            textures: Textures::new(device, queue),
+            text: Text::new(),
+            theme: Theme::dark(),
+            input: Input::new(),
+            tree: Tree::new(),
+            animations: HashMap::new(),
+            layers: std::array::from_fn(|_| LayerBuffer::default()),
+            scratch: Instances::default(),
+            scrollbars: Vec::new(),
+            overlay: LayerBuffer::default(),
+            scale: 1.0,
+            size: Vec2::ZERO,
+            time: 0.0,
+            elapsed: 0.0,
+            actions: Vec::new(),
+            hits: Vec::new(),
+            hover: None,
+            press: None,
+            drag: None,
+            press_at: Vec2::ZERO,
+            focus: None,
+            focus_visible: false,
+            focus_order: Vec::new(),
+            modal: None,
+            edit: None,
+            edit_drag: false,
+            edit_caret: None,
+            popup_anchors: HashMap::new(),
+            cursor: Cursor::Arrow,
+            animating: false,
+            wake_in: None,
+            inside: false,
+            pointer: Vec2::ZERO,
+            occluders: Vec::new(),
+            hovered_since: None,
+            tooltip: None,
+            clipboard: Box::new(NullClipboard),
+            preedit: None,
+            animation: Vec::new(),
+            scrolling: Vec::new(),
+            scrollbar: None,
+        }
+    }
+
+    pub fn theme(&self) -> &Theme {
+        &self.theme
+    }
+
+    pub fn set_theme(&mut self, theme: Theme) {
+        if self.theme == theme {
+            return;
+        }
+        self.theme = theme;
+        self.invalidate();
+    }
+
+    pub fn set_textures<'a>(
+        &mut self,
+        textures: impl IntoIterator<Item = (&'a str, &'a Texture, dome_gpu_device::SamplerDesc)>,
+    ) {
+        if self.textures.sync(textures) {
+            self.invalidate();
+        }
+    }
+
+    pub fn input_mut(&mut self) -> &mut Input {
+        &mut self.input
+    }
+
+    pub fn input(&self) -> &Input {
+        &self.input
+    }
+
+    pub fn size(&self) -> Vec2 {
+        self.size
+    }
+
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    pub fn text(&mut self) -> &mut Text {
+        &mut self.text
+    }
+
+    pub fn set_clipboard(&mut self, clipboard: Box<dyn Clipboard>) {
+        self.clipboard = clipboard;
+    }
+
+    pub fn copy(&mut self, text: &str) {
+        self.clipboard.write(text);
+    }
+
+    pub fn editing(&self) -> bool {
+        self.edit.is_some()
+    }
+
+    pub fn editing_text(&self) -> Option<String> {
+        let node = self.edit?;
+        let edit = self.tree.nodes[node].runtime.edit.as_ref()?;
+        Some(edit.composed(self.preedit.as_deref().unwrap_or_default()))
+    }
+
+    pub fn edit_caret(&self) -> Option<Rect> {
+        self.edit_caret
+    }
+
+    pub fn focus_visible(&self) -> bool {
+        self.focus_visible
+    }
+
+    pub fn cursor(&self) -> Cursor {
+        self.cursor
+    }
+
+    pub fn set_cursor(&mut self, cursor: Cursor) {
+        self.cursor = cursor;
+    }
+
+    pub fn pointer_over_widget(&self) -> bool {
+        self.pointer_over_widget_at(self.pointer)
+    }
+
+    pub fn bounds(&self, name: &str) -> Option<Rect> {
+        let node = self.tree.node_at(Key::new(name))?;
+        Some(self.tree.nodes[node].rect)
+    }
+
+    pub fn pointer_over_widget_at(&self, position: Vec2) -> bool {
+        crate::hit::resolve(&self.hits, position).is_some()
+    }
+
+    pub fn pointer_over_chrome(&self) -> bool {
+        let pointer = self.pointer;
+        self.occluders.iter().any(|rect| rect.contains(pointer))
+    }
+
+    pub fn pointer_captured(&self) -> bool {
+        self.press.is_some() || self.scrollbar.is_some()
+    }
+
+    pub fn popup_open_any(&self) -> bool {
+        self.popup_anchors
+            .values()
+            .any(|id| self.tree.nodes[*id].runtime.open)
+    }
+
+    pub fn modal_open(&self) -> bool {
+        self.modal.is_some()
+    }
+
+    pub(crate) fn inside_modal(&self, node: NodeId) -> bool {
+        self.modal
+            .is_none_or(|modal| crate::dispatch::is_inside(&self.tree, modal, node))
+    }
+
+    pub fn claims_key(&self, key: InputKey) -> bool {
+        let modifiers = self.input.modifiers();
+        let command = modifiers.control || modifiers.logo;
+        if self.edit.is_some() {
+            return match key {
+                InputKey::Character(character) if command => crate::edit::command(character),
+                InputKey::Character(_) | InputKey::Space => true,
+                InputKey::Backspace
+                | InputKey::Delete
+                | InputKey::Enter
+                | InputKey::Escape
+                | InputKey::Tab
+                | InputKey::Left
+                | InputKey::Right
+                | InputKey::Up
+                | InputKey::Down
+                | InputKey::Home
+                | InputKey::End => true,
+                InputKey::PageUp | InputKey::PageDown | InputKey::Function(_) => false,
+            };
+        }
+        if self.focus_visible || self.popup_open_any() || self.modal_open() {
+            return matches!(
+                key,
+                InputKey::Tab
+                    | InputKey::Escape
+                    | InputKey::Enter
+                    | InputKey::Space
+                    | InputKey::Left
+                    | InputKey::Right
+                    | InputKey::Up
+                    | InputKey::Down
+                    | InputKey::Home
+                    | InputKey::End
+                    | InputKey::PageUp
+                    | InputKey::PageDown
+            );
+        }
+        self.focus
+            .and_then(|node| self.tree.nodes.get(node))
+            .is_some_and(|node| node.visible && crate::dispatch::accepts(&node.content, key))
+    }
+
+    pub fn update(&mut self, size: Vec2, scale: f32, time: f64) -> Vec<A> {
+        let rescaled = self.scale != scale;
+        let resized = self.size != size;
+        self.size = size;
+        self.scale = scale;
+        self.time = time as f32;
+        self.elapsed = self.input.begin(size, scale, time);
+        if self.input.preedit() != self.preedit.as_deref() {
+            self.preedit = self.input.preedit().map(str::to_owned);
+            if let Some(edit) = self.edit {
+                self.tree.nodes[edit].paint_dirty = true;
+            }
+        }
+        if self.text.begin(scale) {
+            self.invalidate();
+        }
+        self.cursor = Cursor::Arrow;
+        self.animating = false;
+        self.wake_in = None;
+        self.edit_caret = None;
+        self.inside = self.input.inside();
+        self.pointer = self.input.position();
+        if resized || rescaled {
+            self.tree.mark_dirty();
+        }
+        if rescaled {
+            self.invalidate();
+        }
+        self.advance_scroll();
+        if self.tree.focus {
+            self.collect_focus();
+            self.tree.focus = false;
+        }
+        self.dispatch();
+        self.sync_hover();
+        self.animate_nodes();
+        std::mem::take(&mut self.actions)
+    }
+
+    pub fn present(&mut self, element: Element<'_, A>) {
+        let mut canvases: SecondaryMap<NodeId, CanvasPaint<'_>> = SecondaryMap::new();
+        let removed = self.tree.apply(element, &mut canvases);
+        self.prune(&removed.removed);
+        self.actions.extend(removed.committed);
+        if self.tree.modal {
+            self.rebuild_modal();
+            self.tree.modal = false;
+        }
+        if self.tree.fields {
+            self.sync_fields();
+            self.tree.fields = false;
+        }
+        if self.tree.popups {
+            self.rebuild_popup_anchors();
+            self.tree.popups = false;
+        }
+        if self.tree.layout {
+            self.run_layout();
+            self.tree.layout = false;
+        }
+        if self.tree.hits {
+            self.rebuild_hits();
+            self.tree.hits = false;
+        }
+        self.update_tooltip();
+        self.paint_overlays();
+        self.paint_layers(&canvases);
+    }
+
+    pub fn render(
+        &mut self,
+        submission: &mut Submission,
+        target: &Texture,
+        scene: Option<&Texture>,
+    ) {
+        self.textures.refresh(&self.text);
+        let layers = [
+            &self.layers[Layer::Content.index()],
+            &self.layers[Layer::Chrome.index()],
+            &self.layers[Layer::Popup.index()],
+            &self.layers[Layer::Hud.index()],
+            &self.overlay,
+        ];
+        self.renderer.paint(
+            submission,
+            target,
+            scene,
+            self.scale,
+            &mut self.textures,
+            &layers,
+        );
+        for layer in &mut self.layers {
+            layer.dirty = None;
+        }
+        self.overlay.dirty = None;
+    }
+
+    fn run_layout(&mut self) {
+        let mut engine = LayoutEngine {
+            text: &mut self.text,
+            theme: &self.theme,
+            screen: self.size,
+        };
+        engine.run(&mut self.tree);
+        self.update_scroll_metrics();
+    }
+
+    pub fn finish(&mut self) -> Option<Duration> {
+        if self.animating {
+            return Some(Duration::ZERO);
+        }
+        self.wake_in
+            .map(|seconds| Duration::from_secs_f32(seconds.max(0.0)))
+    }
+
+    pub(crate) fn wake(&mut self, seconds: f32) {
+        self.wake_in = Some(self.wake_in.map_or(seconds, |held| held.min(seconds)));
+    }
+
+    pub fn build(&mut self) -> BuildContext<'_, A> {
+        BuildContext {
+            text: &mut self.text,
+            theme: &self.theme,
+            tree: &self.tree,
+            popups: &self.popup_anchors,
+            animations: &mut self.animations,
+            animating: &mut self.animating,
+            size: self.size,
+            scale: self.scale,
+            elapsed: self.elapsed,
+            stepped: std::collections::HashSet::new(),
+            pointer: self.pointer,
+        }
+    }
+
+    pub(crate) fn wake_animation(&mut self, id: NodeId) {
+        if self.tree.nodes[id].runtime.active {
+            return;
+        }
+        self.tree.nodes[id].runtime.active = true;
+        self.animation.push(id);
+    }
+
+    pub(crate) fn touch(&mut self, id: NodeId) {
+        self.tree.nodes[id].paint_dirty = true;
+        self.wake_animation(id);
+    }
+
+    fn invalidate(&mut self) {
+        for node in self.tree.nodes.values_mut() {
+            node.paint_dirty = true;
+        }
+        self.tree.mark_dirty();
+    }
+}
+
+pub struct BuildContext<'a, A> {
+    text: &'a mut Text,
+    theme: &'a Theme,
+    tree: &'a Tree<A>,
+    popups: &'a HashMap<Key, NodeId>,
+    animations: &'a mut HashMap<u64, Animated>,
+    animating: &'a mut bool,
+    size: Vec2,
+    scale: f32,
+    elapsed: f32,
+    pointer: Vec2,
+    stepped: std::collections::HashSet<u64>,
+}
+
+impl<A> BuildContext<'_, A> {
+    pub fn theme(&self) -> &Theme {
+        self.theme
+    }
+
+    pub fn size(&self) -> Vec2 {
+        self.size
+    }
+
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    pub fn measure(&mut self, text: &str, style: TextStyle) -> Vec2 {
+        crate::text::measure(self.text, text, style)
+    }
+
+    pub fn layout_text(
+        &mut self,
+        text: &str,
+        style: TextStyle,
+        width: f32,
+    ) -> std::sync::Arc<TextLayout> {
+        crate::text::layout(self.text, text, style, width)
+    }
+
+    pub fn animate(&mut self, key: u64, target: f32, motion: Motion) -> f32 {
+        let spring = self
+            .animations
+            .entry(key)
+            .or_insert_with(|| Animated::new(target, motion.spring()));
+        if motion.is_instant() {
+            spring.snap(target);
+            return target;
+        }
+        spring.animate_to(target, motion.spring());
+        if !spring.is_at_rest() {
+            if self.stepped.insert(key) {
+                spring.step(self.elapsed);
+            }
+            *self.animating = true;
+        }
+        spring.value
+    }
+
+    pub fn window(&self, key: Key, row: f32, rows: usize) -> crate::scroll::Window {
+        let row = row.max(1.0);
+        let screen = self.size.y.max(self.size.x);
+        let (offset, viewport, axis) =
+            self.tree
+                .node_at(key)
+                .map_or((0.0, screen, Axis::Column), |id| {
+                    let node = &self.tree.nodes[id];
+                    let axis = node.scroll_axis();
+                    let viewport = match axis {
+                        Axis::Row => node.rect.width(),
+                        Axis::Column => node.rect.height(),
+                    };
+                    let viewport = if viewport > 0.0 { viewport } else { screen };
+                    (
+                        node.scroll.map_or(0.0, |scroll| scroll.offset),
+                        viewport,
+                        axis,
+                    )
+                });
+        let visible = (viewport / row).ceil() as usize + 2;
+        let first = ((offset / row).floor().max(0.0) as usize).min(rows);
+        let last = (first + visible).min(rows);
+        crate::scroll::Window {
+            offset,
+            viewport,
+            row,
+            rows,
+            first,
+            last,
+            axis,
+        }
+    }
+
+    pub fn scroll<'a>(
+        &self,
+        key: Key,
+        axis: Axis,
+        length: Length,
+        row: f32,
+        rows: usize,
+        build: impl FnOnce(crate::scroll::Window) -> Vec<Element<'a, A>>,
+    ) -> Element<'a, A>
+    where
+        A: 'a,
+    {
+        let window = self.window(key, row, rows);
+        let mut children = build(window);
+        let lead = window.first as f32 * row;
+        let tail = rows.saturating_sub(window.last) as f32 * row;
+        if lead > 0.0 {
+            children.insert(0, crate::element::extent(axis, lead));
+        }
+        if tail > 0.0 {
+            children.push(crate::element::extent(axis, tail));
+        }
+        Element::new(Layout::column())
+            .key(key)
+            .scroll(axis, length, Some(rows as f32 * row))
+            .clipped()
+            .children(children)
+    }
+
+    pub fn popup_open(&self, key: Key) -> bool {
+        self.popups
+            .get(&key)
+            .is_some_and(|id| self.tree.nodes[*id].runtime.open)
+    }
+
+    pub fn is_editing(&self, key: Key) -> bool {
+        self.tree
+            .node_at(key)
+            .is_some_and(|id| self.tree.nodes[id].runtime.edit.is_some())
+    }
+
+    pub fn pointer(&self) -> Vec2 {
+        self.pointer
+    }
+}

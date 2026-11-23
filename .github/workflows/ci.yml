@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  quality:
+    name: Format & Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  backend:
+    name: ${{ matrix.platform }} Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Windows
+            target: x86_64-pc-windows-msvc
+          - platform: macOS
+            target: x86_64-apple-darwin
+          - platform: iOS
+            target: aarch64-apple-ios
+          - platform: Android
+            target: aarch64-linux-android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check native backend
+        run: cargo check --workspace --all-targets --all-features --locked --target ${{ matrix.target }}
+
+  test:
+    name: CPU & GPU Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Cache Vulkan artifacts
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/dome_cache
+          key: ${{ runner.os }}-vulkan-${{ hashFiles('Cargo.lock', 'crates/**/*.rs') }}
+          restore-keys: ${{ runner.os }}-vulkan-
+
+      - name: Install software Vulkan driver
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libvulkan1 mesa-vulkan-drivers
+
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Test
+        run: cargo nextest run --workspace --all-features --locked --no-fail-fast
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/dome_cache
+
+  build:
+    name: Release Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build release library and examples
+        run: cargo build --workspace --lib --bins --examples --all-features --release --locked
+
+  check:
+    name: Check & Test
+    needs: [quality, backend, test, build]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to pass
+        run: |
+          test "${{ needs.quality.result }}" = success
+          test "${{ needs.backend.result }}" = success
+          test "${{ needs.test.result }}" = success
+          test "${{ needs.build.result }}" = success

@@ -1,0 +1,32 @@
+[package]
+name = "dome_window"
+version.workspace = true
+edition.workspace = true
+description = "Native windows, event loops and input"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[lints]
+workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+winit = { workspace = true, default-features = false, features = [
+    "rwh_06",
+    "x11",
+    "wayland",
+    "wayland-dlopen",
+    "wayland-csd-adwaita",
+] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { workspace = true, default-features = false, features = [
+    "rwh_06",
+    "android-native-activity",
+] }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "android")))'.dependencies]
+winit = { workspace = true, default-features = false, features = ["rwh_06"] }
