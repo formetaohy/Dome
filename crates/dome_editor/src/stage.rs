@@ -103,12 +103,12 @@ pub(crate) fn build(
         layers.push(sheet(*ctx.theme(), "inspector", rect, head, content));
     }
 
-    if let Some(error) = state.error {
-        layers.push(crate::dialog::toast(ctx, screen, error));
-    }
-
     if let Some(dialog) = state.dialog {
         layers.push(crate::dialog::modal(ctx, screen, dialog));
+    }
+
+    if let Some(error) = state.error {
+        layers.push(crate::dialog::toast(ctx, screen, error));
     }
 
     place(full, layers)

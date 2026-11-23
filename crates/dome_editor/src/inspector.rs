@@ -259,7 +259,7 @@ fn component_card(
     let open = !state.collapsed_sections.contains(&section_id);
     let angle = ctx.animate(
         Key::new(format!("chevron.{section_id}")).id(),
-        if open { 2.0 } else { 1.0 },
+        if open { 1.0 } else { 0.0 },
         Motion::spatial_fast(),
     );
 
@@ -338,7 +338,7 @@ fn add_component_menu(
     }
 
     let menu =
-        popup(anchor, 224.0, items).key(Key::new(format!("inspector.add_comp.menu.{target}")));
+        popup(anchor, 288.0, items).key(Key::new(format!("inspector.add_comp.menu.{target}")));
     Element::column()
         .width(Length::Fill)
         .children([button, menu])
@@ -505,7 +505,7 @@ fn preview_texture(scene: &Scene, target: &Target) -> Option<String> {
         Target::Image(_) => texture_of(target),
         Target::Environment(id) => scene
             .environment(id)
-            .filter(|entry| !entry.capture())
+            .filter(|entry| entry.panorama().is_some())
             .and_then(|_| texture_of(target)),
         _ => None,
     }

@@ -653,7 +653,11 @@ impl<A: Clone> Ui<A> {
                 field.style,
             ),
             Content::DragValue(drag) => (
-                format!("{:.*}", drag.decimals, drag.value),
+                format!(
+                    "{:.*}",
+                    drag.decimals,
+                    crate::widget::slider::clean_zero(drag.value, drag.decimals)
+                ),
                 false,
                 true,
                 crate::text::TextStyle::new(drag.font, self.theme.palette.on_surface),

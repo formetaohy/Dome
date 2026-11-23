@@ -1,5 +1,6 @@
 use dome_ui::{
-    Align, BuildContext, Corners, Edges, Element, Icon, Key, Layer, Length, Role, Surface, widget,
+    Align, BuildContext, Corners, Edges, Element, Icon, Key, Layer, Length, Role, State as UiState,
+    widget,
 };
 
 use crate::action::{Action, Sheet};
@@ -8,7 +9,6 @@ use crate::stage::State;
 
 pub(crate) fn build(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Element<'static, Action> {
     let theme = *ctx.theme();
-    let palette = theme.palette;
     let metrics = theme.metrics;
 
     let outliner_role = if state.outliner_open {
@@ -107,8 +107,7 @@ pub(crate) fn build(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Elemen
         .enabled(state.selected.is_some())
         .press(Action::ToggleSheet(Sheet::Inspector));
 
-    let bar_surface =
-        Surface::fill(palette.surface_container_high).with_corners(Corners::capsule());
+    let bar_surface = theme.surface(Role::FloatingToolbar, UiState::Rest);
     let island = Element::row()
         .key(Key::new("toolbar"))
         .layer(Layer::Chrome)

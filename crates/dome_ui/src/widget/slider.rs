@@ -534,9 +534,10 @@ pub(super) fn paint_drag(
         painter.pop_clip(clip);
         return Some(caret);
     }
+    let clean = clean_zero(drag.value, drag.decimals);
     let text = match &drag.unit {
-        Some(unit) if inner.width() > 54.0 => format!("{:.*}{unit}", drag.decimals, drag.value),
-        _ => format!("{:.*}", drag.decimals, drag.value),
+        Some(unit) if inner.width() > 54.0 => format!("{:.*}{unit}", drag.decimals, clean),
+        _ => format!("{:.*}", drag.decimals, clean),
     };
     painter.text_in(
         inner,
@@ -547,6 +548,11 @@ pub(super) fn paint_drag(
         Align::Center,
     );
     None
+}
+
+pub(crate) fn clean_zero(value: f32, decimals: usize) -> f32 {
+    let half_ulp = 0.5 * 10f32.powi(-(decimals as i32));
+    if value.abs() < half_ulp { 0.0 } else { value }
 }
 
 pub(super) fn paint_progress(

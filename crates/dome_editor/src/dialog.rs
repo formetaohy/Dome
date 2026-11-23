@@ -11,15 +11,18 @@ const DIALOG_WIDTH: f32 = 360.0;
 const DIALOG_HEIGHT: f32 = 166.0;
 
 pub(crate) fn toast(
-    ctx: &BuildContext<'_, Action>,
+    ctx: &mut BuildContext<'_, Action>,
     screen: Vec2,
     message: &str,
 ) -> Element<'static, Action> {
     let theme = *ctx.theme();
     let palette = theme.palette;
+    let text_style =
+        TextStyle::new(theme.font(Level::Label), palette.on_error_container).truncating();
+    let max_text = (screen.x - 120.0).max(120.0);
+    let text_width = (ctx.measure(message, text_style).x + 2.0).min(max_text);
     let pill = Element::row()
         .key(Key::new("toast.pill"))
-        .width(Length::Maximum((screen.x - 48.0).max(200.0)))
         .height(Length::Fixed(40.0))
         .padding(Edges::symmetric(14.0, 0.0))
         .gap(10.0)
@@ -33,10 +36,7 @@ pub(crate) fn toast(
                 palette.on_error_container,
                 IconStyle::FILLED,
             ),
-            label(
-                message,
-                TextStyle::new(theme.font(Level::Label), palette.on_error_container).truncating(),
-            ),
+            label(message, text_style).width(Length::Fixed(text_width)),
             widget::icon_button(Icon::Close, 26.0, Role::Standard, "Dismiss")
                 .key(Key::new("toast.close"))
                 .press(Action::DismissError),

@@ -271,8 +271,12 @@ pub fn combo<'a, A>(
     let label_font = theme.font(Level::Label);
     let text = theme.palette.on_surface;
     let chevron = theme.palette.on_surface_variant;
+    let anchor_width = match width {
+        Length::Auto => Length::Fixed(120.0),
+        _ => Length::Fill,
+    };
     let anchor = Element::new(Layout {
-        size: Size::new(width, Length::Fixed(height)),
+        size: Size::new(anchor_width, Length::Fixed(height)),
         ..Layout::row()
     })
     .view(shown, move |value: &String, painter, info| {
@@ -312,7 +316,5 @@ pub fn combo<'a, A>(
         );
     }
     let popup = crate::popover::popup(key, popup_width.max(120.0), rows);
-    Element::column()
-        .width(Length::Auto)
-        .children([anchor, popup])
+    Element::column().width(width).children([anchor, popup])
 }
