@@ -18,7 +18,6 @@ use crate::theme::{Level, Role, Theme};
 use super::PaintInfo;
 
 const ARROW_STEP: f32 = 0.01;
-const PAGE_STEP: f32 = 0.1;
 
 pub fn slider_sized<'a, A>(
     theme: &Theme,
@@ -233,16 +232,15 @@ pub(crate) fn range_at(range: &RangeSliderContent, rect: Rect, pointer: Vec2) ->
     }
 }
 
-pub(crate) fn step(slider: &SliderContent, direction: f32, page: bool) -> f32 {
-    let step = if page { PAGE_STEP } else { ARROW_STEP };
-    let t = (normalized(slider) + direction * step).clamp(0.0, 1.0);
+pub(crate) fn step(slider: &SliderContent, direction: f32) -> f32 {
+    let t = (normalized(slider) + direction * ARROW_STEP).clamp(0.0, 1.0);
     absolute(t, &slider.range, slider.logarithmic)
 }
 
-pub(crate) fn range_step(range: &RangeSliderContent, direction: f32, page: bool) -> (f32, f32) {
+pub(crate) fn range_step(range: &RangeSliderContent, direction: f32) -> (f32, f32) {
     let (minimum, maximum) = (*range.range.start(), *range.range.end());
     let span = (maximum - minimum).max(1.0e-6);
-    let step = span * if page { PAGE_STEP } else { ARROW_STEP };
+    let step = span * ARROW_STEP;
     let epsilon = 1.0e-4 * span.max(1.0);
     if direction < 0.0 {
         let start = (range.start - step).max(minimum);
@@ -261,10 +259,9 @@ pub(crate) fn range_step(range: &RangeSliderContent, direction: f32, page: bool)
     }
 }
 
-pub(crate) fn drag_step(drag: &DragValueContent, direction: f32, page: bool) -> f32 {
+pub(crate) fn drag_step(drag: &DragValueContent, direction: f32) -> f32 {
     let scale = 10f32.powi(-(drag.decimals as i32));
-    let multiplier = if page { 10.0 } else { 1.0 };
-    drag.value + direction * scale * multiplier
+    drag.value + direction * scale
 }
 
 pub(crate) fn value_slider<A>(node: &Node<A>, pressed: bool) -> Option<(Motion, (f32, f32))> {

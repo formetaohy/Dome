@@ -1,7 +1,7 @@
 use super::{
     DeviceFailure, FRAME_TIMEOUT, FRAMES_IN_FLIGHT, NativeBuffer, NativeFrame,
     NativeGraphicsPipeline, NativeGroup, NativePipeline, NativePresent, NativeTexture,
-    STAGING_BYTES, TIME_SLOTS, TRANSFER_ALIGNMENT, hang_deadline,
+    STAGING_BYTES, TIME_SLOTS, TRANSFER_ALIGNMENT,
 };
 use crate::backend::Backend;
 use crate::buffer::GpuBuffer;
@@ -57,7 +57,6 @@ const RELEASE_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct Frame {
     index: u64,
-    first_dispatch: bool,
     command: Option<Retained<ProtocolObject<dyn MTLCommandBuffer>>>,
     staging: Arc<BufferResource>,
     cursor: u64,
@@ -70,7 +69,6 @@ impl Frame {
     fn new(device: &Device) -> Self {
         Self {
             index: 0,
-            first_dispatch: false,
             command: None,
             staging: device.allocate(STAGING_BYTES, true),
             cursor: 0,
@@ -1143,12 +1141,7 @@ impl Device {
             .expect("a Metal command buffer can encode copies")
     }
 
-    pub(crate) fn submit(
-        &self,
-        writes: &[Write],
-        commands: &[Command],
-        first_dispatch: bool,
-    ) -> u64 {
+    pub(crate) fn submit(&self, writes: &[Write], commands: &[Command]) -> u64 {
         let mut state = self
             .state
             .lock()
@@ -1167,7 +1160,6 @@ impl Device {
         let frame = &mut state.frames[slot];
         frame.begin();
         frame.index = index;
-        frame.first_dispatch = first_dispatch;
         let command = self
             .queue
             .commandBuffer()
@@ -1706,14 +1698,6 @@ impl Device {
         if index <= state.completed {
             return Ok(());
         }
-        let timeout = hang_deadline(
-            state
-                .frames
-                .iter()
-                .map(|frame| (frame.index, frame.first_dispatch)),
-            index,
-            timeout,
-        );
         let started = Instant::now();
         loop {
             self.retire(state)?;
@@ -1803,18 +1787,6 @@ impl Device {
         if let Err(error) = self.retire(&mut state) {
             panic!("{error}");
         }
-    }
-}
-
-impl GraphicsPipeline {
-    pub(crate) fn is_compiled(&self) -> bool {
-        self.resource.compiled.get().is_some()
-    }
-}
-
-impl Pipeline {
-    pub(crate) fn is_compiled(&self) -> bool {
-        self.resource.compiled.get().is_some()
     }
 }
 

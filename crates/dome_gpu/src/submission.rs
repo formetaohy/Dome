@@ -184,7 +184,6 @@ impl Submission {
                 .all(|count| *count > 0 && *count <= limits.max_compute_workgroups_per_dimension),
             "a dispatch exceeds the workgroup grid"
         );
-        pipeline.compile();
         self.commands.push(Command::Dispatch {
             pipeline: pipeline.clone(),
             group: group.clone(),
@@ -266,7 +265,6 @@ impl Submission {
                         "a bind group belongs to another pipeline"
                     );
                 }
-                draw.pipeline.compile();
                 let count = match draw.count {
                     Count::Direct {
                         vertices,

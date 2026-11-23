@@ -55,6 +55,7 @@ struct Assigned {
     bus: Option<String>,
     index: usize,
     sequence: u64,
+    located: bool,
 }
 
 pub(crate) struct Mixer {
@@ -105,6 +106,7 @@ impl Mixer {
         while let Some(command) = self.commands.take() {
             self.apply(command);
         }
+        self.report();
         out.fill(0.0);
         let frames = out.len() / 2;
         if self.paused && self.pause <= 0.0 || frames == 0 {
@@ -246,6 +248,7 @@ impl Mixer {
                     bus,
                     index: bus_index,
                     sequence,
+                    located: false,
                 });
             }
             Command::Update {
@@ -256,6 +259,11 @@ impl Mixer {
             } => {
                 if let Some(held) = self.voice_mut(voice) {
                     held.update(gain, pan, cutoff);
+                }
+            }
+            Command::Locate { voice } => {
+                if let Some(held) = self.assigned_mut(voice) {
+                    held.located = true;
                 }
             }
             Command::Stop { voice } => {
@@ -269,14 +277,9 @@ impl Mixer {
                     self.retire(assigned);
                 }
             }
-            Command::Replace { voice, source } => {
+            Command::Replace { voice, input } => {
                 let rate = self.rate;
                 if let Some(held) = self.voice_mut(voice) {
-                    let position = held.position();
-                    let looping = held.looping();
-                    let input = source
-                        .open(looping, position)
-                        .unwrap_or_else(|error| panic!("{error}"));
                     held.replace(input, rate);
                 }
             }
@@ -383,11 +386,29 @@ impl Mixer {
     }
 
     fn voice_mut(&mut self, voice: VoiceId) -> Option<&mut Playing> {
+        self.assigned_mut(voice).map(|held| &mut held.voice)
+    }
+
+    fn assigned_mut(&mut self, voice: VoiceId) -> Option<&mut Assigned> {
         self.voices
             .iter_mut()
             .flatten()
             .find(|held| held.voice.id() == voice)
-            .map(|held| &mut held.voice)
+    }
+
+    fn report(&mut self) {
+        for held in self.voices.iter_mut().flatten() {
+            if !held.located {
+                continue;
+            }
+            let event = Event::Located {
+                voice: held.voice.id(),
+                position: held.voice.position(),
+            };
+            if self.events.send(event).is_ok() {
+                held.located = false;
+            }
+        }
     }
 }
 
@@ -448,7 +469,7 @@ mod tests {
     #[test]
     fn a_replaced_voice_continues_from_the_frame_it_reached() {
         let (mut producer, command_consumer) = ring::channel(8);
-        let (event_producer, _events) = ring::channel(8);
+        let (event_producer, mut events) = ring::channel(8);
         let active = Arc::new(AtomicUsize::new(0));
         let mut mixer = Mixer::new(
             48_000,
@@ -470,14 +491,23 @@ mod tests {
         let mut block = [0.0f32; 512];
         mixer.render(&mut block);
         producer
+            .send(Command::Locate { voice: VoiceId(1) })
+            .expect("the mixer locates a voice");
+        let mut probe = [0.0f32; 2];
+        mixer.render(&mut probe);
+        assert!(
+            matches!(events.take(), Some(Event::Located { voice, position }) if voice == VoiceId(1) && position == 256),
+            "a located voice reports the frame it reached",
+        );
+        producer
             .send(Command::Replace {
                 voice: VoiceId(1),
-                source: crate::source::Source::decoded(reloaded()),
+                input: Input::Decoded(reloaded()),
             })
             .expect("the mixer replaces the source of a voice");
         let mut held = [0.0f32; 2];
         mixer.render(&mut held);
-        let carried = (256.0 + 1_000.0) / 2_000.0 * std::f32::consts::FRAC_PI_4.cos();
+        let carried = (257.0 + 1_000.0) / 2_000.0 * std::f32::consts::FRAC_PI_4.cos();
         assert!(
             (held[0] - carried).abs() < 1e-2,
             "a replaced voice continues at {carried} rather than {}",

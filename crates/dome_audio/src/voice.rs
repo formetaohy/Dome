@@ -71,10 +71,6 @@ impl Voice {
         self.input = input;
     }
 
-    pub(crate) fn looping(&self) -> bool {
-        self.looping
-    }
-
     pub(crate) fn stop(&mut self) {
         self.fading = true;
     }

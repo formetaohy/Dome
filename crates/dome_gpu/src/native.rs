@@ -23,20 +23,6 @@ use std::time::Duration;
 pub(crate) const FRAMES_IN_FLIGHT: usize = 4;
 pub(crate) const FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(crate) fn hang_deadline(
-    frames: impl IntoIterator<Item = (u64, bool)>,
-    index: u64,
-    timeout: Duration,
-) -> Duration {
-    let waits_for_a_first_dispatch = frames
-        .into_iter()
-        .any(|(frame, first_dispatch)| first_dispatch && frame <= index);
-    if waits_for_a_first_dispatch {
-        Duration::MAX
-    } else {
-        timeout
-    }
-}
 pub const STAGING_BYTES: u64 = 1 << 20;
 pub(crate) const TRANSFER_ALIGNMENT: u64 = 4;
 pub(crate) const TIME_SLOTS: usize = 4096;
@@ -342,28 +328,6 @@ impl NativeSurface {
     }
 }
 
-impl NativeGraphicsPipeline {
-    pub(crate) fn is_compiled(&self) -> bool {
-        match self {
-            #[cfg(vulkan_backend)]
-            Self::Vulkan(pipeline) => pipeline.is_compiled(),
-            #[cfg(metal_backend)]
-            Self::Metal(pipeline) => pipeline.is_compiled(),
-        }
-    }
-}
-
-impl NativePipeline {
-    pub(crate) fn is_compiled(&self) -> bool {
-        match self {
-            #[cfg(vulkan_backend)]
-            Self::Vulkan(pipeline) => pipeline.is_compiled(),
-            #[cfg(metal_backend)]
-            Self::Metal(pipeline) => pipeline.is_compiled(),
-        }
-    }
-}
-
 impl NativeDevice {
     pub(crate) fn compile(
         &self,
@@ -630,17 +594,12 @@ impl NativeDevice {
         }
     }
 
-    pub(crate) fn submit(
-        &self,
-        writes: &[Write],
-        commands: &[Command],
-        first_dispatch: bool,
-    ) -> u64 {
+    pub(crate) fn submit(&self, writes: &[Write], commands: &[Command]) -> u64 {
         match self {
             #[cfg(vulkan_backend)]
-            Self::Vulkan(device) => device.submit(writes, commands, first_dispatch),
+            Self::Vulkan(device) => device.submit(writes, commands),
             #[cfg(metal_backend)]
-            Self::Metal(device) => device.submit(writes, commands, first_dispatch),
+            Self::Metal(device) => device.submit(writes, commands),
         }
     }
 

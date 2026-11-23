@@ -25,9 +25,12 @@ pub(crate) enum Command {
         pan: f32,
         cutoff: f32,
     },
+    Locate {
+        voice: VoiceId,
+    },
     Replace {
         voice: VoiceId,
-        source: crate::source::Source,
+        input: Input,
     },
     Stop {
         voice: VoiceId,
@@ -47,4 +50,5 @@ pub(crate) enum Event {
     Finished(VoiceId),
     Stolen { voice: VoiceId, position: u64 },
     Dropped(VoiceId),
+    Located { voice: VoiceId, position: u64 },
 }

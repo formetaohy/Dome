@@ -1,7 +1,7 @@
 use super::{
     DeviceFailure, FRAME_TIMEOUT, FRAMES_IN_FLIGHT, NativeBuffer, NativeFrame,
     NativeGraphicsPipeline, NativeGroup, NativePipeline, NativePresent, NativeTexture,
-    STAGING_BYTES, TIME_SLOTS, TRANSFER_ALIGNMENT, hang_deadline,
+    STAGING_BYTES, TIME_SLOTS, TRANSFER_ALIGNMENT,
 };
 use crate::backend::Backend;
 use crate::buffer::GpuBuffer;
@@ -33,6 +33,8 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 mod memory;
+
+const ACQUIRE_SLOTS: usize = FRAMES_IN_FLIGHT * 2;
 
 struct InstanceOwner {
     entry: Entry,
@@ -581,7 +583,6 @@ impl GroupPool {
 }
 struct Frame {
     index: u64,
-    first_dispatch: bool,
     command: vk::CommandBuffer,
     fence: vk::Fence,
     staging: Arc<BufferResource>,
@@ -608,7 +609,6 @@ impl Frame {
         .unwrap_or_else(|error| panic!("creating a Vulkan completion fence: {error:?}"));
         Self {
             index: 0,
-            first_dispatch: false,
             command,
             fence,
             staging: device.allocate(
@@ -892,7 +892,14 @@ struct DepthResource {
     _block: Block,
     image: vk::Image,
     view: vk::ImageView,
+    content: Mutex<DepthContent>,
     core: Arc<Core>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DepthContent {
+    Unused,
+    Stored,
 }
 
 #[derive(Clone, Copy)]
@@ -941,7 +948,8 @@ pub(crate) struct Surface {
     loader: ash::khr::swapchain::Device,
     raw: vk::SwapchainKHR,
     images: Vec<Texture>,
-    acquire: vk::Fence,
+    acquire: Vec<vk::Semaphore>,
+    acquired: u64,
     present: Vec<vk::Semaphore>,
     width: u32,
     height: u32,
@@ -954,6 +962,7 @@ pub(crate) struct Present {
     loader: ash::khr::swapchain::Device,
     raw: vk::SwapchainKHR,
     image: u32,
+    acquire: vk::Semaphore,
     semaphore: vk::Semaphore,
     outdated: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -2051,6 +2060,7 @@ impl Device {
                 core: self.core.clone(),
                 image,
                 view,
+                content: Mutex::new(DepthContent::Unused),
             }),
         }
     }
@@ -2118,11 +2128,15 @@ impl Device {
         let loader = ash::khr::swapchain::Device::new(&owner.instance, &self.core);
         let (raw, images, present, width, height, format) =
             self.build_swapchain(&loader, surface, width, height);
-        let acquire = unsafe {
-            self.core
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-        }
-        .unwrap_or_else(|error| panic!("creating a Vulkan acquire fence: {error:?}"));
+        let acquire = (0..ACQUIRE_SLOTS)
+            .map(|_| {
+                unsafe {
+                    self.core
+                        .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                }
+                .unwrap_or_else(|error| panic!("creating a Vulkan acquire semaphore: {error:?}"))
+            })
+            .collect();
         Surface {
             device: self.clone(),
             surface,
@@ -2130,6 +2144,7 @@ impl Device {
             raw,
             images,
             acquire,
+            acquired: 0,
             present,
             width,
             height,
@@ -2573,12 +2588,7 @@ impl Device {
         });
     }
 
-    pub(crate) fn submit(
-        &self,
-        writes: &[Write],
-        commands: &[Command],
-        first_dispatch: bool,
-    ) -> u64 {
+    pub(crate) fn submit(&self, writes: &[Write], commands: &[Command]) -> u64 {
         let mut state = self
             .state
             .lock()
@@ -2600,7 +2610,6 @@ impl Device {
         let frame = &mut frames[slot];
         frame.begin(self);
         frame.index = index;
-        frame.first_dispatch = first_dispatch;
         let command = frame.command;
         unsafe {
             self.core
@@ -2723,6 +2732,21 @@ impl Device {
                         let NativeDepth::Vulkan(native) = held.native();
                         Arc::clone(&native.resource)
                     });
+                    if let (Some((_, ops)), Some(native)) = (&depth, &held) {
+                        let mut content = native
+                            .content
+                            .lock()
+                            .expect("the Vulkan depth of a render pass is never poisoned");
+                        assert!(
+                            ops.load == DepthLoad::Clear || *content == DepthContent::Stored,
+                            "a render pass loads a depth texture no storing pass left",
+                        );
+                        *content = if ops.store {
+                            DepthContent::Stored
+                        } else {
+                            DepthContent::Unused
+                        };
+                    }
                     let (render_pass, framebuffer) = self.framing(target_frame, key, held.as_ref());
                     let clears = [
                         vk::ClearValue {
@@ -3112,14 +3136,22 @@ impl Device {
         .unwrap_or_else(|error| panic!("closing a Vulkan compute submission: {error:?}"));
         let buffers = [command];
         let signal = presenting.map(|present| [present.semaphore]);
+        let wait = presenting.map(|present| [present.acquire]);
+        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let mut submit = vk::SubmitInfo::default().command_buffers(&buffers);
         if let Some(signal) = &signal {
             submit = submit.signal_semaphores(signal);
+        }
+        if let Some(wait) = &wait {
+            submit = submit
+                .wait_semaphores(wait)
+                .wait_dst_stage_mask(&wait_stages);
         }
         let submits = [submit];
         let turn = self.gate.take();
         unsafe { self.core.queue_submit(self.queue, &submits, frame.fence) }
             .unwrap_or_else(|error| panic!("submitting Vulkan compute work: {error:?}"));
+        drop(state);
         if let Some(present) = presenting {
             present.present(self.queue);
         }
@@ -3263,14 +3295,6 @@ impl Device {
             .find(|frame| frame.index == index)
             .expect("an unfinished submission owns a fence")
             .fence;
-        let timeout = hang_deadline(
-            state
-                .frames
-                .iter()
-                .map(|frame| (frame.index, frame.first_dispatch)),
-            index,
-            timeout,
-        );
         match self.gate.advance() {
             None => unsafe {
                 self.core.wait_for_fences(
@@ -3450,18 +3474,6 @@ fn limits(
     }
 }
 
-impl Pipeline {
-    pub(crate) fn is_compiled(&self) -> bool {
-        self.resource.compiled.get().is_some()
-    }
-}
-
-impl GraphicsPipeline {
-    pub(crate) fn is_compiled(&self) -> bool {
-        self.resource.compiled.get().is_some()
-    }
-}
-
 impl Drop for GraphicsPipelineResource {
     fn drop(&mut self) {
         unsafe {
@@ -3521,9 +3533,10 @@ impl Surface {
         if self.outdated() {
             return None;
         }
+        let acquire = self.acquire[self.acquired as usize % ACQUIRE_SLOTS];
         let (image, _) = match unsafe {
             self.loader
-                .acquire_next_image(self.raw, u64::MAX, vk::Semaphore::null(), self.acquire)
+                .acquire_next_image(self.raw, u64::MAX, acquire, vk::Fence::null())
         } {
             Ok(image) => image,
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
@@ -3533,14 +3546,7 @@ impl Surface {
             }
             Err(error) => panic!("acquiring a Vulkan swapchain image: {error:?}"),
         };
-        unsafe {
-            self.device
-                .core
-                .wait_for_fences(&[self.acquire], true, FRAME_TIMEOUT.as_nanos() as u64)
-        }
-        .unwrap_or_else(|error| panic!("waiting for a Vulkan acquire fence: {error:?}"));
-        unsafe { self.device.core.reset_fences(&[self.acquire]) }
-            .unwrap_or_else(|error| panic!("recycling a Vulkan acquire fence: {error:?}"));
+        self.acquired = self.acquired.wrapping_add(1);
         let texture = self.images[image as usize].clone();
         Some(NativeFrame {
             texture: NativeTexture::Vulkan(texture),
@@ -3551,6 +3557,7 @@ impl Surface {
                 loader: self.loader.clone(),
                 raw: self.raw,
                 image,
+                acquire,
                 semaphore: self.present[image as usize],
                 outdated: self.outdated.clone(),
             }),
@@ -3601,8 +3608,10 @@ impl Drop for Surface {
         for semaphore in self.present.drain(..) {
             unsafe { self.device.core.destroy_semaphore(semaphore, None) };
         }
+        for semaphore in self.acquire.drain(..) {
+            unsafe { self.device.core.destroy_semaphore(semaphore, None) };
+        }
         unsafe { self.loader.destroy_swapchain(self.raw, None) };
-        unsafe { self.device.core.destroy_fence(self.acquire, None) };
     }
 }
 

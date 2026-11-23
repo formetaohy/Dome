@@ -146,8 +146,20 @@ impl Scene {
 
     pub fn save(&self, path: impl AsRef<Path>) {
         let path = path.as_ref();
-        fs::write(path, self.write())
-            .unwrap_or_else(|error| panic!("the scene {} writes no text: {error}", path.display()));
+        let text = self.write();
+        let mut staging = path.as_os_str().to_owned();
+        staging.push(format!(".{}.tmp", std::process::id()));
+        let staging = PathBuf::from(staging);
+        let written = fs::File::create(&staging)
+            .and_then(|mut file| {
+                std::io::Write::write_all(&mut file, text.as_bytes())?;
+                file.sync_all()
+            })
+            .and_then(|()| fs::rename(&staging, path));
+        written.unwrap_or_else(|error| {
+            let _ = fs::remove_file(&staging);
+            panic!("the scene {} writes no text: {error}", path.display())
+        });
     }
 
     pub fn schema(&self) -> &dyn Schema {

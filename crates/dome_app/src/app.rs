@@ -89,7 +89,7 @@ pub struct App {
 }
 
 enum Presentation {
-    Window(Surface),
+    Window(Box<Surface>),
     Offscreen(Texture),
 }
 
@@ -289,7 +289,7 @@ impl Session {
         let renderer = Renderer::new(&context, format);
         Self {
             context,
-            presentation: Presentation::Window(surface),
+            presentation: Presentation::Window(Box::new(surface)),
             renderer,
             shot: None,
             width,

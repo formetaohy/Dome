@@ -9,7 +9,6 @@ use crate::table::{SamplerTable, TextureTable};
 use crate::texture::Texture;
 use dome_shader::shader::{BindingKind, BindingSpec, ComputeProgram, GraphicsProgram};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Copy)]
 pub enum Resource<'a> {
@@ -94,7 +93,6 @@ pub(crate) struct Slot {
     pub(crate) native: NativePipeline,
     pub(crate) program: Arc<ComputeProgram>,
     pub(crate) device: Device,
-    pub(crate) dispatched: AtomicBool,
 }
 
 pub(crate) struct GraphicsSlot {
@@ -143,14 +141,15 @@ impl PipelineHandle {
                 <= device.limits().max_storage_buffers_per_shader_stage
         );
         let native = device.native().create_pipeline(&program);
-        Self {
+        let handle = Self {
             slot: Arc::new(Slot {
                 device: device.clone(),
                 program,
                 native,
-                dispatched: AtomicBool::new(false),
             }),
-        }
+        };
+        handle.compile();
+        handle
     }
 
     pub fn label(&self) -> &str {
@@ -179,20 +178,12 @@ impl PipelineHandle {
         })
     }
 
-    pub fn is_compiled(&self) -> bool {
-        self.slot.native.is_compiled()
-    }
-
-    pub fn compile(&self) {
+    fn compile(&self) {
         self.slot.device.native().compile(
             &self.slot.native,
             &self.slot.program,
             self.slot.device.artifact_cache(),
         );
-    }
-
-    pub(crate) fn first_dispatch(&self) -> bool {
-        !self.slot.dispatched.swap(true, Ordering::Relaxed)
     }
 }
 
@@ -233,7 +224,7 @@ impl GraphicsPipeline {
         let native = device
             .native()
             .create_graphics_pipeline(&program, format, state, depth);
-        Self {
+        let pipeline = Self {
             slot: Arc::new(GraphicsSlot {
                 device: device.clone(),
                 program: Arc::new(program),
@@ -241,7 +232,9 @@ impl GraphicsPipeline {
                 format,
                 depth,
             }),
-        }
+        };
+        pipeline.compile();
+        pipeline
     }
 
     pub fn format(&self) -> TextureFormat {
@@ -275,11 +268,7 @@ impl GraphicsPipeline {
         })
     }
 
-    pub fn is_compiled(&self) -> bool {
-        self.slot.native.is_compiled()
-    }
-
-    pub fn compile(&self) {
+    fn compile(&self) {
         self.slot.device.native().compile_graphics(
             &self.slot.native,
             &self.slot.program,

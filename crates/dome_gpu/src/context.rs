@@ -343,19 +343,7 @@ impl Queue {
             .writes
             .lock()
             .expect("the compute queue is never poisoned");
-        let first_dispatch = commands.iter().any(|command| match command {
-            Command::Dispatch { pipeline, .. } => pipeline.first_dispatch(),
-            Command::Copy { .. }
-            | Command::Clear { .. }
-            | Command::Render { .. }
-            | Command::CopyTexture { .. }
-            | Command::WriteTexture { .. }
-            | Command::Present { .. } => false,
-        });
-        let index = self
-            .device
-            .native()
-            .submit(&writes, commands, first_dispatch);
+        let index = self.device.native().submit(&writes, commands);
         writes.clear();
         self.device.state.submitted.store(index, Ordering::Release);
         self.retire();

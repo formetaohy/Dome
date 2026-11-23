@@ -96,7 +96,9 @@ impl<A: Clone> Ui<A> {
             if let Some(previous) = self.press {
                 self.wake_animation(previous);
             }
-            self.press = hit::resolve(&self.hits, press_pointer).map(|hit| hit.node);
+            let pressed = hit::resolve(&self.hits, press_pointer).map(|hit| hit.node);
+            self.focus = pressed.filter(|node| self.tree.nodes[*node].interaction.is_focusable());
+            self.press = pressed;
             if let Some(node) = self.press {
                 self.wake_animation(node);
             }
@@ -892,11 +894,7 @@ impl<A: Clone> Ui<A> {
             self.tree.nodes.get(*node).is_some_and(|node| node.visible) && self.inside_modal(*node)
         });
         for key in &keys {
-            if !matches!(key, InputKey::PageUp | InputKey::PageDown) {
-                continue;
-            }
-            let held = focused.is_some_and(|node| accepts(&self.tree.nodes[node].content, *key));
-            if !held {
+            if matches!(key, InputKey::PageUp | InputKey::PageDown) {
                 self.scroll_keys(focused, *key);
             }
         }
@@ -961,9 +959,7 @@ impl<A: Clone> Ui<A> {
                 let value = match key {
                     InputKey::Home => *slider.range.start(),
                     InputKey::End => *slider.range.end(),
-                    InputKey::PageUp => crate::widget::slider::step(slider, 1.0, true),
-                    InputKey::PageDown => crate::widget::slider::step(slider, -1.0, true),
-                    _ => crate::widget::slider::step(slider, direction, false),
+                    _ => crate::widget::slider::step(slider, direction),
                 };
                 if (value - slider.value).abs() <= 1.0e-6 {
                     return true;
@@ -978,9 +974,7 @@ impl<A: Clone> Ui<A> {
                 let (start, end) = match key {
                     InputKey::Home => (*range.range.start(), range.end),
                     InputKey::End => (range.start, *range.range.end()),
-                    InputKey::PageUp => crate::widget::slider::range_step(range, 1.0, true),
-                    InputKey::PageDown => crate::widget::slider::range_step(range, -1.0, true),
-                    _ => crate::widget::slider::range_step(range, direction, false),
+                    _ => crate::widget::slider::range_step(range, direction),
                 };
                 if (start - range.start).abs() <= 1.0e-6 && (end - range.end).abs() <= 1.0e-6 {
                     return true;
@@ -1009,10 +1003,8 @@ impl<A: Clone> Ui<A> {
             }
             Content::DragValue(drag) => {
                 let value = match key {
-                    InputKey::PageUp => crate::widget::slider::drag_step(drag, 1.0, true),
-                    InputKey::PageDown => crate::widget::slider::drag_step(drag, -1.0, true),
                     InputKey::Home | InputKey::End => return true,
-                    _ => crate::widget::slider::drag_step(drag, direction, false),
+                    _ => crate::widget::slider::drag_step(drag, direction),
                 };
                 if let Interaction::DragValue { action, .. } = &self.tree.nodes[node].interaction {
                     let action = action(value);
@@ -1047,7 +1039,7 @@ fn step(key: InputKey) -> Option<f32> {
     match key {
         InputKey::Left | InputKey::Down => Some(-1.0),
         InputKey::Right | InputKey::Up => Some(1.0),
-        InputKey::Home | InputKey::End | InputKey::PageUp | InputKey::PageDown => Some(0.0),
+        InputKey::Home | InputKey::End => Some(0.0),
         _ => None,
     }
 }

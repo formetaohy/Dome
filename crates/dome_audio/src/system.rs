@@ -5,6 +5,7 @@ use crate::device::{Output, OutputFormat, Stream};
 use crate::graph::{self, BusParams, Layout};
 use crate::mixer::{MAX_VOICES, Mixer};
 use crate::ring;
+use crate::source::Source;
 use crate::spatial::{self, Listener};
 use dome_ecs::{Entity, World};
 use dome_math::Transform;
@@ -28,6 +29,12 @@ struct Playing {
     name: String,
     source: usize,
     pitch: f32,
+    exchange: Option<Exchange>,
+}
+
+struct Exchange {
+    source: usize,
+    position: Option<u64>,
 }
 
 impl Playing {
@@ -252,6 +259,7 @@ impl Audio {
                 name: String::from(source.name()),
                 source: source.source().identity(),
                 pitch: source.pitch(),
+                exchange: None,
             },
         );
         self.owners.insert(voice, entity);
@@ -286,21 +294,72 @@ impl Audio {
                     self.update(entity, voice, params);
                 }
             }
-            Some((voice, _, false, true)) => {
-                self.send(Command::Replace {
-                    voice: VoiceId(voice),
-                    source: source.source().clone(),
-                });
-                if let Some(playing) = self.voices.get_mut(&entity) {
-                    playing.source = source.source().identity();
-                }
-                self.update(entity, voice, params);
-            }
+            Some((voice, _, false, true)) => self.exchange(entity, voice, source, params),
             Some(_) => {
                 self.stop(entity);
                 self.start(entity, source, params, 0);
             }
             None => self.start(entity, source, params, 0),
+        }
+    }
+
+    fn exchange(&mut self, entity: Entity, voice: u32, source: &AudioSource, params: Params) {
+        let identity = source.source().identity();
+        let position = match source.source() {
+            Source::Decoded(_) => Some(0),
+            Source::Stream(_) => match self.requested(entity, identity) {
+                Some(Some(position)) => Some(position),
+                Some(None) => None,
+                None => {
+                    self.playing_mut(entity).exchange = Some(Exchange {
+                        source: identity,
+                        position: None,
+                    });
+                    self.send(Command::Locate {
+                        voice: VoiceId(voice),
+                    });
+                    None
+                }
+            },
+        };
+        let Some(position) = position else {
+            return;
+        };
+        let input = source
+            .source()
+            .open(source.looping(), position)
+            .unwrap_or_else(|error| panic!("{error}"));
+        self.send(Command::Replace {
+            voice: VoiceId(voice),
+            input,
+        });
+        let playing = self.playing_mut(entity);
+        playing.source = identity;
+        playing.exchange = None;
+        self.update(entity, voice, params);
+    }
+
+    fn requested(&self, entity: Entity, identity: usize) -> Option<Option<u64>> {
+        let exchange = self.voices.get(&entity)?.exchange.as_ref()?;
+        (exchange.source == identity).then_some(exchange.position)
+    }
+
+    fn playing_mut(&mut self, entity: Entity) -> &mut Playing {
+        self.voices
+            .get_mut(&entity)
+            .expect("a playing voice holds its entity")
+    }
+
+    fn locate(&mut self, voice: VoiceId, position: u64) {
+        let Some(playing) = self
+            .voices
+            .values_mut()
+            .find(|playing| playing.voice == voice.0)
+        else {
+            return;
+        };
+        if let Some(exchange) = playing.exchange.as_mut() {
+            exchange.position = Some(position);
         }
     }
 
@@ -330,42 +389,57 @@ impl Audio {
     }
 
     fn take_finished(&mut self) -> Vec<Entity> {
+        let taken = {
+            let mut events = self
+                .events
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let mut taken = Vec::new();
+            while let Some(event) = events.take() {
+                taken.push(event);
+            }
+            taken
+        };
         let mut finished = Vec::new();
-        let mut events = self
-            .events
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        while let Some(event) = events.take() {
-            let (voice, suspend, position) = match event {
-                Event::Finished(voice) => (voice, false, 0),
-                Event::Stolen { voice, position } => (voice, true, position),
-                Event::Dropped(voice) => (voice, true, 0),
-            };
-            let Some(entity) = self.owners.remove(&voice.0) else {
-                continue;
-            };
-            if self
-                .voices
-                .get(&entity)
-                .is_none_or(|playing| playing.voice != voice.0)
-            {
-                continue;
-            }
-            let playing = self
-                .voices
-                .remove(&entity)
-                .expect("an event names the voice of its entity");
-            if suspend && playing.looping {
-                self.suspended
-                    .insert(entity, (playing.generation, position.max(playing.start)));
-            } else {
-                finished.push(entity);
-            }
+        for event in taken {
+            self.settle(event, &mut finished);
         }
         if !finished.is_empty() {
             self.revision = self.revision.wrapping_add(1);
         }
         finished
+    }
+
+    fn settle(&mut self, event: Event, finished: &mut Vec<Entity>) {
+        let (voice, suspend, position) = match event {
+            Event::Located { voice, position } => {
+                self.locate(voice, position);
+                return;
+            }
+            Event::Finished(voice) => (voice, false, 0),
+            Event::Stolen { voice, position } => (voice, true, position),
+            Event::Dropped(voice) => (voice, true, 0),
+        };
+        let Some(entity) = self.owners.remove(&voice.0) else {
+            return;
+        };
+        if self
+            .voices
+            .get(&entity)
+            .is_none_or(|playing| playing.voice != voice.0)
+        {
+            return;
+        }
+        let playing = self
+            .voices
+            .remove(&entity)
+            .expect("an event names the voice of its entity");
+        if suspend && playing.looping {
+            self.suspended
+                .insert(entity, (playing.generation, position.max(playing.start)));
+        } else {
+            finished.push(entity);
+        }
     }
 }
 
