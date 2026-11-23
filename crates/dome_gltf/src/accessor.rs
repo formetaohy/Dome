@@ -100,7 +100,11 @@ impl<'a> Store<'a> {
                     self.what,
                 );
                 let offset = held.byte_offset.unwrap_or(0);
-                let length = stride * held.count.saturating_sub(1) + element;
+                let length = if held.count == 0 {
+                    0
+                } else {
+                    stride * (held.count - 1) + element
+                };
                 let (start, held_length) = self.view(view);
                 assert!(
                     offset + length <= held_length,

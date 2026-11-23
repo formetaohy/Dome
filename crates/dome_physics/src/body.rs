@@ -270,6 +270,7 @@ pub(crate) struct Body {
     pub carried: Velocity,
     pub inverse_mass: f32,
     pub inverse_inertia: Mat3,
+    local_inverse_inertia: Mat3,
 }
 
 impl Body {
@@ -290,17 +291,16 @@ impl Body {
         );
         let rotation = transform.rotation.normalize();
         let dynamic = rigid.kind == BodyKind::Dynamic;
-        let (center_offset, inverse_inertia) = if dynamic {
+        let (center_offset, local_inverse_inertia) = if dynamic {
             let (center, inverse) = mass_properties(&parts, rigid.mass);
             for part in &mut parts {
                 part.offset -= center;
             }
-            let matrix = rotation.to_mat3();
-            (center, matrix * inverse * matrix.transpose())
+            (center, inverse)
         } else {
             (Vec3::ZERO, Mat3::from_diagonal(Vec3::ZERO))
         };
-        Self {
+        let mut body = Self {
             entity,
             rigid,
             has_body,
@@ -312,8 +312,17 @@ impl Body {
             frame,
             carried,
             inverse_mass: if dynamic { 1.0 / rigid.mass } else { 0.0 },
-            inverse_inertia,
-        }
+            inverse_inertia: Mat3::from_diagonal(Vec3::ZERO),
+            local_inverse_inertia,
+        };
+        body.turn(rotation);
+        body
+    }
+
+    fn turn(&mut self, rotation: Quat) {
+        self.rotation = rotation;
+        let matrix = rotation.to_mat3();
+        self.inverse_inertia = matrix * self.local_inverse_inertia * matrix.transpose();
     }
 
     pub(crate) fn aabb(&self) -> Option<Aabb> {
@@ -401,14 +410,16 @@ impl Body {
 
     pub(crate) fn apply_position_impulse(&mut self, offset: Vec3, impulse: Vec3) {
         self.position += impulse * self.inverse_mass;
-        self.rotation = integrate_rotation(
+        let turned = integrate_rotation(
             self.rotation,
             self.inverse_inertia.mul_vec3(offset.cross(impulse)),
         );
+        self.turn(turned);
     }
 
     pub(crate) fn apply_angular_position_impulse(&mut self, impulse: Vec3) {
-        self.rotation = integrate_rotation(self.rotation, self.inverse_inertia.mul_vec3(impulse));
+        let turned = integrate_rotation(self.rotation, self.inverse_inertia.mul_vec3(impulse));
+        self.turn(turned);
     }
 
     pub(crate) fn integrate_velocities(&mut self, gravity: Vec3, delta: f32) {
@@ -430,7 +441,8 @@ impl Body {
             return;
         }
         self.position += self.rigid.linear_velocity * delta;
-        self.rotation = integrate_rotation(self.rotation, self.rigid.angular_velocity * delta);
+        let turned = integrate_rotation(self.rotation, self.rigid.angular_velocity * delta);
+        self.turn(turned);
     }
 
     pub(crate) fn slow(&self) -> bool {

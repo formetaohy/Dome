@@ -1,6 +1,7 @@
-use super::bounds::{joint_world, skinned_bounds, static_bounds};
+use super::bounds::{joint_transform, skinned_bounds, static_bounds};
 use super::*;
 use crate::instances::Source;
+use crate::palette::Stamp;
 
 pub(super) struct Upload {
     pub(super) offset: u64,
@@ -59,6 +60,7 @@ impl Renderer {
         }
         palettes.begin();
         let mut scratch = Vec::new();
+        let mut joints = Vec::new();
         for index in 0..instances.len() {
             let slot = instances.at_mut(index);
             let entity = slot.entity;
@@ -80,15 +82,28 @@ impl Renderer {
                 skin.joints().len(),
                 skin.inverse_binds().len(),
             );
-            let model = source.transform.matrix();
-            let inverse = model.inverse();
-            scratch.clear();
+            joints.clear();
+            let mut stamp = Stamp::new()
+                .transform(source.transform)
+                .point(geometry.center)
+                .reach(geometry.radius);
             for (joint, bind) in skin.joints().iter().zip(skin.inverse_binds()) {
-                let joint = joint_world(world, *joint);
-                scratch.push(inverse * joint * *bind);
+                let held = joint_transform(world, *joint);
+                stamp = stamp.transform(held).matrix(*bind);
+                joints.push(held);
             }
-            let skinning = palettes.push(entity, &scratch);
-            let bounds = skinned_bounds(geometry, source.transform, &scratch);
+            let (skinning, bounds) = match palettes.try_reuse(entity, joints.len() as u32, stamp) {
+                Some(posed) => (posed.skinning, posed.bounds),
+                None => {
+                    let inverse = source.transform.matrix().inverse();
+                    scratch.clear();
+                    for (held, bind) in joints.iter().zip(skin.inverse_binds()) {
+                        scratch.push(inverse * held.matrix() * *bind);
+                    }
+                    let bounds = skinned_bounds(geometry, source.transform, &scratch);
+                    (palettes.store(entity, &scratch, stamp, bounds), bounds)
+                }
+            };
             let slot = instances.at_mut(index);
             slot.skinning = skinning;
             slot.bounds = Some(bounds);

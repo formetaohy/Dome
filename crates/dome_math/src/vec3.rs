@@ -141,6 +141,14 @@ impl Mul for Vec3 {
     }
 }
 
+impl Div for Vec3 {
+    type Output = Self;
+
+    fn div(self, other: Self) -> Self {
+        Self::new(self.x / other.x, self.y / other.y, self.z / other.z)
+    }
+}
+
 impl Mul<f32> for Vec3 {
     type Output = Self;
 

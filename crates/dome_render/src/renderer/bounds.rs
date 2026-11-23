@@ -1,15 +1,12 @@
 use super::*;
 
-pub(super) fn joint_world(world: &World, entity: Entity) -> Mat4 {
-    world
-        .get::<Transform>(entity)
-        .unwrap_or_else(|| {
-            panic!(
-                "a skin joint names entity {}, which holds no world transform",
-                entity.index(),
-            )
-        })
-        .matrix()
+pub(super) fn joint_transform(world: &World, entity: Entity) -> Transform {
+    *world.get::<Transform>(entity).unwrap_or_else(|| {
+        panic!(
+            "a skin joint names entity {}, which holds no world transform",
+            entity.index(),
+        )
+    })
 }
 
 pub(super) fn static_bounds(geometry: &crate::mesh::Geometry, transform: Transform) -> (Vec3, f32) {

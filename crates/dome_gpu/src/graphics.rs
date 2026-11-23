@@ -170,6 +170,11 @@ impl DepthOps {
 
     pub const KEEP: Self = Self {
         load: DepthLoad::Keep,
+        store: true,
+    };
+
+    pub const KEEP_DISCARDED: Self = Self {
+        load: DepthLoad::Keep,
         store: false,
     };
 }

@@ -193,6 +193,19 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
         self.writer.module.pointee(ty).0
     }
 
+    fn atomic_scope(&mut self, pointer: ValueId, ordering: u32) -> (u32, u32) {
+        let space = self.pointer_space(pointer);
+        let scope = if space == Space::WorkGroup {
+            scope::WORKGROUP
+        } else {
+            scope::DEVICE
+        };
+        (
+            self.writer.integer(Scalar::U32, scope),
+            self.writer.integer(Scalar::U32, ordering),
+        )
+    }
+
     fn memory_operands(&mut self, pointer: ValueId, visible: bool) -> Vec<Operand> {
         if !self.writer.vulkan_memory_model {
             return Vec::new();
@@ -354,14 +367,7 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                     .pointee(self.writer.module.value_ty(*pointer))
                     .1;
                 if matches!(self.writer.module.ty(pointee), Type::Atomic(_)) {
-                    let space = self.pointer_space(*pointer);
-                    let scope = if space == Space::WorkGroup {
-                        scope::WORKGROUP
-                    } else {
-                        scope::DEVICE
-                    };
-                    let scope = self.writer.integer(Scalar::U32, scope);
-                    let ordering = self.writer.integer(Scalar::U32, semantics::RELAXED);
+                    let (scope, ordering) = self.atomic_scope(*pointer, semantics::ACQUIRE);
                     self.push(
                         Instruction::result(ATOMIC_LOAD, ty, id)
                             .operand(self.value(*pointer))
@@ -377,6 +383,22 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                 self.push(load);
             }
             ShaderInstruction::Store { pointer, value } => {
+                let pointee = self
+                    .writer
+                    .module
+                    .pointee(self.writer.module.value_ty(*pointer))
+                    .1;
+                if matches!(self.writer.module.ty(pointee), Type::Atomic(_)) {
+                    let (scope, ordering) = self.atomic_scope(*pointer, semantics::RELEASE);
+                    self.push(
+                        Instruction::plain(ATOMIC_STORE)
+                            .operand(self.value(*pointer))
+                            .operand(scope)
+                            .operand(ordering)
+                            .operand(self.value(*value)),
+                    );
+                    return;
+                }
                 let operands = self.memory_operands(*pointer, false);
                 let store = Instruction::plain(STORE)
                     .operand(self.value(*pointer))
@@ -625,16 +647,9 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                 value,
                 result,
             } => {
-                let space = self.pointer_space(*pointer);
                 let scalar = self.scalar(*value);
                 let opcode = atomic_opcode(*op, scalar);
-                let scope = if space == Space::WorkGroup {
-                    scope::WORKGROUP
-                } else {
-                    scope::DEVICE
-                };
-                let scope = self.writer.integer(Scalar::U32, scope);
-                let relaxed = self.writer.integer(Scalar::U32, semantics::RELAXED);
+                let (scope, relaxed) = self.atomic_scope(*pointer, semantics::RELAXED);
                 let ty = self.writer.value_types[result];
                 let id = self.value(*result);
                 self.push(
@@ -651,15 +666,8 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                 desired,
                 result,
             } => {
-                let space = self.pointer_space(*pointer);
-                let scope = if space == Space::WorkGroup {
-                    scope::WORKGROUP
-                } else {
-                    scope::DEVICE
-                };
-                let scope = self.writer.integer(Scalar::U32, scope);
-                let ordering = self.writer.integer(
-                    Scalar::U32,
+                let (scope, ordering) = self.atomic_scope(
+                    *pointer,
                     semantics::ACQUIRE_RELEASE | semantics::UNIFORM_MEMORY,
                 );
                 let unequal = self

@@ -255,15 +255,19 @@ impl Editor {
         };
         if change.scene {
             let registry = self.scene.schema_arc();
-            if let Ok(scene) = catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry)))
-            {
-                self.scene = scene;
-                self.drag = None;
-                self.property = None;
-                self.history.reset();
-                self.dirty = false;
-                self.clamp();
-                self.refresh_preview();
+            match catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry))) {
+                Ok(scene) => {
+                    self.scene = scene;
+                    self.drag = None;
+                    self.property = None;
+                    self.history.reset();
+                    self.dirty = false;
+                    self.clamp();
+                    self.refresh_preview();
+                }
+                Err(_) => {
+                    self.error = Some(format!("{} holds no readable scene", self.path.display()));
+                }
             }
         } else if change.model || change.asset {
             self.refresh_preview();

@@ -67,17 +67,9 @@ impl Transform {
         );
         let inverse = self.rotation.inverse();
         Self {
-            translation: inverse.rotate_vec3(Vec3::new(
-                (world.translation.x - self.translation.x) / self.scale.x,
-                (world.translation.y - self.translation.y) / self.scale.y,
-                (world.translation.z - self.translation.z) / self.scale.z,
-            )),
+            translation: inverse.rotate_vec3(world.translation - self.translation) / self.scale,
             rotation: inverse * world.rotation,
-            scale: Vec3::new(
-                world.scale.x / self.scale.x,
-                world.scale.y / self.scale.y,
-                world.scale.z / self.scale.z,
-            ),
+            scale: world.scale / self.scale,
         }
     }
 
@@ -87,11 +79,10 @@ impl Transform {
             "a transform of scale {:?} maps no world point to a local point",
             self.scale,
         );
-        self.rotation.inverse().rotate_vec3(Vec3::new(
-            (point.x - self.translation.x) / self.scale.x,
-            (point.y - self.translation.y) / self.scale.y,
-            (point.z - self.translation.z) / self.scale.z,
-        ))
+        self.rotation
+            .inverse()
+            .rotate_vec3(point - self.translation)
+            / self.scale
     }
 }
 

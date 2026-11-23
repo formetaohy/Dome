@@ -469,7 +469,7 @@ impl Renderer {
             .collect::<Vec<_>>();
         submission.render(
             Pass::new(self.temporality.target(), [0.0, 0.0, 0.0, 0.0])
-                .depth(scene_depth, DepthOps::KEEP),
+                .depth(scene_depth, DepthOps::KEEP_DISCARDED),
             &motion,
         );
         Channels { arguments }

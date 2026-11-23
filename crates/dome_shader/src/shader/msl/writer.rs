@@ -766,7 +766,7 @@ impl<'m> Writer<'m> {
                 let text = self.place_value(*pointer);
                 if self.is_atomic_pointer(*pointer) {
                     self.out.line(format!(
-                        "{target} = atomic_load_explicit(&{text}, memory_order_relaxed);"
+                        "{target} = atomic_load_explicit(&{text}, memory_order_acquire);"
                     ));
                 } else {
                     self.out.line(format!("{target} = {text};"));
@@ -777,7 +777,7 @@ impl<'m> Writer<'m> {
                 let value = self.value(*value);
                 if self.is_atomic_pointer(*pointer) {
                     self.out.line(format!(
-                        "atomic_store_explicit(&{text}, {value}, memory_order_relaxed);"
+                        "atomic_store_explicit(&{text}, {value}, memory_order_release);"
                     ));
                 } else {
                     self.out.line(format!("{text} = {value};"));
