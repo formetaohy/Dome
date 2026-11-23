@@ -197,3 +197,67 @@ const _: () = assert!(
     crate::environment::SPECULAR_SAMPLES == 128,
     "the prefilter samples the half vectors its shader counts",
 );
+
+#[cfg(test)]
+mod regression {
+    use dome_shader::shader::{AtomicOp, Instruction, Module, Type, TypeId};
+
+    fn pointee(module: &Module, pointer: dome_shader::shader::ValueId) -> TypeId {
+        match module.ty(module.value_ty(pointer)) {
+            Type::Pointer { base, .. } => *base,
+            other => panic!("a shader address is {other:?}"),
+        }
+    }
+
+    fn atomic(module: &Module) -> (usize, usize) {
+        fn walk(module: &Module, block: &[Instruction], adds: &mut usize, stores: &mut usize) {
+            for instruction in block {
+                match instruction {
+                    Instruction::Store { pointer, .. } => assert!(
+                        !matches!(module.ty(pointee(module, *pointer)), Type::Atomic(_)),
+                        "a plain shader store writes an atomic cell",
+                    ),
+                    Instruction::Atomic { op, .. } => {
+                        assert!(
+                            matches!(op, AtomicOp::Add),
+                            "a shader counter operation is an addition",
+                        );
+                        *adds += 1;
+                    }
+                    Instruction::AtomicStore { .. } => *stores += 1,
+                    Instruction::If { accept, reject, .. } => {
+                        walk(module, accept, adds, stores);
+                        walk(module, reject, adds, stores);
+                    }
+                    Instruction::Switch { cases, default, .. } => {
+                        for (_, body) in cases {
+                            walk(module, body, adds, stores);
+                        }
+                        walk(module, default, adds, stores);
+                    }
+                    Instruction::Loop { body, continuing } => {
+                        walk(module, body, adds, stores);
+                        walk(module, continuing, adds, stores);
+                    }
+                    Instruction::Block(body) => walk(module, body, adds, stores),
+                    _ => {}
+                }
+            }
+        }
+
+        let mut adds = 0;
+        let mut stores = 0;
+        for function in module.functions() {
+            walk(module, &function.body, &mut adds, &mut stores);
+        }
+        (adds, stores)
+    }
+
+    #[test]
+    fn the_culling_and_clustering_kernels_publish_through_atomics() {
+        let culling = super::culling();
+        assert_eq!(atomic(culling.module()), (1, 0));
+        let clustering = super::clustering();
+        assert_eq!(atomic(clustering.module()), (1, 1));
+    }
+}

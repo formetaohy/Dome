@@ -25,7 +25,6 @@ use gpu_allocator::MemoryLocation;
 use memory::{Block, Memory};
 use std::any::Any;
 use std::cmp::Reverse;
-use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -295,27 +294,6 @@ impl Access {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Resource {
-    Buffer(vk::Buffer),
-    Image(vk::Image),
-}
-
-#[derive(Default)]
-struct Accesses {
-    known: HashMap<Resource, Access>,
-}
-
-impl Accesses {
-    fn held(&self, resource: Resource) -> Access {
-        self.known.get(&resource).copied().unwrap_or_default()
-    }
-
-    fn write(&mut self, resource: Resource, access: Access) {
-        self.known.insert(resource, access);
-    }
-}
-
 #[derive(Default)]
 struct Pending {
     src_stage: vk::PipelineStageFlags,
@@ -327,8 +305,12 @@ struct Pending {
 }
 
 impl Pending {
-    fn touch(&mut self, accesses: &mut Accesses, resource: Resource, next: Access) {
-        let held = accesses.held(resource);
+    fn touch(&mut self, held: &Mutex<Access>, next: Access) {
+        let mut access = held.lock().expect("a Vulkan resource is never poisoned");
+        self.record(&mut access, next);
+    }
+
+    fn record(&mut self, held: &mut Access, next: Access) {
         if held.written || next.written {
             self.src_stage |= held.stage;
             self.src_access |= held.access;
@@ -336,27 +318,24 @@ impl Pending {
             self.dst_access |= next.access;
             self.touched = true;
         }
-        accesses.write(resource, next);
+        *held = next;
     }
 
     fn transition(
         &mut self,
-        accesses: &mut Accesses,
         texture: &TextureResource,
         next: vk::ImageLayout,
         next_access: Access,
     ) {
-        let resource = Resource::Image(texture.image);
-        let mut layout = texture
-            .layout
+        let mut state = texture
+            .state
             .lock()
             .expect("a Vulkan texture layout is never poisoned");
+        let TextureState { layout, access } = &mut *state;
         if *layout == next {
-            drop(layout);
-            self.touch(accesses, resource, next_access);
+            self.record(access, next_access);
             return;
         }
-        let held = accesses.held(resource);
         let barrier = vk::ImageMemoryBarrier::default()
             .old_layout(*layout)
             .new_layout(next)
@@ -369,17 +348,16 @@ impl Pending {
                     .base_array_layer(0)
                     .layer_count(1),
             )
-            .src_access_mask(held.access)
+            .src_access_mask(access.access)
             .dst_access_mask(next_access.access);
         self.images.push(barrier);
-        self.src_stage |= held.stage;
-        self.src_access |= held.access;
+        self.src_stage |= access.stage;
+        self.src_access |= access.access;
         self.dst_stage |= next_access.stage;
         self.dst_access |= next_access.access;
         self.touched = true;
         *layout = next;
-        drop(layout);
-        accesses.write(resource, next_access);
+        *access = next_access;
     }
 
     fn flush(&mut self, raw: &ash::Device, command: vk::CommandBuffer) {
@@ -670,7 +648,6 @@ struct QueueState {
     completed: u64,
     frames: Vec<Frame>,
     times: [Option<(u64, f64)>; TIME_SLOTS],
-    accesses: Accesses,
 }
 
 impl Default for QueueState {
@@ -680,7 +657,6 @@ impl Default for QueueState {
             completed: 0,
             frames: Vec::new(),
             times: [None; TIME_SLOTS],
-            accesses: Accesses::default(),
         }
     }
 }
@@ -714,6 +690,7 @@ static LENT: LazyLock<Mutex<Vec<Lent>>> = LazyLock::new(|| Mutex::new(Vec::new()
 pub(crate) struct BufferResource {
     block: Block,
     handle: vk::Buffer,
+    access: Mutex<Access>,
     core: Arc<Core>,
 }
 
@@ -912,6 +889,7 @@ struct DepthResource {
     image: vk::Image,
     view: vk::ImageView,
     content: Mutex<DepthContent>,
+    access: Mutex<Access>,
     core: Arc<Core>,
 }
 
@@ -941,6 +919,21 @@ impl Drop for DepthResource {
     }
 }
 
+impl DepthResource {
+    fn record(&self, pending: &mut Pending, next: Access) {
+        let mut access = self
+            .access
+            .lock()
+            .expect("a Vulkan depth texture is never poisoned");
+        pending.record(&mut access, next);
+    }
+}
+
+struct TextureState {
+    layout: vk::ImageLayout,
+    access: Access,
+}
+
 struct TextureResource {
     block: Option<Block>,
     image: vk::Image,
@@ -952,13 +945,23 @@ struct TextureResource {
     format: TextureFormat,
     usages: TextureUsages,
     present: bool,
-    layout: Mutex<vk::ImageLayout>,
+    state: Mutex<TextureState>,
     core: Arc<Core>,
 }
 
 #[derive(Clone)]
 pub(crate) struct Texture {
     resource: Arc<TextureResource>,
+}
+
+impl TextureResource {
+    fn record(&self, pending: &mut Pending, next: Access) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("a Vulkan texture layout is never poisoned");
+        pending.record(&mut state.access, next);
+    }
 }
 
 pub(crate) struct Surface {
@@ -1687,6 +1690,7 @@ impl Device {
             block,
             core: self.core.clone(),
             handle,
+            access: Mutex::new(Access::default()),
         })
     }
 
@@ -2061,7 +2065,10 @@ impl Device {
                 format,
                 usages,
                 present: false,
-                layout: Mutex::new(vk::ImageLayout::UNDEFINED),
+                state: Mutex::new(TextureState {
+                    layout: vk::ImageLayout::UNDEFINED,
+                    access: Access::default(),
+                }),
             }),
         }
     }
@@ -2083,6 +2090,7 @@ impl Device {
                 image,
                 view,
                 content: Mutex::new(DepthContent::Unused),
+                access: Mutex::new(Access::default()),
             }),
         }
     }
@@ -2324,7 +2332,10 @@ impl Device {
                 format,
                 usages: TextureUsages::RENDER_ATTACHMENT,
                 present: true,
-                layout: Mutex::new(vk::ImageLayout::UNDEFINED),
+                state: Mutex::new(TextureState {
+                    layout: vk::ImageLayout::UNDEFINED,
+                    access: Access::default(),
+                }),
             }),
         }
     }
@@ -2626,9 +2637,7 @@ impl Device {
             .expect("compute submission indices fit in u64");
         let index = state.next;
         self.releases.submitted(index);
-        let QueueState {
-            frames, accesses, ..
-        } = &mut *state;
+        let QueueState { frames, .. } = &mut *state;
         let frame = &mut frames[slot];
         frame.begin(self);
         frame.index = index;
@@ -2645,10 +2654,10 @@ impl Device {
         }
         let mut pending = Pending::default();
         for write in writes {
-            let handle = native_buffer(&write.buffer).handle;
+            let held = native_buffer(&write.buffer);
+            let handle = held.handle;
             pending.touch(
-                accesses,
-                Resource::Buffer(handle),
+                &held.access,
                 Access::write(
                     vk::PipelineStageFlags::TRANSFER,
                     vk::AccessFlags::TRANSFER_WRITE,
@@ -2661,7 +2670,7 @@ impl Device {
                 .dst_offset(write.offset)
                 .size(write.bytes.len() as u64)];
             unsafe { self.core.cmd_copy_buffer(command, staging, handle, &region) };
-            frame.resources.push(native_buffer(&write.buffer).clone());
+            frame.resources.push(held.clone());
         }
         let mut presenting = None;
         for operation in commands {
@@ -2674,16 +2683,14 @@ impl Device {
                     bytes,
                 } => {
                     pending.touch(
-                        accesses,
-                        Resource::Buffer(buffer(source).handle),
+                        &buffer(source).access,
                         Access::read(
                             vk::PipelineStageFlags::TRANSFER,
                             vk::AccessFlags::TRANSFER_READ,
                         ),
                     );
                     pending.touch(
-                        accesses,
-                        Resource::Buffer(buffer(target).handle),
+                        &buffer(target).access,
                         Access::write(
                             vk::PipelineStageFlags::TRANSFER,
                             vk::AccessFlags::TRANSFER_WRITE,
@@ -2711,8 +2718,7 @@ impl Device {
                     bytes,
                 } => {
                     pending.touch(
-                        accesses,
-                        Resource::Buffer(buffer(target).handle),
+                        &buffer(target).access,
                         Access::write(
                             vk::PipelineStageFlags::TRANSFER,
                             vk::AccessFlags::TRANSFER_WRITE,
@@ -2795,7 +2801,6 @@ impl Device {
                             let group = group_resource(&bindings.native);
                             for held in &group.textures {
                                 pending.transition(
-                                    accesses,
                                     held,
                                     vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                                     Access::read(
@@ -2806,8 +2811,7 @@ impl Device {
                             }
                             for held in &group.buffers {
                                 pending.touch(
-                                    accesses,
-                                    Resource::Buffer(held.resource.handle),
+                                    &held.resource.access,
                                     held.access(
                                         vk::PipelineStageFlags::VERTEX_SHADER
                                             | vk::PipelineStageFlags::FRAGMENT_SHADER,
@@ -2817,8 +2821,7 @@ impl Device {
                         }
                         if let RecordedCount::Indirect { arguments, .. } = &draw.count {
                             pending.touch(
-                                accesses,
-                                Resource::Buffer(native_buffer(arguments.native()).handle),
+                                &native_buffer(arguments.native()).access,
                                 Access::read(
                                     vk::PipelineStageFlags::DRAW_INDIRECT,
                                     vk::AccessFlags::INDIRECT_COMMAND_READ,
@@ -2826,18 +2829,16 @@ impl Device {
                             );
                         }
                     }
-                    pending.touch(
-                        accesses,
-                        Resource::Image(texture.image),
+                    texture.record(
+                        &mut pending,
                         Access::write(
                             vk::PipelineStageFlags::ALL_COMMANDS,
                             vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::MEMORY_WRITE,
                         ),
                     );
                     if let Some(held) = &held {
-                        pending.touch(
-                            accesses,
-                            Resource::Image(held.image),
+                        held.record(
+                            &mut pending,
                             Access::write(
                                 vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
                                     | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
@@ -2937,11 +2938,11 @@ impl Device {
                         }
                     }
                     unsafe { self.core.cmd_end_render_pass(command) };
-                    *texture
-                        .layout
+                    texture
+                        .state
                         .lock()
-                        .expect("a Vulkan texture layout is never poisoned") =
-                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+                        .expect("a Vulkan texture layout is never poisoned")
+                        .layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
                     frame.resources.push(texture.clone());
                 }
                 Command::WriteTexture {
@@ -2957,7 +2958,6 @@ impl Device {
                         "a texture copy reads the staging buffer at {offset}, which is no multiple of its {texel} byte texel block",
                     );
                     pending.transition(
-                        accesses,
                         texture,
                         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                         Access::write(
@@ -2996,15 +2996,7 @@ impl Device {
                         )
                     };
                     if texture.usages.contains(TextureUsages::SAMPLED) {
-                        accesses.write(
-                            Resource::Image(texture.image),
-                            Access::write(
-                                vk::PipelineStageFlags::TRANSFER,
-                                vk::AccessFlags::TRANSFER_WRITE,
-                            ),
-                        );
                         pending.transition(
-                            accesses,
                             texture,
                             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                             Access::read(
@@ -3024,7 +3016,6 @@ impl Device {
                     let texture = native_texture(texture.native());
                     let target = buffer(target);
                     pending.transition(
-                        accesses,
                         texture,
                         vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                         Access::read(
@@ -3033,8 +3024,7 @@ impl Device {
                         ),
                     );
                     pending.touch(
-                        accesses,
-                        Resource::Buffer(target.handle),
+                        &target.access,
                         Access::write(
                             vk::PipelineStageFlags::TRANSFER,
                             vk::AccessFlags::TRANSFER_WRITE,
@@ -3082,7 +3072,6 @@ impl Device {
                         "a Vulkan submission presents a swapchain image"
                     );
                     pending.transition(
-                        accesses,
                         texture,
                         vk::ImageLayout::PRESENT_SRC_KHR,
                         Access::read(
@@ -3103,7 +3092,6 @@ impl Device {
                     let group = group_resource(&bindings.native).clone();
                     for texture in &group.textures {
                         pending.transition(
-                            accesses,
                             texture,
                             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                             Access::read(
@@ -3114,8 +3102,7 @@ impl Device {
                     }
                     for held in &group.buffers {
                         pending.touch(
-                            accesses,
-                            Resource::Buffer(held.resource.handle),
+                            &held.resource.access,
                             held.access(vk::PipelineStageFlags::COMPUTE_SHADER),
                         );
                     }

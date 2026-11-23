@@ -36,25 +36,17 @@ impl FunctionLower<'_> {
                             });
                             registers.push(local);
                         }
-                        assert!(
-                            self.scopes
-                                .last_mut()
-                                .expect("registers belong to a block")
-                                .insert(name.clone(), Symbol::Array(registers.into()))
-                                .is_none(),
-                            "the Rust shader local {name} is declared twice in a block"
-                        );
+                        self.scopes
+                            .last_mut()
+                            .expect("registers belong to a block")
+                            .insert(name.clone(), Symbol::Array(registers.into()));
                         continue;
                     }
                     if !mutable && let Some(value) = self.evaluate_u32(value) {
-                        assert!(
-                            self.scopes
-                                .last_mut()
-                                .expect("a local has a block")
-                                .insert(name.clone(), Symbol::Constant(value))
-                                .is_none(),
-                            "the Rust shader local {name} is declared twice in a block"
-                        );
+                        self.scopes
+                            .last_mut()
+                            .expect("a local has a block")
+                            .insert(name.clone(), Symbol::Constant(value));
                         continue;
                     }
                     let value = self.value(value);
@@ -65,14 +57,10 @@ impl FunctionLower<'_> {
                             value: value.value,
                         });
                     } else {
-                        assert!(
-                            self.scopes
-                                .last_mut()
-                                .expect("a local has a block")
-                                .insert(name.clone(), Symbol::Value(value))
-                                .is_none(),
-                            "the Rust shader local {name} is declared twice in a block"
-                        );
+                        self.scopes
+                            .last_mut()
+                            .expect("a local has a block")
+                            .insert(name.clone(), Symbol::Value(value));
                     }
                 }
                 S::Assign {
@@ -265,9 +253,9 @@ impl FunctionLower<'_> {
                         }
                         Intrinsic::AtomicStore => {
                             let pointer = self.reference(&arguments[0], "an atomic store");
-                            let ty = self.compiler.module().loaded_ty(pointer.ty);
+                            let ty = self.atomic_cell(pointer, "an atomic store");
                             let value = self.value_with_hint(&arguments[1], Some(ty));
-                            self.push(ShaderInstruction::Store {
+                            self.push(ShaderInstruction::AtomicStore {
                                 pointer: pointer.value,
                                 value: value.value,
                             });

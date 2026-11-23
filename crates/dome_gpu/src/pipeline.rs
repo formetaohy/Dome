@@ -3,6 +3,7 @@ use crate::capability::{BufferUsages, TextureUsages};
 use crate::context::Device;
 use crate::graphics::PipelineState;
 use crate::group::{GroupKey, ResourceKey};
+use crate::identity::ResourceId;
 use crate::native::{NativeGraphicsPipeline, NativeGroup, NativePipeline};
 use crate::sampler::Sampler;
 use crate::table::{SamplerTable, TextureTable};
@@ -95,6 +96,7 @@ pub(crate) struct Slot {
     pub(crate) native: NativePipeline,
     pub(crate) program: Arc<ComputeProgram>,
     pub(crate) device: Device,
+    identity: ResourceId,
 }
 
 pub(crate) struct GraphicsSlot {
@@ -103,6 +105,7 @@ pub(crate) struct GraphicsSlot {
     pub(crate) device: Device,
     pub(crate) format: TextureFormat,
     pub(crate) depth: bool,
+    identity: ResourceId,
 }
 
 #[derive(Clone)]
@@ -148,6 +151,7 @@ impl PipelineHandle {
                 device: device.clone(),
                 program,
                 native,
+                identity: ResourceId::next(),
             }),
         };
         handle.compile();
@@ -161,7 +165,7 @@ impl PipelineHandle {
     pub fn bind_group(&self, group: u32, entries: &[Binding<'_>]) -> BindGroup {
         let label = self.slot.program.label();
         let specs = group_specs(self.slot.program.bindings(), group, label);
-        let owner = Arc::as_ptr(&self.slot) as usize;
+        let owner = self.slot.identity;
         let key = GroupKey::new(owner, group, entries.iter().map(|entry| entry.key()));
         let device = &self.slot.device;
         let submission = device.recording();
@@ -233,6 +237,7 @@ impl GraphicsPipeline {
                 native,
                 format,
                 depth,
+                identity: ResourceId::next(),
             }),
         };
         pipeline.compile();
@@ -250,7 +255,7 @@ impl GraphicsPipeline {
     pub fn bind_group(&self, group: u32, entries: &[Binding<'_>]) -> BindGroup {
         let label = self.slot.program.label();
         let specs = group_specs(self.slot.program.bindings(), group, label);
-        let owner = Arc::as_ptr(&self.slot) as usize;
+        let owner = self.slot.identity;
         let key = GroupKey::new(owner, group, entries.iter().map(|entry| entry.key()));
         let device = &self.slot.device;
         let submission = device.recording();

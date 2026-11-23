@@ -1,18 +1,16 @@
 use crate::capability::BufferUsages;
 use crate::context::{Device, Queue};
+use crate::identity::ResourceId;
 use crate::native::NativeBuffer;
 use crate::submission::{SubmissionIndex, Write};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT_ALLOCATION: AtomicU64 = AtomicU64::new(1);
 
 struct BufferState {
     native: NativeBuffer,
     device: Device,
     size: u64,
     usage: BufferUsages,
-    allocation: u64,
+    identity: ResourceId,
 }
 
 #[derive(Clone)]
@@ -29,7 +27,7 @@ pub struct BufferBinding<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BufferRange {
-    pub allocation: u64,
+    pub identity: ResourceId,
     pub offset: u64,
     pub size: u64,
 }
@@ -37,7 +35,7 @@ pub struct BufferRange {
 impl BufferBinding<'_> {
     pub fn range(&self) -> BufferRange {
         BufferRange {
-            allocation: self.buffer.allocation(),
+            identity: self.buffer.identity(),
             offset: self.offset,
             size: self.size,
         }
@@ -75,13 +73,13 @@ impl GpuBuffer {
                 device: device.clone(),
                 size,
                 usage,
-                allocation: NEXT_ALLOCATION.fetch_add(1, Ordering::Relaxed),
+                identity: ResourceId::next(),
             }),
         }
     }
 
-    pub fn allocation(&self) -> u64 {
-        self.inner.allocation
+    pub fn identity(&self) -> ResourceId {
+        self.inner.identity
     }
 
     pub fn size(&self) -> u64 {

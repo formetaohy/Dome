@@ -469,6 +469,10 @@ impl Module {
         self.intern(Type::Pointer { space, base })
     }
 
+    pub fn pointer_type(&self, space: Space, base: TypeId) -> Option<TypeId> {
+        self.interned.get(&Type::Pointer { space, base }).copied()
+    }
+
     pub fn cooperative_matrix(
         &mut self,
         scalar: Scalar,

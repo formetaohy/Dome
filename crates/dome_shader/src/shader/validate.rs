@@ -365,12 +365,37 @@ impl<'m> Checker<'m> {
             );
         }
         match instruction {
-            Instruction::Argument { index, .. } => assert!(
-                (*index as usize) < self.function.arguments.len(),
-                "the shader function {} has no argument {index}",
-                self.function.name
-            ),
-            Instruction::Address { address, .. } => self.address(*address),
+            Instruction::Argument { index, result } => {
+                assert!(
+                    (*index as usize) < self.function.arguments.len(),
+                    "the shader function {} has no argument {index}",
+                    self.function.name
+                );
+                assert_eq!(
+                    self.ty(*result),
+                    self.function.arguments[*index as usize].ty,
+                    "the shader argument {index} of {} defines a value of another type",
+                    self.function.name
+                );
+            }
+            Instruction::Address { address, result } => {
+                self.address(*address);
+                let (space, base) = match address {
+                    Address::Global(index) => {
+                        let global = self.module.global(*index);
+                        (global.space, global.ty)
+                    }
+                    Address::Local(index) => {
+                        (Space::Function, self.function.locals[*index as usize].ty)
+                    }
+                };
+                assert_eq!(
+                    self.module.ty(self.ty(*result)),
+                    &Type::Pointer { space, base },
+                    "the shader address of {} defines a value of another type",
+                    self.function.name
+                );
+            }
             Instruction::Access { base, index, .. } => {
                 let (space, element) = self.pointee(*base, "an indexed access");
                 self.index(*index);
@@ -384,6 +409,39 @@ impl<'m> Checker<'m> {
                 assert!(
                     !matches!(self.module.ty(base), Type::Array { .. }),
                     "a shader array is read as a whole instead of element by element"
+                );
+                assert!(
+                    !matches!(self.module.ty(base), Type::Atomic(_)),
+                    "a shader reads an atomic cell through a plain load"
+                );
+            }
+            Instruction::AtomicLoad { pointer, result } => {
+                let (_, base) = self.pointee(*pointer, "an atomic load");
+                let Type::Atomic(scalar) = self.module.ty(base) else {
+                    panic!(
+                        "a shader atomic load reads {} instead of an atomic cell",
+                        element_name(self.module.ty(base))
+                    );
+                };
+                assert_eq!(
+                    self.ty(*result),
+                    self.module.scalar_id(*scalar),
+                    "a shader atomic load yields a different type"
+                );
+            }
+            Instruction::AtomicStore { pointer, value } => {
+                self.writable(*pointer, "an atomic store");
+                let (_, base) = self.pointee(*pointer, "an atomic store");
+                let Type::Atomic(scalar) = self.module.ty(base) else {
+                    panic!(
+                        "a shader atomic store writes {} instead of an atomic cell",
+                        element_name(self.module.ty(base))
+                    );
+                };
+                assert_eq!(
+                    self.ty(*value),
+                    self.module.scalar_id(*scalar),
+                    "a shader atomic store holds a different type"
                 );
             }
             Instruction::Derivative { value, .. } => {
@@ -411,6 +469,10 @@ impl<'m> Checker<'m> {
                 self.writable(*pointer, "a shader store");
                 let pointer_ty = self.ty(*pointer);
                 let (_, base) = self.pointee(*pointer, "a store");
+                assert!(
+                    !matches!(self.module.ty(base), Type::Atomic(_)),
+                    "a shader writes an atomic cell through a plain store"
+                );
                 assert_eq!(
                     self.ty(*value),
                     self.module.loaded_ty(pointer_ty),
@@ -1028,6 +1090,9 @@ impl<'m> Checker<'m> {
                 }
             }
             Instruction::Load { pointer, .. } => Some(self.module.loaded_ty(self.ty(*pointer))),
+            Instruction::AtomicLoad { pointer, .. } => {
+                Some(self.module.loaded_ty(self.ty(*pointer)))
+            }
             Instruction::Sample { result, .. } => Some(self.ty(*result)),
             Instruction::Atomic { pointer, .. } => Some(self.module.loaded_ty(self.ty(*pointer))),
             Instruction::CompareExchange { pointer, .. } => {

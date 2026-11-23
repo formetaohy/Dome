@@ -319,6 +319,14 @@ pub enum Instruction {
         pointer: ValueId,
         value: ValueId,
     },
+    AtomicLoad {
+        pointer: ValueId,
+        result: ValueId,
+    },
+    AtomicStore {
+        pointer: ValueId,
+        value: ValueId,
+    },
     Unary {
         op: UnaryOp,
         value: ValueId,
@@ -472,6 +480,7 @@ impl Instruction {
             | Self::Access { result, .. }
             | Self::AccessIndex { result, .. }
             | Self::Load { result, .. }
+            | Self::AtomicLoad { result, .. }
             | Self::Sample { result, .. }
             | Self::Unary { result, .. }
             | Self::Derivative { result, .. }
@@ -492,6 +501,7 @@ impl Instruction {
             | Self::MatrixInsert { result, .. } => Some(*result),
             Self::Call { result, .. } => *result,
             Self::Store { .. }
+            | Self::AtomicStore { .. }
             | Self::Barrier(_)
             | Self::MatrixStore { .. }
             | Self::If { .. }
@@ -518,7 +528,10 @@ impl Instruction {
             | Self::Block(_) => Vec::new(),
             Self::Access { base, index, .. } => vec![*base, *index],
             Self::AccessIndex { base, .. } | Self::Load { pointer: base, .. } => vec![*base],
-            Self::Store { pointer, value } => vec![*pointer, *value],
+            Self::Store { pointer, value } | Self::AtomicStore { pointer, value } => {
+                vec![*pointer, *value]
+            }
+            Self::AtomicLoad { pointer, .. } => vec![*pointer],
             Self::Unary { value, .. }
             | Self::Derivative { value, .. }
             | Self::Convert { value, .. }

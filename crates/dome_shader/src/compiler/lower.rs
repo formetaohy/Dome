@@ -130,14 +130,10 @@ impl<'a> FunctionLower<'a> {
             address: crate::shader::Address::Local(index),
             result,
         });
-        assert!(
-            self.scopes
-                .last_mut()
-                .expect("a local is declared in a block")
-                .insert(name.to_owned(), Symbol::Local(local))
-                .is_none(),
-            "the Rust shader local {name} is declared twice in a block"
-        );
+        self.scopes
+            .last_mut()
+            .expect("a local is declared in a block")
+            .insert(name.to_owned(), Symbol::Local(local));
         local
     }
 

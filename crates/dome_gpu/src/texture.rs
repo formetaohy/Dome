@@ -1,4 +1,4 @@
-use crate::{Device, GpuBuffer, NativeTexture, Queue, Submission, TextureUsages};
+use crate::{Device, GpuBuffer, NativeTexture, Queue, ResourceId, Submission, TextureUsages};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -33,6 +33,7 @@ struct TextureState {
     mip_levels: u32,
     format: TextureFormat,
     usages: TextureUsages,
+    identity: ResourceId,
 }
 
 #[derive(Clone)]
@@ -77,6 +78,7 @@ impl Texture {
                 mip_levels,
                 format,
                 usages,
+                identity: ResourceId::next(),
             }),
         }
     }
@@ -98,6 +100,7 @@ impl Texture {
                 mip_levels: 1,
                 format,
                 usages,
+                identity: ResourceId::next(),
             }),
         }
     }
@@ -107,8 +110,8 @@ impl Texture {
         MAX_MIP_LEVELS - extent.leading_zeros()
     }
 
-    pub fn identity(&self) -> usize {
-        Arc::as_ptr(&self.state) as usize
+    pub fn identity(&self) -> ResourceId {
+        self.state.identity
     }
 
     pub fn width(&self) -> u32 {

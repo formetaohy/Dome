@@ -1,4 +1,4 @@
-use crate::{Device, NativeSampler};
+use crate::{Device, NativeSampler, ResourceId};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -35,6 +35,7 @@ struct SamplerState {
     native: NativeSampler,
     device: Device,
     desc: SamplerDesc,
+    identity: ResourceId,
 }
 
 #[derive(Clone)]
@@ -54,6 +55,7 @@ impl Sampler {
                 native: device.native().create_sampler(&desc, anisotropy),
                 device: device.clone(),
                 desc,
+                identity: ResourceId::next(),
             }),
         }
     }
@@ -62,8 +64,8 @@ impl Sampler {
         self.state.desc
     }
 
-    pub fn identity(&self) -> usize {
-        Arc::as_ptr(&self.state) as usize
+    pub fn identity(&self) -> ResourceId {
+        self.state.identity
     }
 
     pub(crate) fn device(&self) -> &Device {

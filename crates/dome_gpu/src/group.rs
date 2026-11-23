@@ -1,4 +1,5 @@
 use crate::buffer::BufferRange;
+use crate::identity::ResourceId;
 use crate::pipeline::BindGroup;
 use crate::table::{SamplerTable, TextureTable};
 use std::collections::HashMap;
@@ -10,10 +11,10 @@ const BINDINGS: usize = 16;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ResourceKey {
     Buffer(BufferRange),
-    Texture(usize),
-    Sampler(usize),
-    TextureTable(usize, u64),
-    SamplerTable(usize, u64),
+    Texture(ResourceId),
+    Sampler(ResourceId),
+    TextureTable(ResourceId, u64),
+    SamplerTable(ResourceId, u64),
 }
 
 impl ResourceKey {
@@ -21,11 +22,11 @@ impl ResourceKey {
         Self::Buffer(range)
     }
 
-    pub(crate) fn texture(identity: usize) -> Self {
+    pub(crate) fn texture(identity: ResourceId) -> Self {
         Self::Texture(identity)
     }
 
-    pub(crate) fn sampler(identity: usize) -> Self {
+    pub(crate) fn sampler(identity: ResourceId) -> Self {
         Self::Sampler(identity)
     }
 
@@ -40,7 +41,7 @@ impl ResourceKey {
 
 #[derive(Clone, Copy)]
 pub(crate) struct GroupKey {
-    owner: usize,
+    owner: ResourceId,
     group: u32,
     len: u8,
     bindings: [Option<ResourceKey>; BINDINGS],
@@ -48,7 +49,7 @@ pub(crate) struct GroupKey {
 
 impl GroupKey {
     pub(crate) fn new(
-        owner: usize,
+        owner: ResourceId,
         group: u32,
         bindings: impl Iterator<Item = ResourceKey>,
     ) -> Self {

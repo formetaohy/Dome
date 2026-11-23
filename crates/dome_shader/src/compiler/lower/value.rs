@@ -521,6 +521,20 @@ impl FunctionLower<'_> {
             .unwrap_or_else(|| panic!("{subject} refers to a writable shader place"))
     }
 
+    pub(super) fn atomic_cell(&self, pointer: Typed, subject: &str) -> TypeId {
+        let (_, base) = self.compiler.module().pointee(pointer.ty);
+        let Type::Atomic(scalar) = self.compiler.module().ty(base) else {
+            panic!(
+                "{subject} refers to {} instead of an atomic cell",
+                crate::shader::element_name(self.compiler.module().ty(base)),
+            );
+        };
+        self.compiler
+            .module()
+            .scalar_type(*scalar)
+            .expect("an atomic cell holds a declared scalar")
+    }
+
     fn call(&mut self, name: &str, args: &[ast::Expression]) -> Typed {
         match Intrinsic::of(name) {
             Some(intrinsic) => {
@@ -710,8 +724,8 @@ impl FunctionLower<'_> {
             }
             Intrinsic::AtomicLoad => {
                 let pointer = self.reference(&args[0], "an atomic load");
-                let ty = self.compiler.module().loaded_ty(pointer.ty);
-                self.emit(ty, |result| ShaderInstruction::Load {
+                let ty = self.atomic_cell(pointer, "an atomic load");
+                self.emit(ty, |result| ShaderInstruction::AtomicLoad {
                     pointer: pointer.value,
                     result,
                 })
@@ -830,7 +844,7 @@ impl FunctionLower<'_> {
 
     pub(super) fn atomic(&mut self, intrinsic: Intrinsic, args: &[ast::Expression]) -> Typed {
         let pointer = self.reference(&args[0], "a shader atomic");
-        let ty = self.compiler.module().loaded_ty(pointer.ty);
+        let ty = self.atomic_cell(pointer, "a shader atomic");
         assert_eq!(
             self.compiler.module().ty(ty).scalar(),
             Some(Scalar::U32),

@@ -123,7 +123,7 @@ impl Submission {
                 .is_some_and(|end| end <= target.size())
         );
         assert!(
-            source.allocation() != target.allocation()
+            source.identity() != target.identity()
                 || source_offset + bytes <= target_offset
                 || target_offset + bytes <= source_offset,
             "a copy cannot overlap itself"

@@ -4,7 +4,7 @@ mod brdf;
 mod panorama;
 mod sample;
 
-use dome_gpu::{Sampler, Texture, TextureFormat};
+use dome_gpu::{ResourceId, Sampler, Texture, TextureFormat};
 use dome_math::Vec3;
 
 pub use atmosphere::{Atmosphere, MODEL_VERSION, PANORAMA_HEIGHT, PANORAMA_WIDTH};
@@ -115,7 +115,7 @@ impl Environment {
         self
     }
 
-    pub fn identity(&self) -> (usize, usize, usize) {
+    pub fn identity(&self) -> (ResourceId, ResourceId, ResourceId) {
         (
             self.radiance.identity(),
             self.panorama.identity(),

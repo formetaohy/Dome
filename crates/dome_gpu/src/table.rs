@@ -1,5 +1,6 @@
 use crate::capability::TextureUsages;
 use crate::context::Device;
+use crate::identity::ResourceId;
 use crate::native::{NativeSamplerTable, NativeTextureTable};
 use crate::sampler::{Sampler, SamplerDesc};
 use crate::texture::Texture;
@@ -9,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 struct TextureTableState {
     native: NativeTextureTable,
     generation: AtomicU64,
+    identity: ResourceId,
 }
 
 pub struct TextureTable {
@@ -60,6 +62,7 @@ impl TextureTable {
             state: Arc::new(TextureTableState {
                 native,
                 generation: AtomicU64::new(1),
+                identity: ResourceId::next(),
             }),
         }
     }
@@ -151,8 +154,8 @@ impl TextureTable {
         &self.state.native
     }
 
-    pub(crate) fn identity(&self) -> usize {
-        Arc::as_ptr(&self.state) as usize
+    pub(crate) fn identity(&self) -> ResourceId {
+        self.state.identity
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -191,6 +194,7 @@ impl TextureTable {
 struct SamplerTableState {
     native: NativeSamplerTable,
     generation: AtomicU64,
+    identity: ResourceId,
 }
 
 pub struct SamplerTable {
@@ -238,6 +242,7 @@ impl SamplerTable {
             state: Arc::new(SamplerTableState {
                 native,
                 generation: AtomicU64::new(1),
+                identity: ResourceId::next(),
             }),
         }
     }
@@ -332,8 +337,8 @@ impl SamplerTable {
         &self.state.native
     }
 
-    pub(crate) fn identity(&self) -> usize {
-        Arc::as_ptr(&self.state) as usize
+    pub(crate) fn identity(&self) -> ResourceId {
+        self.state.identity
     }
 
     pub(crate) fn generation(&self) -> u64 {

@@ -764,24 +764,26 @@ impl<'m> Writer<'m> {
                 }
                 let target = self.target(*result);
                 let text = self.place_value(*pointer);
-                if self.is_atomic_pointer(*pointer) {
-                    self.out.line(format!(
-                        "{target} = atomic_load_explicit(&{text}, memory_order_acquire);"
-                    ));
-                } else {
-                    self.out.line(format!("{target} = {text};"));
-                }
+                self.out.line(format!("{target} = {text};"));
             }
             Instruction::Store { pointer, value } => {
                 let text = self.place_value(*pointer);
                 let value = self.value(*value);
-                if self.is_atomic_pointer(*pointer) {
-                    self.out.line(format!(
-                        "atomic_store_explicit(&{text}, {value}, memory_order_release);"
-                    ));
-                } else {
-                    self.out.line(format!("{text} = {value};"));
-                }
+                self.out.line(format!("{text} = {value};"));
+            }
+            Instruction::AtomicLoad { pointer, result } => {
+                let target = self.target(*result);
+                let text = self.place_value(*pointer);
+                self.out.line(format!(
+                    "{target} = atomic_load_explicit(&{text}, memory_order_acquire);"
+                ));
+            }
+            Instruction::AtomicStore { pointer, value } => {
+                let text = self.place_value(*pointer);
+                let value = self.value(*value);
+                self.out.line(format!(
+                    "atomic_store_explicit(&{text}, {value}, memory_order_release);"
+                ));
             }
             Instruction::Unary { op, value, result } => {
                 let target = self.target(*result);
@@ -1111,13 +1113,6 @@ impl<'m> Writer<'m> {
 
     fn target(&self, value: ValueId) -> String {
         format!("d_v{}", value.index())
-    }
-
-    fn is_atomic_pointer(&self, value: ValueId) -> bool {
-        match self.module.ty(self.module.value_ty(value)) {
-            Type::Pointer { base, .. } => matches!(self.module.ty(*base), Type::Atomic(_)),
-            _ => false,
-        }
     }
 
     fn value(&self, value: ValueId) -> String {

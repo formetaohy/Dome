@@ -350,12 +350,29 @@ impl<'m> Writer<'m> {
                 Space::Function => panic!("a module global cannot live in function memory"),
             };
             let _ = wrapper;
-            let pointer = self.id();
-            self.declare(
-                Instruction::defined(TYPE_POINTER, pointer)
-                    .word(storage_class(global.space))
-                    .operand(pointee),
-            );
+            let pointer = match wrapper {
+                true => {
+                    let pointer = self.id();
+                    self.declare(
+                        Instruction::defined(TYPE_POINTER, pointer)
+                            .word(storage_class(global.space))
+                            .operand(pointee),
+                    );
+                    pointer
+                }
+                false => match self.module.pointer_type(global.space, global.ty) {
+                    Some(declared) => self.ty(declared),
+                    None => {
+                        let pointer = self.id();
+                        self.declare(
+                            Instruction::defined(TYPE_POINTER, pointer)
+                                .word(storage_class(global.space))
+                                .operand(pointee),
+                        );
+                        pointer
+                    }
+                },
+            };
             let id = self.id();
             self.declare(
                 Instruction::result(VARIABLE, pointer, id).word(storage_class(global.space)),
@@ -526,13 +543,16 @@ impl<'m> Writer<'m> {
             let function = &module.functions()[index as usize];
             let mut locals = Vec::new();
             for local in &function.locals {
-                let base = self.ty(local.ty);
-                let pointer = self.id();
-                self.declare(
-                    Instruction::defined(TYPE_POINTER, pointer)
-                        .word(storage::FUNCTION)
-                        .operand(base),
-                );
+                let declared = self
+                    .module
+                    .pointer_type(Space::Function, local.ty)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "the shader local {} of {} has no declared pointer type",
+                            local.name, function.name
+                        )
+                    });
+                let pointer = self.ty(declared);
                 locals.push((pointer, self.id()));
             }
             self.locals[index as usize] = locals;
@@ -541,23 +561,44 @@ impl<'m> Writer<'m> {
     }
 
     fn collect_value(&mut self, function: u32, instruction: &ShaderInstruction) -> u32 {
+        let result = instruction
+            .result()
+            .expect("a collected instruction holds a value");
+        let declared = self.ty(self.module.value_ty(result));
         match instruction {
             ShaderInstruction::Argument { index, .. } => {
-                let ty = self.module.functions()[function as usize].arguments[*index as usize].ty;
-                self.ty(ty)
+                let expected = self
+                    .ty(self.module.functions()[function as usize].arguments[*index as usize].ty);
+                assert_eq!(
+                    declared, expected,
+                    "the shader argument {index} carries another type than its value records"
+                );
+                declared
             }
             ShaderInstruction::Address {
                 address: crate::shader::Address::Local(index),
                 ..
-            } => self.locals[function as usize][*index as usize].0,
+            } => {
+                let expected = self.locals[function as usize][*index as usize].0;
+                assert_eq!(
+                    declared, expected,
+                    "the shader local {index} carries another type than its value records"
+                );
+                expected
+            }
             ShaderInstruction::Address {
                 address: crate::shader::Address::Global(index),
                 ..
-            } => self.globals[*index as usize].pointer,
-            _ => {
-                let ty = self.module.value_ty(instruction.result().expect("a value"));
-                self.ty(ty)
+            } => {
+                let held = &self.globals[*index as usize];
+                let expected = held.pointer;
+                assert!(
+                    held.wrapped || declared == expected,
+                    "the shader global {index} carries another type than its value records"
+                );
+                expected
             }
+            _ => declared,
         }
     }
 

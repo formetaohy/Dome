@@ -8,6 +8,7 @@ mod gate;
 mod graphics;
 mod group;
 mod host;
+mod identity;
 mod library;
 mod native;
 mod pipeline;
@@ -35,6 +36,7 @@ pub use graphics::{
 #[cfg(vulkan_backend)]
 pub use host::VulkanHost;
 pub use host::{HostAdvance, HostDevice, HostIdentity};
+pub use identity::ResourceId;
 pub use library::WARM_PROGRAMS;
 pub use native::STAGING_BYTES;
 pub(crate) use native::{NativeSampler, NativeTexture};

@@ -1,8 +1,8 @@
 use crate::environment::{BRDF_SIZE, Environment};
 use crate::program;
 use dome_gpu::{
-    AddressMode, BindGroup, Binding, Device, Filter, GraphicsPipeline, Queue, Sampler, SamplerDesc,
-    SamplerTable, Texture, TextureFormat, TextureTable, TextureUsages,
+    AddressMode, BindGroup, Binding, Device, Filter, GraphicsPipeline, Queue, ResourceId, Sampler,
+    SamplerDesc, SamplerTable, Texture, TextureFormat, TextureTable, TextureUsages,
 };
 use half::f16;
 
@@ -13,7 +13,7 @@ pub(crate) struct Shading {
     sampler: Sampler,
     brdf: Texture,
     brdf_sampler: Sampler,
-    identity: Option<(usize, usize, usize)>,
+    identity: Option<(ResourceId, ResourceId, ResourceId)>,
 }
 
 impl Shading {
@@ -98,7 +98,7 @@ impl Shading {
         self.identity = Some(identity);
     }
 
-    pub(crate) fn identity(&self) -> Option<(usize, usize, usize)> {
+    pub(crate) fn identity(&self) -> Option<(ResourceId, ResourceId, ResourceId)> {
         self.identity
     }
 

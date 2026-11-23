@@ -2,7 +2,8 @@ use crate::abi::{PROBE, ProbeRecord};
 use crate::environment::Environment;
 use crate::growing::Growing;
 use dome_gpu::{
-    BufferBinding, BufferUsages, Device, Queue, Sampler, SamplerTable, Texture, TextureTable,
+    BufferBinding, BufferUsages, Device, Queue, ResourceId, Sampler, SamplerTable, Texture,
+    TextureTable,
 };
 use dome_math::{Mat4, Transform, Vec3};
 use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
@@ -15,7 +16,7 @@ pub(crate) struct Probes {
     textures: TextureTable,
     samplers: SamplerTable,
     records: Growing,
-    identities: Vec<(usize, usize)>,
+    identities: Vec<(ResourceId, ResourceId)>,
     fallback_texture: Texture,
     fallback_sampler: Sampler,
 }

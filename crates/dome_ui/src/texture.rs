@@ -1,6 +1,6 @@
 use dome_gpu::{
-    AddressMode, Device, Filter, Queue, Sampler, SamplerDesc, SamplerTable, Texture, TextureFormat,
-    TextureTable, TextureUsages,
+    AddressMode, Device, Filter, Queue, ResourceId, Sampler, SamplerDesc, SamplerTable, Texture,
+    TextureFormat, TextureTable, TextureUsages,
 };
 use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use dome_text::Text;
@@ -29,7 +29,7 @@ pub(crate) const NEAREST: SamplerDesc = SamplerDesc {
 struct Named {
     index: u32,
     sampler: u32,
-    identity: usize,
+    identity: ResourceId,
 }
 
 pub(crate) struct Textures {
@@ -42,7 +42,7 @@ pub(crate) struct Textures {
     atlas_revision: Option<u64>,
     atlas_index: u32,
     scene_index: u32,
-    scene_identity: usize,
+    scene_identity: ResourceId,
     named: HashMap<String, Named>,
     generation: u64,
 }

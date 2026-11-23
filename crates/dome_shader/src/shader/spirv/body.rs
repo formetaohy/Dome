@@ -364,21 +364,6 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
             ShaderInstruction::Load { pointer, result } => {
                 let ty = self.writer.value_types[result];
                 let id = self.value(*result);
-                let pointee = self
-                    .writer
-                    .module
-                    .pointee(self.writer.module.value_ty(*pointer))
-                    .1;
-                if matches!(self.writer.module.ty(pointee), Type::Atomic(_)) {
-                    let (scope, ordering) = self.atomic_ordering(*pointer, semantics::ACQUIRE);
-                    self.push(
-                        Instruction::result(ATOMIC_LOAD, ty, id)
-                            .operand(self.value(*pointer))
-                            .operand(scope)
-                            .operand(ordering),
-                    );
-                    return;
-                }
                 let operands = self.memory_operands(*pointer, true);
                 let load = Instruction::result(LOAD, ty, id)
                     .operand(self.value(*pointer))
@@ -386,28 +371,33 @@ impl<'w, 'm> FunctionWriter<'w, 'm> {
                 self.push(load);
             }
             ShaderInstruction::Store { pointer, value } => {
-                let pointee = self
-                    .writer
-                    .module
-                    .pointee(self.writer.module.value_ty(*pointer))
-                    .1;
-                if matches!(self.writer.module.ty(pointee), Type::Atomic(_)) {
-                    let (scope, ordering) = self.atomic_ordering(*pointer, semantics::RELEASE);
-                    self.push(
-                        Instruction::plain(ATOMIC_STORE)
-                            .operand(self.value(*pointer))
-                            .operand(scope)
-                            .operand(ordering)
-                            .operand(self.value(*value)),
-                    );
-                    return;
-                }
                 let operands = self.memory_operands(*pointer, false);
                 let store = Instruction::plain(STORE)
                     .operand(self.value(*pointer))
                     .operand(self.value(*value))
                     .operands(operands);
                 self.push(store);
+            }
+            ShaderInstruction::AtomicLoad { pointer, result } => {
+                let (scope, ordering) = self.atomic_ordering(*pointer, semantics::ACQUIRE);
+                let ty = self.writer.value_types[result];
+                let id = self.value(*result);
+                self.push(
+                    Instruction::result(ATOMIC_LOAD, ty, id)
+                        .operand(self.value(*pointer))
+                        .operand(scope)
+                        .operand(ordering),
+                );
+            }
+            ShaderInstruction::AtomicStore { pointer, value } => {
+                let (scope, ordering) = self.atomic_ordering(*pointer, semantics::RELEASE);
+                self.push(
+                    Instruction::plain(ATOMIC_STORE)
+                        .operand(self.value(*pointer))
+                        .operand(scope)
+                        .operand(ordering)
+                        .operand(self.value(*value)),
+                );
             }
             ShaderInstruction::Unary { op, value, result } => {
                 let scalar = self.scalar(*value);

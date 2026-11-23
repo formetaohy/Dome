@@ -53,8 +53,9 @@ use crate::view::View;
 use dome_ecs::{Entity, World};
 use dome_gpu::{
     AddressMode, BindGroup, Binding, BufferUsages, DepthOps, DepthTexture, Device, Draw, Filter,
-    GpuBuffer, GpuContext, GraphicsPipeline, Pass, PipelineHandle, PipelineState, Queue, Sampler,
-    SamplerDesc, Submission, SurfaceFrame, Texture, TextureFormat, TextureUsages, Viewport,
+    GpuBuffer, GpuContext, GraphicsPipeline, Pass, PipelineHandle, PipelineState, Queue,
+    ResourceId, Sampler, SamplerDesc, Submission, SurfaceFrame, Texture, TextureFormat,
+    TextureUsages, Viewport,
 };
 use dome_math::{Mat4, Transform, Vec2, Vec3};
 use dome_shader::Fvec4;
@@ -134,7 +135,7 @@ pub struct Renderer {
     bakes: HashMap<usize, BakeJob>,
     next_bake: usize,
     captures: Captures,
-    ambient: Option<(usize, usize, usize)>,
+    ambient: Option<(ResourceId, ResourceId, ResourceId)>,
     cascades: GpuBuffer,
     instance_buffer: Growing,
     instances: Instances,
@@ -153,7 +154,7 @@ pub struct Renderer {
     picker: Picker,
     pick_frame: Option<PickFrame>,
     point_shadows: PointShadows,
-    point_shadow_identity: usize,
+    point_shadow_identity: ResourceId,
     transparency: Transparency,
     temporality: Temporality,
     spheres: Vec<(Entity, (Vec3, f32))>,
