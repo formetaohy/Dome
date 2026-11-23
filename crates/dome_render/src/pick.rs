@@ -4,7 +4,7 @@ use crate::mesh::{Mesh, MeshLibrary};
 use crate::program;
 use crate::view::View;
 use dome_ecs::Entity;
-use dome_gpu_device::{
+use dome_gpu::{
     Binding, BufferBinding, BufferUsages, ClipSpace, DepthOps, DepthTexture, Device, Draw,
     GpuBuffer, GraphicsPipeline, Pass, PipelineState, Queue, Submission, Texture, TextureFormat,
     TextureUsages,

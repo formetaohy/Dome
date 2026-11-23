@@ -1,6 +1,6 @@
 use super::*;
 
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod prefilter {
     #[vertex]
     fn vertex(vertex: u32, position: Out<Position>, surface: Out<Fvec2>) {
@@ -114,7 +114,7 @@ mod prefilter {
         min(max(value, low), high)
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod integration {
     #[vertex]
     fn vertex(vertex: u32, position: Out<Position>, surface: Out<Fvec2>) {
@@ -190,7 +190,7 @@ mod integration {
         target = fvec4(0.0, 0.0, 0.0, 1.0);
     }
 }
-#[dome_gpu::kernel(workgroup_size = 64)]
+#[dome_shader::kernel(workgroup_size = 64)]
 mod irradiance_reduction {
     #[kernel]
     fn irradiance_reduction(lid: u32, partials: Read<f32>, total: ReadWrite<f32>) {
@@ -207,7 +207,7 @@ mod irradiance_reduction {
 pub(crate) fn prefiltering() -> GraphicsProgram {
     prefilter()
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod atmosphere_transmittance {
     #[vertex]
     fn vertex(vertex: u32, position: Out<Position>, surface: Out<Fvec2>) {
@@ -298,7 +298,7 @@ mod atmosphere_transmittance {
         left.x * right.x + left.y * right.y + left.z * right.z
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod atmosphere_scattering {
     #[vertex]
     fn vertex(vertex: u32, position: Out<Position>, surface: Out<Fvec2>) {
@@ -495,7 +495,7 @@ mod atmosphere_scattering {
         left.x * right.x + left.y * right.y + left.z * right.z
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod atmosphere_sky {
     #[vertex]
     fn vertex(vertex: u32, position: Out<Position>, surface: Out<Fvec2>) {

@@ -17,7 +17,7 @@ use crate::text::{Text, TextLayout, TextStyle};
 use crate::texture::Textures;
 use crate::theme::Theme;
 use crate::tree::Tree;
-use dome_gpu_device::{Device, Queue, Submission, Texture, TextureFormat};
+use dome_gpu::{Device, Queue, Submission, Texture, TextureFormat};
 
 pub(crate) const CLICK_SLOP: f32 = 3.0;
 pub(crate) const TOOLTIP_DELAY: f32 = 0.55;
@@ -129,7 +129,7 @@ impl<A: Clone> Ui<A> {
 
     pub fn set_textures<'a>(
         &mut self,
-        textures: impl IntoIterator<Item = (&'a str, &'a Texture, dome_gpu_device::SamplerDesc)>,
+        textures: impl IntoIterator<Item = (&'a str, &'a Texture, dome_gpu::SamplerDesc)>,
     ) {
         if self.textures.sync(textures) {
             self.invalidate();

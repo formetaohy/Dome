@@ -1,6 +1,6 @@
 use super::*;
 
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod transparency {
     #[binding]
     fn settings(settings: Read<TransparentSetupRecord>) {}
@@ -132,7 +132,7 @@ mod transparency {
 pub(crate) fn transparency_resolve() -> GraphicsProgram {
     transparency()
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod bloom_extraction {
     #[binding]
     fn settings(settings: Read<BloomRecord>) {}
@@ -212,7 +212,7 @@ mod bloom_extraction {
         min(max(value, low), high)
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod bloom_downsampling {
     #[binding]
     fn settings(settings: Read<BloomRecord>) {}
@@ -260,7 +260,7 @@ mod bloom_downsampling {
         sample(source, filter, fvec2(at.x + step.x * x, at.y + step.y * y))
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod bloom_upsampling {
     #[binding]
     fn settings(settings: Read<BloomUpRecord>) {}
@@ -308,7 +308,7 @@ mod bloom_upsampling {
         sample(source, filter, fvec2(at.x + step.x * x, at.y + step.y * y))
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod tone_mapping {
     #[binding]
     fn settings(settings: Read<TonemapRecord>) {}
@@ -400,7 +400,7 @@ mod tone_mapping {
         )
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod sky {
     #[binding]
     fn view(view: Read<SkyRecord>) {}
@@ -482,7 +482,7 @@ pub(crate) fn bloom_up() -> GraphicsProgram {
 pub(crate) fn tonemap() -> GraphicsProgram {
     tone_mapping()
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod temporal {
     #[binding]
     fn frame(frame: Read<TemporalRecord>) {}

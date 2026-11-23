@@ -1,7 +1,7 @@
 use crate::abi::{SHADOW_ATLAS, SHADOW_ATLAS_COLUMNS, SHADOW_CASCADES, SHADOW_SIDE};
 use crate::camera::Camera;
 use crate::light::DirectionalLight;
-use dome_gpu_device::ClipSpace;
+use dome_gpu::ClipSpace;
 use dome_math::{Mat4, Transform, Vec2, Vec3};
 
 const SPLIT_LAMBDA: f32 = 0.75;

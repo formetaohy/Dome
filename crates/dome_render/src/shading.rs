@@ -1,6 +1,6 @@
 use crate::environment::{BRDF_SIZE, Environment};
 use crate::program;
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, BindGroup, Binding, Device, Filter, GraphicsPipeline, Queue, Sampler, SamplerDesc,
     SamplerTable, Texture, TextureFormat, TextureTable, TextureUsages,
 };

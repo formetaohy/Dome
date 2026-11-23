@@ -5,7 +5,7 @@ use crate::abi::{
 use crate::environment::{LEVELS, SPECULAR_WIDTH};
 use crate::frame::vertical;
 use crate::program;
-use dome_gpu_device::{
+use dome_gpu::{
     Binding, BufferUsages, Device, Draw, GpuBuffer, GpuContext, GraphicsPipeline, Pass,
     PipelineHandle, PipelineState, Queue, Sampler, Submission, SubmissionIndex, Texture,
     TextureFormat, TextureUsages,
@@ -239,8 +239,7 @@ impl Baker {
     }
 
     pub(crate) fn wait(&self, job: &BakeJob) -> Baked {
-        self.queue
-            .wait(job.submission, dome_gpu_device::READBACK_TIMEOUT);
+        self.queue.wait(job.submission, dome_gpu::READBACK_TIMEOUT);
         self.collect(job)
     }
 

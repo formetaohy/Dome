@@ -1,5 +1,5 @@
 use dome_ecs::Entity;
-use dome_gpu_device::{BufferBinding, BufferUsages, Device, GpuBuffer, Queue, Submission};
+use dome_gpu::{BufferBinding, BufferUsages, Device, GpuBuffer, Queue, Submission};
 use dome_math::Mat4;
 use std::collections::{HashMap, HashSet};
 

@@ -4,10 +4,11 @@ use crate::document::Document;
 use crate::image::Image;
 use crate::material::{self, Material};
 use crate::node::{self, Node};
+use crate::sampler::Sampler;
 use crate::uri;
+use crate::vertex::{SkinVertex, Vertex};
 use dome_animation::{Interpolation, Property};
 use dome_math::Mat4;
-use dome_render::{SkinVertexRecord, Vertex};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -53,7 +54,7 @@ pub struct Mesh {
 
 pub struct Primitive {
     pub vertices: Vec<Vertex>,
-    pub skin: Option<Vec<SkinVertexRecord>>,
+    pub skin: Option<Vec<SkinVertex>>,
     pub material: Option<usize>,
 }
 
@@ -155,7 +156,7 @@ fn images(
     store: &Store<'_>,
     base: &Path,
     what: &str,
-    samplers: &[dome_render::SamplerDesc],
+    samplers: &[Sampler],
 ) -> Vec<Image> {
     document
         .images
@@ -384,12 +385,7 @@ fn validate_skins(nodes: &[Node], meshes: &[Mesh], skins: &[Skin], what: &str) {
                 primitive.vertices.len(),
             );
             for vertex in held {
-                for joint in [
-                    vertex.joints.x,
-                    vertex.joints.y,
-                    vertex.joints.z,
-                    vertex.joints.w,
-                ] {
+                for joint in vertex.joints {
                     assert!(
                         (joint as usize) < skins[skin].joints.len(),
                         "primitive {at} of the mesh {mesh} on node {index} of {what} names the joint {joint} beyond {}",

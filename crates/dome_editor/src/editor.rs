@@ -1,3 +1,4 @@
+use dome_asset::Import;
 use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -5,9 +6,11 @@ use std::process::{Child, Command as Process};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dome_gpu_device::{GpuContext, GpuRequest, Submission, WindowHandle};
+use dome_asset::Watch;
+use dome_gpu::{GpuContext, GpuRequest, Submission, WindowHandle};
 use dome_math::{Quat, Rect, Transform, Vec2, Vec3};
-use dome_scene::{Delta, Node, Registry, Scene, Shape, Target, Value, Watch};
+use dome_scene::{Delta, Node, Scene, Shape, Target, Value};
+use dome_schema::Registry;
 use dome_ui::InputKey as Key;
 use dome_window::{
     Event, Flow, Handler, KeyCode, ModifiersState, MouseButton, Window, WindowConfig,
@@ -64,6 +67,7 @@ struct PropertyState {
 
 pub struct Editor {
     scene: Scene,
+    registry: Arc<Registry>,
     path: PathBuf,
     selected: Option<Target>,
     dirty: bool,
@@ -90,7 +94,7 @@ pub struct Editor {
     modifiers: ModifiersState,
     origin: Instant,
     hover: Option<Grip>,
-    viewport_texture: Option<dome_gpu_device::Texture>,
+    viewport_texture: Option<dome_gpu::Texture>,
 }
 
 impl Editor {
@@ -99,7 +103,7 @@ impl Editor {
         let registry = config.registry;
         let exists = path.exists();
         let scene = if exists {
-            Scene::load_with(&path, registry.clone())
+            Scene::load(&path, registry.clone())
         } else {
             crate::default::scene(&path, registry.clone())
         };
@@ -112,6 +116,7 @@ impl Editor {
         let watch = Watch::new(&path, &scene);
         Self {
             scene,
+            registry,
             path,
             selected,
             dirty: !exists,
@@ -162,7 +167,7 @@ impl Editor {
             "a window of {width} by {height} presents no surface"
         );
         let surface = context.device().surface(width, height);
-        let mut preview = Preview::new(&context, &self.scene);
+        let mut preview = Preview::new(&context, &self.scene, Arc::clone(&self.registry));
         preview.set_debug(self.debug);
         self.session = Some(Session::new(context, surface, preview, &self.scene));
         window.set_title(&format!("Dome Editor - {}", self.path.display()));
@@ -206,8 +211,8 @@ impl Editor {
     }
 
     fn reload(&mut self) {
-        let registry = self.scene.registry_arc();
-        let loaded = catch_unwind(AssertUnwindSafe(|| Scene::load_with(&self.path, registry)));
+        let registry = self.scene.schema_arc();
+        let loaded = catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry)));
         match loaded {
             Ok(scene) => {
                 self.scene = scene;
@@ -231,9 +236,8 @@ impl Editor {
             return;
         };
         if change.scene {
-            let registry = self.scene.registry_arc();
-            if let Ok(scene) =
-                catch_unwind(AssertUnwindSafe(|| Scene::load_with(&self.path, registry)))
+            let registry = self.scene.schema_arc();
+            if let Ok(scene) = catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry)))
             {
                 self.scene = scene;
                 self.drag = None;
@@ -757,15 +761,14 @@ impl Editor {
             .as_mut()
             .expect("a drawn editor holds its session");
         if stale {
-            self.viewport_texture = Some(dome_gpu_device::Texture::new(
+            self.viewport_texture = Some(dome_gpu::Texture::new(
                 session.context.device(),
                 "dome editor viewport",
                 texture_width,
                 texture_height,
                 1,
-                dome_gpu_device::TextureFormat::Rgba8Unorm,
-                dome_gpu_device::TextureUsages::RENDER_ATTACHMENT
-                    | dome_gpu_device::TextureUsages::SAMPLED,
+                dome_gpu::TextureFormat::Rgba8Unorm,
+                dome_gpu::TextureUsages::RENDER_ATTACHMENT | dome_gpu::TextureUsages::SAMPLED,
             ));
         }
         let scene = self

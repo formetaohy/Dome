@@ -1,6 +1,6 @@
 use crate::abi::{TRANSPARENT_LAYERS, TransparentSetupRecord};
 use crate::program;
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, Binding, BufferBinding, BufferUsages, Device, Draw, Filter, GpuBuffer,
     GraphicsPipeline, Pass, PipelineState, Queue, Sampler, SamplerDesc, Submission, Texture,
     TextureFormat,

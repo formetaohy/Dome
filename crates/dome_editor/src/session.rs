@@ -1,6 +1,6 @@
 use crate::message::Message;
 use crate::preview::Preview;
-use dome_gpu_device::{GpuContext, Surface};
+use dome_gpu::{GpuContext, Surface};
 use dome_scene::Scene;
 use dome_ui::Ui;
 

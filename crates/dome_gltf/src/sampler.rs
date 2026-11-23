@@ -1,7 +1,28 @@
 use crate::document::Document;
-use dome_render::{AddressMode, Filter, SamplerDesc};
 
-pub(crate) fn image_samplers(document: &Document, what: &str) -> Vec<SamplerDesc> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Filter {
+    Nearest,
+    Linear,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wrap {
+    Repeat,
+    MirroredRepeat,
+    ClampToEdge,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sampler {
+    pub min_filter: Filter,
+    pub mag_filter: Filter,
+    pub mip_filter: Filter,
+    pub wrap_u: Wrap,
+    pub wrap_v: Wrap,
+}
+
+pub(crate) fn image_samplers(document: &Document, what: &str) -> Vec<Sampler> {
     let mut samplers = vec![default_sampler(); document.images.len()];
     let mut held = vec![None; document.images.len()];
     for (index, texture) in document.textures.iter().enumerate() {
@@ -12,7 +33,7 @@ pub(crate) fn image_samplers(document: &Document, what: &str) -> Vec<SamplerDesc
             source < document.images.len(),
             "texture {index} of {what} names the image {source}, which the model does not hold",
         );
-        let sampler = sampler_desc(
+        let sampler = read(
             document,
             texture.sampler,
             &format!("texture {index} of {what}"),
@@ -31,7 +52,7 @@ pub(crate) fn image_samplers(document: &Document, what: &str) -> Vec<SamplerDesc
     samplers
 }
 
-fn sampler_desc(document: &Document, index: Option<usize>, what: &str) -> SamplerDesc {
+fn read(document: &Document, index: Option<usize>, what: &str) -> Sampler {
     let Some(index) = index else {
         return default_sampler();
     };
@@ -46,15 +67,15 @@ fn sampler_desc(document: &Document, index: Option<usize>, what: &str) -> Sample
         .map_or((Filter::Linear, Filter::Linear), |value| {
             min_filter(value, &format!("the min filter of {what}"))
         });
-    SamplerDesc {
+    Sampler {
         min_filter,
         mag_filter,
         mip_filter,
-        address_u: sampler.wrap_s.map_or(AddressMode::Repeat, |value| {
-            address(value, &format!("the wrap s of {what}"))
+        wrap_u: sampler.wrap_s.map_or(Wrap::Repeat, |value| {
+            wrap(value, &format!("the wrap s of {what}"))
         }),
-        address_v: sampler.wrap_t.map_or(AddressMode::Repeat, |value| {
-            address(value, &format!("the wrap t of {what}"))
+        wrap_v: sampler.wrap_t.map_or(Wrap::Repeat, |value| {
+            wrap(value, &format!("the wrap t of {what}"))
         }),
     }
 }
@@ -79,21 +100,21 @@ fn min_filter(value: u32, what: &str) -> (Filter, Filter) {
     }
 }
 
-fn address(value: u32, what: &str) -> AddressMode {
+fn wrap(value: u32, what: &str) -> Wrap {
     match value {
-        33071 => AddressMode::ClampToEdge,
-        33648 => AddressMode::MirrorRepeat,
-        10497 => AddressMode::Repeat,
+        33071 => Wrap::ClampToEdge,
+        33648 => Wrap::MirroredRepeat,
+        10497 => Wrap::Repeat,
         other => panic!("{what} holds the wrap {other}"),
     }
 }
 
-fn default_sampler() -> SamplerDesc {
-    SamplerDesc {
+fn default_sampler() -> Sampler {
+    Sampler {
         min_filter: Filter::Linear,
         mag_filter: Filter::Linear,
         mip_filter: Filter::Linear,
-        address_u: AddressMode::Repeat,
-        address_v: AddressMode::Repeat,
+        wrap_u: Wrap::Repeat,
+        wrap_v: Wrap::Repeat,
     }
 }

@@ -1,11 +1,11 @@
 use crate::abi::{ALPHA_BLEND, ALPHA_MASK, ALPHA_OPAQUE, MaterialRecord};
-use dome_gpu::Fvec4;
-use dome_gpu::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, Device, Filter, Queue, Sampler, SamplerDesc, SamplerTable, Texture, TextureFormat,
     TextureTable, TextureUsages,
 };
 use dome_math::Vec3;
+use dome_shader::Fvec4;
+use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 
 const WHITE: [u8; 4] = [255, 255, 255, 255];
 const FLAT_NORMAL: [u8; 4] = [128, 128, 255, 255];

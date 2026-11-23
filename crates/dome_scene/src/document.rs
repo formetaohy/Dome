@@ -1,4 +1,6 @@
 use crate::animation::AnimationEntry;
+use crate::component::ReferenceKind;
+use crate::component::Schema;
 use crate::environment::{EnvironmentEntry, EnvironmentSource};
 use crate::graph::GraphEntry;
 use crate::image::{ImageEntry, ImageSource, address_name, filter_name};
@@ -6,9 +8,7 @@ use crate::material::MaterialEntry;
 use crate::mesh::{Geometry, MeshEntry};
 use crate::model::ModelEntry;
 use crate::node::Node;
-use crate::registry::Registry;
 use crate::scene::{FORMAT, Scene};
-use crate::schema::ReferenceKind;
 use crate::skin::SkinEntry;
 use crate::sound::SoundEntry;
 use dome_render::Vertex;
@@ -399,12 +399,12 @@ fn nodes(scene: &Scene, presentation: Presentation) -> Toml {
             .nodes
             .iter()
             .filter(|node| node.owner().is_none() || presentation == Presentation::Observed)
-            .map(|node| self::node(node, scene.registry(), presentation))
+            .map(|node| self::node(node, scene.schema(), presentation))
             .collect(),
     )
 }
 
-fn node(node: &Node, registry: &Registry, presentation: Presentation) -> Toml {
+fn node(node: &Node, schema: &dyn Schema, presentation: Presentation) -> Toml {
     let mut fields = vec![(String::from("id"), Toml::string(&node.id))];
     if let Some(parent) = &node.parent {
         fields.push((String::from("parent"), Toml::string(parent)));
@@ -412,6 +412,13 @@ fn node(node: &Node, registry: &Registry, presentation: Presentation) -> Toml {
     if let Some(prefab) = node.prefab() {
         fields.push((String::from("prefab"), Toml::string(written_path(prefab))));
     }
+    fields.push((
+        String::from("transform"),
+        match presentation {
+            Presentation::Authored => crate::transform::authored(&node.transform()),
+            Presentation::Observed => crate::transform::observed(&node.transform()),
+        },
+    ));
     if presentation == Presentation::Observed
         && let Some(owner) = node.owner()
     {
@@ -440,7 +447,7 @@ fn node(node: &Node, registry: &Registry, presentation: Presentation) -> Toml {
             Toml::array(
                 node.additions()
                     .iter()
-                    .map(|addition| self::node(addition, registry, presentation))
+                    .map(|addition| self::node(addition, schema, presentation))
                     .collect(),
             ),
         ));
@@ -456,7 +463,7 @@ fn node(node: &Node, registry: &Registry, presentation: Presentation) -> Toml {
             ),
         ));
     }
-    for component in registry.components() {
+    for component in schema.specs() {
         if let Some(held) = node.component_by_name(component.name) {
             let value = match presentation {
                 Presentation::Authored => held.authored(),

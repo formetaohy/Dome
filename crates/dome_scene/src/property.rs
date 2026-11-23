@@ -1,10 +1,10 @@
+use crate::component::ReferenceKind;
 use crate::edit::Edit;
 use crate::field::{axis_value, no_axis, number, split, unit, with_axis};
 use crate::image::{ImageSource, address_name, address_of, filter_name, filter_of};
 use crate::material::MaterialAsset;
 use crate::mesh::MeshAsset;
 use crate::scene::Scene;
-use crate::schema::ReferenceKind;
 use crate::shape::Shape;
 use crate::target::Target;
 use crate::value::{Effect, Value};
@@ -51,10 +51,17 @@ impl Scene {
             return Some(Value::Text(node.parent.clone().unwrap_or_default()));
         }
         let (component, rest) = path.split_once('.').unwrap_or((path, ""));
+        if component == "transform" {
+            if rest.is_empty() {
+                return Some(Value::Bool(true));
+            }
+            let (field, axis) = split(rest);
+            return axis_value(crate::transform::read(&node.transform(), field)?, axis);
+        }
         if rest.is_empty() {
             return self
-                .registry
-                .registration(component)
+                .schema()
+                .spec(component)
                 .map(|_| Value::Bool(node.has_component(component)));
         }
         let (field, axis) = split(rest);
@@ -188,10 +195,23 @@ impl Edit<'_> {
             return Ok(Effect::Structure);
         }
         let (component, rest) = path.split_once('.').unwrap_or((path, ""));
+        if component == "transform" {
+            let (field, axis) = split(rest);
+            if rest.is_empty() {
+                return Err(format!("the node {id} holds its transform"));
+            }
+            self.change_node(index, |node, _| {
+                let mut transform = node.transform();
+                crate::transform::write(&mut transform, field, axis, value)?;
+                node.set_transform(transform);
+                Ok(())
+            })?;
+            return Ok(Effect::Value);
+        }
         let required = self
-            .registry
-            .registration(component)
-            .map(|registration| registration.spec.required)
+            .schema()
+            .spec(component)
+            .map(|spec| spec.required)
             .ok_or_else(|| format!("the node {id} holds no component {component}"))?;
         if rest.is_empty() {
             let wanted = value.boolean()?;
@@ -199,10 +219,10 @@ impl Edit<'_> {
                 return Ok(Effect::Structure);
             }
             if wanted {
-                let created = self.registry.create(self.scene, component)?;
+                let created = self.schema().create(self.scene, component)?;
                 created.validate(self.scene, &id)?;
                 self.change_node(index, |node, _| {
-                    node.insert_component_box(created);
+                    node.insert_component(created);
                     Ok(())
                 })?;
             } else {
@@ -236,7 +256,7 @@ impl Edit<'_> {
                 .clone_box();
             let effect = next.write(field, axis, value)?;
             next.validate(scene, &id)?;
-            node.insert_component_box(next);
+            node.insert_component(next);
             Ok(effect)
         });
         let effect = match effect {

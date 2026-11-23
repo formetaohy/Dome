@@ -1,15 +1,18 @@
 use crate::camera;
 use crate::debug;
 use crate::message::Message;
+use dome_asset::{Library, Refresh};
 use dome_ecs::{Entity, World, propagate};
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, Filter, GpuContext, SamplerDesc, Texture, TextureFormat, TextureUsages,
 };
 use dome_math::{Quat, Transform, Vec3};
 use dome_render::{Camera, DirectionalLight, PointLight, Renderer, Target};
-use dome_scene::{Changed, Library, Refresh, Scene, SceneSync};
+use dome_scene::{Changed, Scene};
+use dome_schema::{Registry, SceneSync};
 use dome_ui::Ui;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 const ASSET_UPLOAD_BYTES: u64 = 8 << 20;
@@ -35,7 +38,7 @@ pub(crate) struct Preview {
 }
 
 impl Preview {
-    pub(crate) fn new(context: &GpuContext, scene: &Scene) -> Self {
+    pub(crate) fn new(context: &GpuContext, scene: &Scene, registry: Arc<Registry>) -> Self {
         let mut world = World::new();
         let camera = world.spawn();
         let renderer = Renderer::new(context, TextureFormat::Rgba8Unorm);
@@ -52,7 +55,7 @@ impl Preview {
             world,
             renderer,
             library: None,
-            binding: SceneSync::new(),
+            binding: SceneSync::new(registry),
             camera,
             fallback: None,
             preview_texture,
@@ -243,7 +246,7 @@ impl Preview {
     pub(crate) fn pick(&mut self, point: dome_math::Vec2) -> Option<String> {
         let entity = self.renderer.pick(point)?;
         self.world
-            .get::<dome_scene::SceneNode>(entity)
+            .get::<dome_schema::SceneNode>(entity)
             .map(|node| node.id.clone())
     }
 

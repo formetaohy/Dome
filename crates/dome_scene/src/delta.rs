@@ -210,7 +210,7 @@ assets! {
 }
 
 pub(crate) fn owned(
-    kind: crate::schema::ReferenceKind,
+    kind: crate::component::ReferenceKind,
     id: impl Into<String>,
     prefab: &Path,
     scope: Option<&str>,

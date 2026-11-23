@@ -1,5 +1,8 @@
+use crate::animation::AnimationEntry;
+use crate::component::ReferenceKind;
 use crate::deletion;
 use crate::delta::{Asset, Delta, Splice, Step};
+use crate::environment::EnvironmentEntry;
 use crate::graph::GraphEntry;
 use crate::image::ImageEntry;
 use crate::material::{MaterialAsset, MaterialEntry};
@@ -7,8 +10,8 @@ use crate::mesh::{MeshAsset, MeshEntry};
 use crate::model::ModelEntry;
 use crate::node::Node;
 use crate::scene::{Owned, Scene};
-use crate::schema::ReferenceKind;
 use crate::shape::Shape;
+use crate::skin::SkinEntry;
 use crate::sound::SoundEntry;
 use crate::target::{Target, valid_id};
 use crate::value::Value;
@@ -57,7 +60,7 @@ impl<'a> Edit<'a> {
         self.delta.push(Step::Nodes(Splice::insert(at, inserted)));
     }
 
-    pub(crate) fn append_nodes(&mut self, nodes: Vec<Node>) {
+    pub fn append_nodes(&mut self, nodes: Vec<Node>) {
         let at = self.scene.nodes.len();
         self.insert_nodes(at, nodes);
     }
@@ -256,7 +259,7 @@ impl<'a> Edit<'a> {
         if self.mesh_index(id).is_some() {
             return Err(format!("the scene holds the mesh {id}"));
         }
-        self.adopt(MeshEntry::new(id, MeshAsset::shape(shape)));
+        self.adopt_asset(MeshEntry::new(id, MeshAsset::shape(shape)));
         Ok(Target::Mesh(String::from(id)))
     }
 
@@ -265,7 +268,7 @@ impl<'a> Edit<'a> {
         if self.material_index(id).is_some() {
             return Err(format!("the scene holds the material {id}"));
         }
-        self.adopt(MaterialEntry::new(id, MaterialAsset::grey()));
+        self.adopt_asset(MaterialEntry::new(id, MaterialAsset::grey()));
         Ok(Target::Material(String::from(id)))
     }
 
@@ -275,7 +278,7 @@ impl<'a> Edit<'a> {
             return Err(format!("the scene holds the sound {id}"));
         }
         let path = self.relative(id, "sound", path)?;
-        self.adopt(SoundEntry::new(id, path));
+        self.adopt_asset(SoundEntry::new(id, path));
         Ok(Target::Sound(String::from(id)))
     }
 
@@ -285,7 +288,7 @@ impl<'a> Edit<'a> {
             return Err(format!("the scene holds the environment {id}"));
         }
         let path = self.relative(id, "environment", path)?;
-        self.adopt(crate::environment::EnvironmentEntry::new(id, path));
+        self.adopt_asset(crate::environment::EnvironmentEntry::new(id, path));
         Ok(Target::Environment(String::from(id)))
     }
 
@@ -294,7 +297,7 @@ impl<'a> Edit<'a> {
         if self.environment_index(id).is_some() {
             return Err(format!("the scene holds the environment {id}"));
         }
-        self.adopt(crate::environment::EnvironmentEntry::with_atmosphere(
+        self.adopt_asset(crate::environment::EnvironmentEntry::with_atmosphere(
             id, atmosphere,
         ));
         Ok(Target::Environment(String::from(id)))
@@ -305,7 +308,7 @@ impl<'a> Edit<'a> {
         if self.environment_index(id).is_some() {
             return Err(format!("the scene holds the environment {id}"));
         }
-        self.adopt(crate::environment::EnvironmentEntry::captured(id));
+        self.adopt_asset(crate::environment::EnvironmentEntry::captured(id));
         Ok(Target::Environment(String::from(id)))
     }
 
@@ -315,7 +318,7 @@ impl<'a> Edit<'a> {
             return Err(format!("the scene holds the image {id}"));
         }
         let path = self.relative(id, "image", path)?;
-        self.adopt(ImageEntry::new(id, path));
+        self.adopt_asset(ImageEntry::new(id, path));
         Ok(Target::Image(String::from(id)))
     }
 
@@ -325,7 +328,7 @@ impl<'a> Edit<'a> {
             return Err(format!("the scene holds the model {id}"));
         }
         let path = self.relative(id, "model", path)?;
-        self.adopt(ModelEntry::new(id, path));
+        self.adopt_asset(ModelEntry::new(id, path));
         Ok(Target::Model(String::from(id)))
     }
 
@@ -344,18 +347,32 @@ impl<'a> Edit<'a> {
             1.0,
             true,
         )?;
-        self.adopt(GraphEntry::new(
+        self.adopt_asset(GraphEntry::new(
             id,
             crate::graph::GraphAsset::new("default", Vec::new(), vec![state], Vec::new()),
         ));
         Ok(Target::Graph(String::from(id)))
     }
 
-    pub(crate) fn adopt<A: Asset>(&mut self, entry: A) {
+    fn adopt_asset<A: Asset>(&mut self, entry: A) {
         let entries = A::entries(self.scene);
         let at = entries.len();
         entries.push(entry.clone());
         self.delta.push(A::step(Splice::insert(at, vec![entry])));
+    }
+
+    pub fn adopt(&mut self, entry: impl Into<AssetEntry>) {
+        match entry.into() {
+            AssetEntry::Model(entry) => self.adopt_asset(entry),
+            AssetEntry::Image(entry) => self.adopt_asset(entry),
+            AssetEntry::Sound(entry) => self.adopt_asset(entry),
+            AssetEntry::Environment(entry) => self.adopt_asset(entry),
+            AssetEntry::Mesh(entry) => self.adopt_asset(entry),
+            AssetEntry::Material(entry) => self.adopt_asset(entry),
+            AssetEntry::Skin(entry) => self.adopt_asset(entry),
+            AssetEntry::Animation(entry) => self.adopt_asset(entry),
+            AssetEntry::Graph(entry) => self.adopt_asset(entry),
+        }
     }
 
     fn relative(&self, id: &str, kind: &str, path: &str) -> Result<PathBuf, String> {
@@ -408,7 +425,7 @@ impl<'a> Edit<'a> {
         assert!(index < self.nodes.len(), "a transformed node exists");
         if self.nodes[index].owner.is_none() {
             return self.change_node(index, |node, _| {
-                node.insert_component(transform);
+                node.set_transform(transform);
                 Ok(())
             });
         }
@@ -458,3 +475,39 @@ fn assert_id(id: &str, what: &str) -> Result<(), String> {
         Err(format!("the {what} id {id} holds no letter, digit, _ or -"))
     }
 }
+
+pub enum AssetEntry {
+    Model(ModelEntry),
+    Image(ImageEntry),
+    Sound(SoundEntry),
+    Environment(EnvironmentEntry),
+    Mesh(MeshEntry),
+    Material(MaterialEntry),
+    Skin(SkinEntry),
+    Animation(AnimationEntry),
+    Graph(GraphEntry),
+}
+
+macro_rules! asset_entry {
+    ($($kind:ident $entry:ident),+ $(,)?) => {
+        $(
+            impl From<$entry> for AssetEntry {
+                fn from(entry: $entry) -> Self {
+                    Self::$kind(entry)
+                }
+            }
+        )+
+    };
+}
+
+asset_entry!(
+    Model ModelEntry,
+    Image ImageEntry,
+    Sound SoundEntry,
+    Environment EnvironmentEntry,
+    Mesh MeshEntry,
+    Material MaterialEntry,
+    Skin SkinEntry,
+    Animation AnimationEntry,
+    Graph GraphEntry,
+);

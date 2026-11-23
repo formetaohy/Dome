@@ -1,4 +1,4 @@
-use dome_gpu_device::{BufferUsages, Device, GpuBuffer};
+use dome_gpu::{BufferUsages, Device, GpuBuffer};
 
 const INITIAL_BYTES: u64 = 256;
 const BLOCK_BYTES: u64 = 4096;

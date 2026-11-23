@@ -1,14 +1,14 @@
 use crate::accessor::Store;
 use crate::document::Primitive;
+use crate::vertex::{SkinVertex, Vertex};
 use dome_math::Vec3;
-use dome_render::{SkinVertexRecord, Vertex};
 
 pub(crate) fn build(
     primitive: &Primitive,
     store: &Store<'_>,
     material_uses_image: bool,
     what: &str,
-) -> (Vec<Vertex>, Option<Vec<SkinVertexRecord>>) {
+) -> (Vec<Vertex>, Option<Vec<SkinVertex>>) {
     assert_eq!(
         primitive.mode.unwrap_or(4),
         4,
@@ -120,7 +120,7 @@ pub(crate) fn build(
             skins
                 .as_mut()
                 .expect("skin weights collect beside their joints")
-                .push(SkinVertexRecord::new(joint, weight));
+                .push(SkinVertex::new(joint, weight));
         }
     }
     if normals.is_none() {

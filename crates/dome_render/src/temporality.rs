@@ -1,12 +1,12 @@
 use crate::abi::{MOTION, MotionRecord, TEMPORAL, TemporalRecord};
 use crate::program;
-use dome_gpu::Fvec4;
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, Binding, BufferBinding, BufferUsages, Device, Draw, Filter, GpuBuffer,
     GraphicsPipeline, Pass, PipelineState, Queue, Sampler, SamplerDesc, Submission, Texture,
     TextureFormat, TextureUsages,
 };
 use dome_math::{Mat4, Vec2, Vec3};
+use dome_shader::Fvec4;
 use std::mem::size_of;
 
 const FULLSCREEN_VERTICES: u32 = 3;

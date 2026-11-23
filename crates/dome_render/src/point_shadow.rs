@@ -2,7 +2,7 @@ use crate::abi::{DrawRecord, PointLightRecord, ViewRecord};
 use crate::frame::record_of_view;
 use crate::growing::Growing;
 use crate::view::View;
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, BufferBinding, BufferUsages, ClipSpace, DepthTexture, Device, Filter, GpuBuffer,
     Queue, Sampler, SamplerDesc, Texture, TextureFormat, TextureUsages, Viewport,
 };

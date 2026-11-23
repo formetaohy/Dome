@@ -1,6 +1,6 @@
 use super::*;
 
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod basis {
     #[binding]
     fn step(step: Read<HzbStepRecord>) {}
@@ -53,7 +53,7 @@ mod basis {
         min(max(value, low), high)
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod reduction {
     #[binding]
     fn step(step: Read<HzbStepRecord>) {}

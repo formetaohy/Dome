@@ -1,22 +1,48 @@
-extern crate self as dome_gpu;
+mod backend;
+mod buffer;
+mod cache;
+mod capability;
+mod context;
+mod depth;
+mod gate;
+mod graphics;
+mod group;
+mod host;
+mod library;
+mod native;
+mod pipeline;
+mod readback;
+mod sampler;
+mod submission;
+mod surface;
+mod table;
+mod texture;
 
-pub mod ast;
-pub mod compiler;
-pub mod layout;
-pub mod shader;
-
-pub use compiler::{
-    AtomicU32, Compiler, Fvec2, Fvec4, In, Out, Position, Read, ReadWrite, Sampler, SamplerTable,
-    Texture2D, TextureTable, Uvec3, Uvec4, Workgroup,
+pub use backend::{Backend, PREFERENCE};
+pub use buffer::{BufferBinding, BufferRange, GpuBuffer};
+pub use cache::{ArtifactCache, DEFAULT_ARTIFACT_BYTES};
+pub use capability::{
+    AdapterId, AdapterInfo, AdapterPolicy, BufferUsages, Capability, ClipSpace, CooperativeMatrix,
+    DeviceType, Limits, PowerPreference, TextureUsages,
 };
-pub use dome_gpu_macro::{graphics, kernel, module};
-pub use layout::{
-    Block, Element, FP4_BLOCK, FieldLayout, FieldType, FloatFormat, INT4_BLOCK, QUANT_BLOCK,
-    Record, RecordLayout, SUPER_BLOCK, SUPER_SCALE_BYTES, SUPER_SMALL_BLOCK, SUPER_SUB_BLOCK,
-    WORD_BYTES,
+pub use context::{Device, GpuContext, GpuRequest, GpuUnavailable, LimitsPolicy, Queue};
+pub use depth::DepthTexture;
+pub use gate::QueueLock;
+pub use graphics::{
+    BlendState, Count, DepthLoad, DepthOps, DepthState, Draw, Pass, PipelineState, Scissor,
+    Viewport,
 };
-pub use shader::{
-    BindingKind, BindingSpec, ComputeProgram, GraphicsProgram, GraphicsTranslation, Interface,
-    SAMPLER_TABLE_CAPACITY, ShaderBinding, ShaderTranslation, Space, Stage, TEXTURE_TABLE_CAPACITY,
-    Target,
-};
+#[cfg(vulkan_backend)]
+pub use host::VulkanHost;
+pub use host::{HostAdvance, HostDevice, HostIdentity};
+pub use library::WARM_PROGRAMS;
+pub use native::STAGING_BYTES;
+pub(crate) use native::{NativeSampler, NativeTexture};
+pub use pipeline::{BindGroup, Binding, GraphicsPipeline, PipelineHandle};
+pub use raw_window_handle;
+pub use readback::{READBACK_TIMEOUT, Readback, ReadbackLease};
+pub use sampler::{AddressMode, Filter, Sampler, SamplerDesc};
+pub use submission::{Submission, SubmissionIndex};
+pub use surface::{Surface, SurfaceFrame, WindowHandle};
+pub use table::{SamplerTable, TextureTable};
+pub use texture::{Texture, TextureFormat};

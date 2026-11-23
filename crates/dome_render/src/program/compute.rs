@@ -1,6 +1,6 @@
 use super::*;
 
-#[dome_gpu::kernel(workgroup_size = 64)]
+#[dome_shader::kernel(workgroup_size = 64)]
 mod cull {
     #[kernel]
     fn cull(
@@ -149,7 +149,7 @@ mod cull {
         a * local.x + b * local.y + c * local.z + d * local.w
     }
 }
-#[dome_gpu::kernel(workgroup_size = 64)]
+#[dome_shader::kernel(workgroup_size = 64)]
 mod cluster {
     #[kernel]
     fn cluster(

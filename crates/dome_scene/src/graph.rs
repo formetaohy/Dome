@@ -408,12 +408,7 @@ impl GraphParameter {
 }
 
 impl GraphState {
-    pub(crate) fn new(
-        id: &str,
-        clip: AnimationId,
-        speed: f32,
-        looped: bool,
-    ) -> Result<Self, String> {
+    pub fn new(id: &str, clip: AnimationId, speed: f32, looped: bool) -> Result<Self, String> {
         if !speed.is_finite() {
             return Err(format!("the animation state {id} holds {speed}"));
         }

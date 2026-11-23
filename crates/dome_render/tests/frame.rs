@@ -1,5 +1,5 @@
 use dome_ecs::World;
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, Backend, BufferUsages, Filter, GpuBuffer, GpuContext, GpuRequest, Sampler,
     SamplerDesc, Submission, Texture, TextureFormat, TextureUsages,
 };
@@ -97,7 +97,7 @@ const SIDE: u32 = 64;
 
 #[test]
 fn a_gpu_driven_frame_culls_orders_textures_and_shadows_instances() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         paint(*backend);
     }
 }
@@ -485,7 +485,7 @@ fn paint(backend: Backend) {
 
 #[test]
 fn a_clustered_frame_assigns_point_lights_to_the_tiles_they_reach() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         points(*backend);
     }
 }
@@ -660,7 +660,7 @@ fn assert_yellow(backend: Backend, pixels: &[[u8; 4]], width: u32, x: u32, y: u3
 
 #[test]
 fn a_transparent_frame_blends_its_layers_masks_cutouts_and_orders_crossing_fragments() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         blend(*backend);
     }
 }
@@ -1032,7 +1032,7 @@ fn crossing(
 
 #[test]
 fn a_linear_frame_resolves_its_highlights_into_a_glow() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         glow(*backend);
     }
 }
@@ -1137,7 +1137,7 @@ fn glow(backend: Backend) {
 
 #[test]
 fn a_lit_frame_samples_every_material_map() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         maps(*backend);
     }
 }
@@ -1255,7 +1255,7 @@ fn maps(backend: Backend) {
 
 #[test]
 fn a_gpu_driven_frame_skins_its_meshes_and_picks_the_deformed_surface() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         skinned(*backend);
     }
 }
@@ -1338,7 +1338,7 @@ fn skinned(backend: Backend) {
 
 #[test]
 fn a_debug_line_frame_draws_colored_segments() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         line(*backend);
     }
 }
@@ -1438,7 +1438,7 @@ fn line(backend: Backend) {
 
 #[test]
 fn an_environment_lights_its_scene_and_paints_its_sky() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         ambient(*backend);
     }
 }
@@ -1658,7 +1658,7 @@ fn ambient(backend: Backend) {
 
 #[test]
 fn a_local_environment_lights_the_box_it_bounds() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         local(*backend);
     }
 }
@@ -1796,7 +1796,7 @@ fn environment(renderer: &mut Renderer, radiance: Vec3) -> Environment {
 
 #[test]
 fn a_temporal_frame_accumulates_subpixel_coverage_and_rejects_the_history_of_a_moved_instance() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         temporal(*backend);
     }
 }

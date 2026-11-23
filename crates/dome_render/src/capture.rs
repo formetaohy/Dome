@@ -13,8 +13,8 @@ use crate::program;
 use crate::shadow::Cascade;
 use crate::view::View;
 use dome_ecs::{Entity, World};
-use dome_gpu_device::ClipSpace;
-use dome_gpu_device::{
+use dome_gpu::ClipSpace;
+use dome_gpu::{
     AddressMode, BufferBinding, BufferUsages, DepthTexture, Device, Filter, GpuBuffer, GpuContext,
     GraphicsPipeline, PipelineState, Queue, Sampler, SamplerDesc, Texture, TextureFormat,
     TextureUsages,

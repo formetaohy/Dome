@@ -1,4 +1,4 @@
-use dome_gpu_device::ClipSpace;
+use dome_gpu::ClipSpace;
 use dome_math::{Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};
 use dome_render::Camera;
 use dome_ui::{Color, Corners, Painter};

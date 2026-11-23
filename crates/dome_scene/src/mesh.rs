@@ -9,7 +9,7 @@ pub struct MeshAsset {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Geometry {
+pub enum Geometry {
     Shape(Shape),
     Vertices(Arc<[Vertex]>),
     Model {
@@ -32,7 +32,7 @@ impl MeshAsset {
         }
     }
 
-    pub(crate) fn model(model: ModelId, mesh: u32, primitive: u32) -> Self {
+    pub fn model(model: ModelId, mesh: u32, primitive: u32) -> Self {
         Self {
             geometry: Geometry::Model {
                 model,
@@ -40,6 +40,10 @@ impl MeshAsset {
                 primitive,
             },
         }
+    }
+
+    pub fn geometry(&self) -> &Geometry {
+        &self.geometry
     }
 
     pub fn shape_of(&self) -> Option<Shape> {

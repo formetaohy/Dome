@@ -1,10 +1,9 @@
-use crate::reference::{GraphId, MaterialId, MeshId, SkinId};
-use crate::registry::{ErasedComponent, SceneComponent};
+use crate::component::Component;
 use crate::value::Value;
-use dome_animation::Parameter;
-use dome_math::{Transform, Vec3};
+use dome_math::Transform;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstanceOverride {
@@ -16,12 +15,13 @@ pub struct InstanceOverride {
 pub struct Node {
     pub id: String,
     pub parent: Option<String>,
-    pub(crate) prefab: Option<std::path::PathBuf>,
+    pub(crate) transform: Transform,
+    pub(crate) prefab: Option<PathBuf>,
     pub(crate) owner: Option<String>,
     pub(crate) overrides: Vec<InstanceOverride>,
     pub(crate) additions: Vec<Node>,
     pub(crate) removals: Vec<String>,
-    pub(crate) components: BTreeMap<&'static str, Box<dyn ErasedComponent>>,
+    pub(crate) components: BTreeMap<&'static str, Box<dyn Component>>,
 }
 
 impl Clone for Node {
@@ -29,6 +29,7 @@ impl Clone for Node {
         Self {
             id: self.id.clone(),
             parent: self.parent.clone(),
+            transform: self.transform,
             prefab: self.prefab.clone(),
             owner: self.owner.clone(),
             overrides: self.overrides.clone(),
@@ -45,24 +46,31 @@ impl Clone for Node {
 
 impl Node {
     pub fn new(id: impl Into<String>) -> Self {
-        let mut node = Self {
+        Self {
             id: id.into(),
             parent: None,
+            transform: Transform::IDENTITY,
             prefab: None,
             owner: None,
             overrides: Vec::new(),
             additions: Vec::new(),
             removals: Vec::new(),
             components: BTreeMap::new(),
-        };
-        node.insert_component(Transform::IDENTITY);
-        node
+        }
     }
 
-    pub fn instance(id: impl Into<String>, prefab: impl Into<std::path::PathBuf>) -> Self {
+    pub fn instance(id: impl Into<String>, prefab: impl Into<PathBuf>) -> Self {
         let mut node = Self::new(id);
         node.prefab = Some(prefab.into());
         node
+    }
+
+    pub fn transform(&self) -> Transform {
+        self.transform
+    }
+
+    pub fn set_transform(&mut self, transform: Transform) {
+        self.transform = transform;
     }
 
     pub fn prefab(&self) -> Option<&std::path::Path> {
@@ -85,13 +93,11 @@ impl Node {
         &self.removals
     }
 
-    pub fn with<T: SceneComponent>(mut self, component: T) -> Self {
-        self.insert_component(component);
-        self
-    }
-
-    pub fn insert_component<T: SceneComponent>(&mut self, component: T) -> bool {
-        self.insert_component_box(Box::new(component)).is_none()
+    pub fn insert_component(
+        &mut self,
+        component: Box<dyn Component>,
+    ) -> Option<Box<dyn Component>> {
+        self.components.insert(component.name(), component)
     }
 
     pub fn remove_component(&mut self, name: &str) -> bool {
@@ -102,39 +108,30 @@ impl Node {
         self.components.contains_key(name)
     }
 
-    pub fn component<T: SceneComponent>(&self) -> Option<&T> {
-        self.components
-            .get(T::SPEC.name)?
-            .as_any()
-            .downcast_ref::<T>()
-    }
-
-    pub fn component_mut<T: SceneComponent>(&mut self) -> Option<&mut T> {
-        self.components
-            .get_mut(T::SPEC.name)?
-            .as_any_mut()
-            .downcast_mut::<T>()
-    }
-
-    pub(crate) fn components(
-        &self,
-    ) -> impl Iterator<Item = (&'static str, &dyn ErasedComponent)> + '_ {
+    pub fn components(&self) -> impl Iterator<Item = (&'static str, &dyn Component)> + '_ {
         self.components
             .iter()
             .map(|(name, component)| (*name, component.as_ref()))
     }
 
-    pub(crate) fn component_by_name(&self, name: &str) -> Option<&dyn ErasedComponent> {
+    pub fn components_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&'static str, &mut Box<dyn Component>)> {
+        self.components
+            .iter_mut()
+            .map(|(name, component)| (*name, component))
+    }
+
+    pub fn component_by_name(&self, name: &str) -> Option<&dyn Component> {
         self.components
             .get(name)
             .map(|component| component.as_ref())
     }
 
-    pub(crate) fn insert_component_box(
-        &mut self,
-        component: Box<dyn ErasedComponent>,
-    ) -> Option<Box<dyn ErasedComponent>> {
-        self.components.insert(component.name(), component)
+    pub fn component_by_name_mut(&mut self, name: &str) -> Option<&mut (dyn Component + 'static)> {
+        self.components
+            .get_mut(name)
+            .map(|component| component.as_mut())
     }
 }
 
@@ -142,6 +139,7 @@ impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
             && self.parent == other.parent
+            && self.transform == other.transform
             && self.prefab == other.prefab
             && self.owner == other.owner
             && self.overrides == other.overrides
@@ -163,6 +161,7 @@ impl fmt::Debug for Node {
             .debug_struct("Node")
             .field("id", &self.id)
             .field("parent", &self.parent)
+            .field("transform", &self.transform)
             .field("prefab", &self.prefab)
             .field("owner", &self.owner)
             .field("overrides", &self.overrides)
@@ -173,91 +172,5 @@ impl fmt::Debug for Node {
                 &self.components.keys().copied().collect::<Vec<_>>(),
             )
             .finish()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct MeshRef {
-    pub mesh: MeshId,
-    pub material: MaterialId,
-    pub tint: Vec3,
-}
-
-impl MeshRef {
-    pub fn new(mesh: impl Into<MeshId>, material: impl Into<MaterialId>, tint: Vec3) -> Self {
-        Self {
-            mesh: mesh.into(),
-            material: material.into(),
-            tint,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SceneNode {
-    pub id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SkinRef {
-    pub skin: SkinId,
-}
-
-impl SkinRef {
-    pub fn new(skin: impl Into<SkinId>) -> Self {
-        Self { skin: skin.into() }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct AnimationRef {
-    pub graph: GraphId,
-    pub playing: bool,
-    pub fade: f32,
-    state: String,
-    time: f32,
-    parameters: BTreeMap<String, Parameter>,
-}
-
-impl AnimationRef {
-    pub const DEFAULT_FADE: f32 = 0.25;
-
-    pub fn new(graph: impl Into<GraphId>, playing: bool, fade: f32) -> Self {
-        assert!(
-            fade.is_finite() && fade >= 0.0,
-            "an animation fade of {fade} is no finite non-negative span",
-        );
-        Self {
-            graph: graph.into(),
-            playing,
-            fade,
-            state: String::new(),
-            time: 0.0,
-            parameters: BTreeMap::new(),
-        }
-    }
-
-    pub(crate) fn with_runtime(
-        mut self,
-        state: impl Into<String>,
-        time: f32,
-        parameters: BTreeMap<String, Parameter>,
-    ) -> Self {
-        self.state = state.into();
-        self.time = time;
-        self.parameters = parameters;
-        self
-    }
-
-    pub(crate) fn state(&self) -> &str {
-        &self.state
-    }
-
-    pub(crate) fn time(&self) -> f32 {
-        self.time
-    }
-
-    pub(crate) fn parameters(&self) -> &BTreeMap<String, Parameter> {
-        &self.parameters
     }
 }

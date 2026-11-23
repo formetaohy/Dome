@@ -33,7 +33,7 @@ impl Shape {
         }
     }
 
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Plane => "plane",
             Self::Cube => "cube",
@@ -41,7 +41,7 @@ impl Shape {
         }
     }
 
-    pub(crate) fn vertices(self) -> Vec<Vertex> {
+    pub fn vertices(self) -> Vec<Vertex> {
         match self {
             Self::Plane => plane(),
             Self::Cube => cube(),

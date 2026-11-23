@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn undo_history_keeps_its_newest_steps() {
-        let mut scene = Scene::new(".");
+        let mut scene = Scene::new(".", std::sync::Arc::new(dome_schema::Registry::default()));
         let mut history = History::default();
         for index in 0..DEPTH + 4 {
             let (_, delta) = scene

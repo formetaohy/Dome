@@ -8,13 +8,33 @@ mod pass;
 pub use encode::encode;
 
 pub struct Image {
-    width: u32,
-    height: u32,
-    rgba: Vec<u8>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) rgba: Vec<u8>,
 }
 
 impl Image {
     pub fn decode(bytes: &[u8], what: &str) -> Self {
+        const PNG: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+        const JPEG: [u8; 2] = [0xFF, 0xD8];
+        if bytes.starts_with(&PNG) {
+            return Self::read(bytes, what);
+        }
+        if bytes.starts_with(&JPEG) {
+            return crate::jpeg::decode(bytes, what);
+        }
+        panic!("{what} holds neither a PNG nor a JPEG image");
+    }
+
+    pub(crate) fn from_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            rgba,
+        }
+    }
+
+    pub(crate) fn read(bytes: &[u8], what: &str) -> Self {
         const SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
         assert!(
             bytes.starts_with(&SIGNATURE),

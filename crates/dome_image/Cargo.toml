@@ -2,7 +2,7 @@
 name = "dome_image"
 version.workspace = true
 edition.workspace = true
-description = "Portable network graphics and Radiance pictures decoded, encoded and mip chained"
+description = "Portable network graphics, JPEG pictures and Radiance images decoded, encoded and mip chained"
 license.workspace = true
 repository.workspace = true
 
@@ -14,3 +14,4 @@ workspace = true
 
 [dependencies]
 flate2 = { workspace = true }
+jpeg-decoder = { workspace = true }

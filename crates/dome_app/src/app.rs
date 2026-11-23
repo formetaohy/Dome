@@ -1,12 +1,14 @@
 use crate::time::Time;
+use dome_asset::{Library, Watch};
 use dome_audio::Audio;
 use dome_ecs::{Entity, Schedule, System, World, propagate};
-use dome_gpu_device::{
+use dome_gpu::{
     GpuContext, GpuRequest, Surface, Texture, TextureFormat, TextureUsages, WindowHandle,
 };
 use dome_math::{Transform, Vec3};
 use dome_render::{Camera, Lines, Renderer, Target};
-use dome_scene::{Changed, Library, Registry, Scene, SceneSync, Watch};
+use dome_scene::{Changed, Scene};
+use dome_schema::{Registry, SceneSync};
 use dome_window::{Event, Flow, Handler, Input, Window, WindowConfig, run as run_window};
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -129,9 +131,9 @@ impl LiveScene {
         world: &mut World,
         blocking: bool,
     ) -> Self {
-        let scene = Scene::load_with(&path, registry.clone());
+        let scene = Scene::load(&path, registry.clone());
         let mut assets = Library::new();
-        let mut sync = SceneSync::new();
+        let mut sync = SceneSync::new(registry.clone());
         let (wanted, requested) = if blocking {
             let refresh = assets.refresh(&scene, renderer);
             assert!(
@@ -170,7 +172,7 @@ impl LiveScene {
             self.renew = true;
             if change.scene {
                 match catch_unwind(AssertUnwindSafe(|| {
-                    Scene::load_with(&self.path, registry.clone())
+                    Scene::load(&self.path, registry.clone())
                 })) {
                     Ok(scene) => {
                         self.watch.renew(&scene);

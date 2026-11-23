@@ -1,5 +1,5 @@
-use dome_gpu::record;
-use dome_gpu::{Fvec4, Uvec4};
+use dome_shader::record;
+use dome_shader::{Fvec4, Uvec4};
 use std::mem::size_of;
 
 pub const WORKGROUP: u32 = 64;

@@ -1,8 +1,6 @@
 use crate::abi::SHADOW_CASCADES;
 use crate::program;
-use dome_gpu_device::{
-    BindGroup, Binding, BufferBinding, GraphicsPipeline, SamplerTable, TextureTable,
-};
+use dome_gpu::{BindGroup, Binding, BufferBinding, GraphicsPipeline, SamplerTable, TextureTable};
 
 const CASCADES: usize = SHADOW_CASCADES as usize;
 

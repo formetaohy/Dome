@@ -1,6 +1,6 @@
 use dome_gltf::Model;
+use dome_gltf::{AlphaMode, Filter, Wrap};
 use dome_math::Vec3;
-use dome_render::{AddressMode, AlphaMode, Filter};
 use serde_json::json;
 use std::path::Path;
 
@@ -113,14 +113,8 @@ fn a_model_reads_a_binary_container_of_triangles_and_textures() {
     assert_eq!(model.images[0].sampler().min_filter, Filter::Linear);
     assert_eq!(model.images[0].sampler().mag_filter, Filter::Linear);
     assert_eq!(model.images[0].sampler().mip_filter, Filter::Linear);
-    assert_eq!(
-        model.images[0].sampler().address_u,
-        AddressMode::ClampToEdge
-    );
-    assert_eq!(
-        model.images[0].sampler().address_v,
-        AddressMode::MirrorRepeat
-    );
+    assert_eq!(model.images[0].sampler().wrap_u, Wrap::ClampToEdge);
+    assert_eq!(model.images[0].sampler().wrap_v, Wrap::MirroredRepeat);
     assert_eq!(model.images[0].width(), WIDTH);
     assert_eq!(model.images[0].height(), HEIGHT);
     assert_eq!(model.images[0].rgba(), PIXELS);
@@ -232,8 +226,8 @@ fn a_model_reads_skins_and_animations() {
     let primitive = &model.meshes[0].primitives[0];
     let skin = primitive.skin.as_ref().expect("a skinned primitive");
     assert_eq!(skin.len(), 3);
-    assert_eq!(skin[0].joints.x, 0);
-    assert_eq!(skin[0].weights.x, 1.0);
+    assert_eq!(skin[0].joints[0], 0);
+    assert_eq!(skin[0].weights[0], 1.0);
     assert_eq!(model.animations.len(), 1);
     assert_eq!(model.animations[0].name.as_deref(), Some("bend"));
     assert_eq!(model.animations[0].channels.len(), 1);

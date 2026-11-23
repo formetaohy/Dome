@@ -1,5 +1,5 @@
-use dome_gpu::Fvec4;
-use dome_gpu::record;
+use dome_shader::Fvec4;
+use dome_shader::record;
 
 record!(UiInstanceRecord, UI_INSTANCE, "UiInstance" {
     rect: Fvec4 => F32x4,
@@ -9,7 +9,7 @@ record!(UiInstanceRecord, UI_INSTANCE, "UiInstance" {
     uv: Fvec4 => F32x4,
     clip: Fvec4 => F32x4,
     clip_corners: Fvec4 => F32x4,
-    meta: dome_gpu::Uvec4 => U32x4,
+    meta: dome_shader::Uvec4 => U32x4,
     extra: Fvec4 => F32x4,
 });
 

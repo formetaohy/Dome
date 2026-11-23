@@ -1,21 +1,17 @@
 use crate::animation::AnimationEntry;
+use crate::component::{ReferenceKind, Schema};
 use crate::environment::EnvironmentEntry;
 use crate::graph::GraphEntry;
 use crate::image::ImageEntry;
-use crate::library::{self, Library};
 use crate::material::MaterialEntry;
 use crate::mesh::MeshEntry;
 use crate::model::ModelEntry;
 use crate::node::Node;
 use crate::nodes::Nodes;
-use crate::registry::{Assets, AudioBusRef, Registry};
-use crate::schema::ReferenceKind;
 use crate::skin::SkinEntry;
 use crate::sound::SoundEntry;
 use crate::target::{Target, valid_id};
-use dome_ecs::{Entity, World};
 use dome_math::Transform;
-use dome_render::Renderer;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::fs;
@@ -27,7 +23,7 @@ pub(crate) const FORMAT: &str = "dome_scene";
 #[derive(Clone)]
 pub struct Scene {
     pub(crate) root: PathBuf,
-    pub(crate) registry: Arc<Registry>,
+    pub(crate) schema: Arc<dyn Schema>,
     pub(crate) prefab: bool,
     pub(crate) owners: Arc<Vec<Owned>>,
     pub(crate) instances: Arc<BTreeMap<String, BTreeSet<PathBuf>>>,
@@ -93,14 +89,14 @@ impl PartialEq for Scene {
 }
 
 impl Scene {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self::with_registry(root, Arc::new(Registry::default()))
+    pub fn new(root: impl Into<PathBuf>, schema: Arc<dyn Schema>) -> Self {
+        Self::with_schema(root, schema)
     }
 
-    pub fn with_registry(root: impl Into<PathBuf>, registry: Arc<Registry>) -> Self {
+    pub fn with_schema(root: impl Into<PathBuf>, schema: Arc<dyn Schema>) -> Self {
         Self {
             root: root.into(),
-            registry,
+            schema,
             prefab: false,
             owners: Arc::new(Vec::new()),
             instances: Arc::new(BTreeMap::new()),
@@ -117,11 +113,7 @@ impl Scene {
         }
     }
 
-    pub fn load(path: impl AsRef<Path>) -> Self {
-        Self::load_with(path, Arc::new(Registry::default()))
-    }
-
-    pub fn load_with(path: impl AsRef<Path>, registry: Arc<Registry>) -> Self {
+    pub fn load(path: impl AsRef<Path>, schema: Arc<dyn Schema>) -> Self {
         let path = path.as_ref();
         let text = fs::read_to_string(path)
             .unwrap_or_else(|error| panic!("the scene {} reads no text: {error}", path.display()));
@@ -129,26 +121,22 @@ impl Scene {
             Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
             _ => PathBuf::from("."),
         };
-        Self::parse_with(
+        Self::parse(
             &text,
             root,
             &format!("the scene {}", path.display()),
-            registry,
+            schema,
         )
     }
 
-    pub fn parse(text: &str, root: impl Into<PathBuf>, what: &str) -> Self {
-        Self::parse_with(text, root, what, Arc::new(Registry::default()))
-    }
-
-    pub fn parse_with(
+    pub fn parse(
         text: &str,
         root: impl Into<PathBuf>,
         what: &str,
-        registry: Arc<Registry>,
+        schema: Arc<dyn Schema>,
     ) -> Self {
         let root = root.into();
-        crate::prefab::Loader::new(root.clone(), registry).document(text, root, what)
+        crate::prefab::Loader::new(root.clone(), schema).document(text, root, what)
     }
 
     pub fn write(&self) -> String {
@@ -162,32 +150,20 @@ impl Scene {
             .unwrap_or_else(|error| panic!("the scene {} writes no text: {error}", path.display()));
     }
 
-    pub fn instantiate(&self, world: &mut World, renderer: &mut Renderer) -> Vec<Entity> {
-        self.validate("an instantiated scene");
-        let library = self.library(renderer);
-        self.install(world, &library)
+    pub fn schema(&self) -> &dyn Schema {
+        self.schema.as_ref()
     }
 
-    pub fn library(&self, renderer: &mut Renderer) -> Library {
-        library::build(self, renderer)
-    }
-
-    pub fn install(&self, world: &mut World, assets: &dyn Assets) -> Vec<Entity> {
-        let mut sync = crate::SceneSync::new();
-        sync.sync(self, world, assets, &crate::Changed::none());
-        sync.entities().to_vec()
-    }
-
-    pub fn registry(&self) -> &Registry {
-        &self.registry
-    }
-
-    pub fn registry_arc(&self) -> Arc<Registry> {
-        Arc::clone(&self.registry)
+    pub fn schema_arc(&self) -> Arc<dyn Schema> {
+        Arc::clone(&self.schema)
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn instances(&self) -> &BTreeMap<String, BTreeSet<PathBuf>> {
+        &self.instances
     }
 
     pub fn is_prefab(&self) -> bool {
@@ -284,11 +260,11 @@ impl Scene {
         &self.environments
     }
 
-    pub(crate) fn remember_node(&mut self, at: usize, node: Arc<Node>) {
+    pub fn remember_node(&mut self, at: usize, node: Arc<Node>) {
         self.nodes.replace(at, node);
     }
 
-    pub(crate) fn node_handle(&self, index: usize) -> Option<&Arc<Node>> {
+    pub fn node_handle(&self, index: usize) -> Option<&Arc<Node>> {
         self.nodes.handles().get(index)
     }
 
@@ -439,19 +415,7 @@ impl Scene {
     }
 
     pub(crate) fn check_audio_buses(&self) -> Result<(), String> {
-        let links = self
-            .nodes
-            .iter()
-            .filter_map(|node| {
-                node.component::<AudioBusRef>()
-                    .map(|bus| dome_audio::BusLink {
-                        id: node.id.as_str(),
-                        parent: bus.parent.as_ref().map(|parent| parent.as_str()),
-                        send: bus.send.as_ref().map(|send| send.as_str()),
-                    })
-            })
-            .collect::<Vec<_>>();
-        dome_audio::validate_buses(&links)
+        self.schema.validate(self)
     }
 
     pub(crate) fn referenced_by(&self, kind: ReferenceKind, id: &str) -> bool {
@@ -466,7 +430,7 @@ impl Scene {
         self.node_index(parent)
     }
 
-    pub(crate) fn ancestors_hold(&self, index: usize, component: &str) -> bool {
+    pub fn ancestors_hold(&self, index: usize, component: &str) -> bool {
         let mut at = self.parent_index(index);
         while let Some(current) = at {
             if self.nodes[current].has_component(component) {
@@ -477,7 +441,7 @@ impl Scene {
         false
     }
 
-    pub(crate) fn subtree_holds(&self, index: usize, component: &str) -> bool {
+    pub fn subtree_holds(&self, index: usize, component: &str) -> bool {
         self.subtree(index)
             .into_iter()
             .any(|at| self.nodes[at].has_component(component))
@@ -525,11 +489,10 @@ impl Scene {
     }
 
     pub fn transform(&self, index: usize) -> Transform {
-        *self
-            .nodes
+        self.nodes
             .get(index)
-            .and_then(|node| node.component::<Transform>())
             .unwrap_or_else(|| panic!("a scene node holds its transform"))
+            .transform()
     }
 
     pub fn world_transform(&self, index: usize) -> Transform {
@@ -569,7 +532,7 @@ impl Scene {
         for node in &self.nodes {
             if node.prefab.is_some() {
                 assert!(
-                    node.components().all(|(name, _)| name == "transform"),
+                    node.components().next().is_none(),
                     "the prefab instance {} holds its transform alone",
                     node.id,
                 );
@@ -652,7 +615,7 @@ impl Scene {
                         node.id,
                     );
                 }
-                for component in self.registry.components() {
+                for component in self.schema.specs() {
                     if component.required {
                         assert!(
                             addition.has_component(component.name),
@@ -665,8 +628,8 @@ impl Scene {
                 }
                 for (name, _) in addition.components() {
                     assert!(
-                        self.registry.registration(name).is_some(),
-                        "{what} holds the component {name} on the addition {} of {}, which its registry does not hold",
+                        self.schema.spec(name).is_some(),
+                        "{what} holds the component {name} on the addition {} of {}, which its schema does not hold",
                         addition.id,
                         node.id,
                     );
@@ -844,7 +807,7 @@ impl Scene {
             }
         }
         for node in &self.nodes {
-            for component in self.registry.components() {
+            for component in self.schema.specs() {
                 if component.required {
                     assert!(
                         node.has_component(component.name),
@@ -856,8 +819,8 @@ impl Scene {
             }
             for (name, component) in node.components() {
                 assert!(
-                    self.registry.registration(name).is_some(),
-                    "{what} holds the component {name} on node {}, which its registry does not hold",
+                    self.schema.spec(name).is_some(),
+                    "{what} holds the component {name} on node {}, which its schema does not hold",
                     node.id,
                 );
                 component

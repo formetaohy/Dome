@@ -1,4 +1,5 @@
 use crate::animation::AnimationEntry;
+use crate::component::ReferenceKind;
 use crate::edit::Edit;
 use crate::environment::EnvironmentEntry;
 use crate::graph::GraphEntry;
@@ -8,7 +9,6 @@ use crate::mesh::MeshEntry;
 use crate::model::ModelEntry;
 use crate::prefab::{Loader, describe};
 use crate::scene::{Owned, Scene};
-use crate::schema::ReferenceKind;
 use crate::skin::SkinEntry;
 use crate::sound::SoundEntry;
 use crate::target::Target;
@@ -593,7 +593,7 @@ impl Planner<'_> {
             .instance_prefab(marker)
             .expect("a prefab instance names its prefab");
         let loaded = catch_unwind(AssertUnwindSafe(|| {
-            Loader::new(self.scene.root.clone(), self.scene.registry_arc()).load(
+            Loader::new(self.scene.root.clone(), self.scene.schema_arc()).load(
                 &self.scene.root,
                 prefab,
                 "the instance",

@@ -10,8 +10,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+dome_shader = { workspace = true }
 dome_gpu = { workspace = true }
-dome_gpu_device = { workspace = true }
 dome_math = { workspace = true }
 dome_window = { workspace = true }
 dome_text = { workspace = true }

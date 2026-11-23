@@ -1,13 +1,13 @@
 use crate::abi::{ATMOSPHERE_RECORDS, AtmosphereRecord};
 use crate::frame::vertical;
 use crate::program;
-use dome_gpu::Fvec4;
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, BindGroup, Binding, BufferUsages, Device, Draw, Filter, GpuBuffer, GpuContext,
     GraphicsPipeline, Pass, PipelineState, Queue, Sampler, SamplerDesc, Submission, Texture,
     TextureFormat, TextureUsages,
 };
 use dome_math::Vec3;
+use dome_shader::Fvec4;
 use std::mem::size_of;
 
 pub const MODEL_VERSION: u32 = 2;

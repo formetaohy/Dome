@@ -2,7 +2,7 @@
 name = "dome_gpu"
 version.workspace = true
 edition.workspace = true
-description = "The device DSL, its lowering into shader modules, and the SPIR-V and Metal text a module compiles to"
+description = "Native Vulkan and Metal devices, memory, pipelines and submissions"
 license.workspace = true
 repository.workspace = true
 
@@ -14,5 +14,40 @@ doctest = false
 workspace = true
 
 [dependencies]
-dome_gpu_macro = { workspace = true }
+bitflags = { workspace = true }
+dome_shader = { workspace = true }
+raw-window-handle = { workspace = true }
+
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))'.dependencies]
+ash = { workspace = true }
+gpu-allocator = { workspace = true }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true, features = ["NSArray", "NSError", "NSString"] }
+objc2-core-foundation = { workspace = true }
+objc2-quartz-core = { workspace = true, features = ["CALayer", "CAMetalLayer"] }
+objc2-metal = { workspace = true, features = [
+    "MTLAllocation",
+    "MTLArgument",
+    "MTLArgumentEncoder",
+    "MTLDataType",
+    "MTLBlitCommandEncoder",
+    "MTLBuffer",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLComputeCommandEncoder",
+    "MTLDrawable",
+    "MTLComputePipeline",
+    "MTLDevice",
+    "MTLLibrary",
+    "MTLResource",
+    "MTLSampler",
+    "MTLTypes",
+    "objc2-core-foundation",
+] }
+
+[dev-dependencies]
 bytemuck = { workspace = true }
+dome_shader = { workspace = true }

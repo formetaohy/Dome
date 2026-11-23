@@ -1,6 +1,12 @@
 use crate::document::{Document, NormalTextureInfo, OcclusionTextureInfo, TextureInfo};
 use dome_math::Vec3;
-use dome_render::AlphaMode;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlphaMode {
+    Opaque,
+    Mask,
+    Blend,
+}
 
 pub struct Material {
     pub base_color: Vec3,

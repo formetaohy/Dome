@@ -51,13 +51,13 @@ use crate::temporality::{Frame, Pose, Temporality};
 use crate::transparency::Transparency;
 use crate::view::View;
 use dome_ecs::{Entity, World};
-use dome_gpu::Fvec4;
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, BindGroup, Binding, BufferUsages, DepthOps, DepthTexture, Device, Draw, Filter,
     GpuBuffer, GpuContext, GraphicsPipeline, Pass, PipelineHandle, PipelineState, Queue, Sampler,
     SamplerDesc, Submission, SurfaceFrame, Texture, TextureFormat, TextureUsages, Viewport,
 };
 use dome_math::{Mat4, Transform, Vec2, Vec3};
+use dome_shader::Fvec4;
 use std::collections::HashMap;
 use std::mem::size_of;
 
@@ -198,15 +198,15 @@ impl Renderer {
         );
         let limits = device.limits();
         assert!(
-            dome_gpu::TEXTURE_TABLE_CAPACITY <= limits.max_sampled_images_per_shader_stage,
+            dome_shader::TEXTURE_TABLE_CAPACITY <= limits.max_sampled_images_per_shader_stage,
             "the renderer material table of {} images outruns the device limit of {}",
-            dome_gpu::TEXTURE_TABLE_CAPACITY,
+            dome_shader::TEXTURE_TABLE_CAPACITY,
             limits.max_sampled_images_per_shader_stage,
         );
         assert!(
-            dome_gpu::SAMPLER_TABLE_CAPACITY <= limits.max_samplers_per_shader_stage,
+            dome_shader::SAMPLER_TABLE_CAPACITY <= limits.max_samplers_per_shader_stage,
             "the renderer material table of {} samplers outruns the device limit of {}",
-            dome_gpu::SAMPLER_TABLE_CAPACITY,
+            dome_shader::SAMPLER_TABLE_CAPACITY,
             limits.max_samplers_per_shader_stage,
         );
         let draw = GraphicsPipeline::new_depth(

@@ -1,11 +1,11 @@
 use crate::abi::{PROBE, ProbeRecord};
 use crate::environment::Environment;
 use crate::growing::Growing;
-use dome_gpu::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
-use dome_gpu_device::{
+use dome_gpu::{
     BufferBinding, BufferUsages, Device, Queue, Sampler, SamplerTable, Texture, TextureTable,
 };
 use dome_math::{Mat4, Transform, Vec3};
+use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use std::mem::size_of;
 
 const PROBE_BYTES: u64 = size_of::<ProbeRecord>() as u64;
@@ -132,8 +132,8 @@ fn record(
     }
 }
 
-fn vector(value: Vec3, w: f32) -> dome_gpu::Fvec4 {
-    dome_gpu::Fvec4 {
+fn vector(value: Vec3, w: f32) -> dome_shader::Fvec4 {
+    dome_shader::Fvec4 {
         x: value.x,
         y: value.y,
         z: value.z,
@@ -141,9 +141,9 @@ fn vector(value: Vec3, w: f32) -> dome_gpu::Fvec4 {
     }
 }
 
-fn column(matrix: Mat4, index: usize) -> dome_gpu::Fvec4 {
+fn column(matrix: Mat4, index: usize) -> dome_shader::Fvec4 {
     let held = matrix.col(index);
-    dome_gpu::Fvec4 {
+    dome_shader::Fvec4 {
         x: held.x,
         y: held.y,
         z: held.z,

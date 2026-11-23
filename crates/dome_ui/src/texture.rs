@@ -1,8 +1,8 @@
-use dome_gpu::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, Device, Filter, Queue, Sampler, SamplerDesc, SamplerTable, Texture, TextureFormat,
     TextureTable, TextureUsages,
 };
+use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use dome_text::Text;
 use std::collections::{HashMap, HashSet};
 

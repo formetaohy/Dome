@@ -1,3 +1,4 @@
+mod jpeg;
 mod mip;
 mod png;
 mod radiance;

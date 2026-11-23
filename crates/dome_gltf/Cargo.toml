@@ -16,7 +16,6 @@ workspace = true
 dome_animation = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-jpeg-decoder = { workspace = true }
 dome_image = { workspace = true }
 dome_math = { workspace = true }
-dome_render = { workspace = true }
+

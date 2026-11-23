@@ -9,9 +9,9 @@ use crate::palette::Skinning;
 use crate::shadow::Cascade;
 use crate::view::View;
 use dome_ecs::{Entity, World};
-use dome_gpu::Fvec4;
-use dome_gpu_device::{ClipSpace, Device};
+use dome_gpu::{ClipSpace, Device};
 use dome_math::{Mat4, Transform, Vec3, Vec4};
+use dome_shader::Fvec4;
 
 pub(crate) struct Batch {
     pub(crate) mesh: Mesh,

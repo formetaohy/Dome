@@ -1,4 +1,4 @@
-use crate::schema::ReferenceKind;
+use crate::component::ReferenceKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 const VISUAL: [ReferenceKind; 8] = [

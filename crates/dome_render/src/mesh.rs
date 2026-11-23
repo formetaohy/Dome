@@ -1,8 +1,8 @@
 use crate::abi::{SKIN_VERTEX, SkinVertexRecord, VERTEX_FLOATS, Vertex};
 use crate::span;
-use dome_gpu::{Fvec4, Uvec4};
-use dome_gpu_device::{BufferUsages, Device, GpuBuffer, Queue};
+use dome_gpu::{BufferUsages, Device, GpuBuffer, Queue};
 use dome_math::{Aabb, Vec3};
+use dome_shader::{Fvec4, Uvec4};
 use std::mem::size_of;
 
 const VERTEX_BYTES: u64 = VERTEX_FLOATS as u64 * 4;
@@ -252,7 +252,7 @@ impl MeshLibrary {
         &self.buffer
     }
 
-    pub(crate) fn skin_binding(&self, geometry: &Geometry) -> dome_gpu_device::BufferBinding<'_> {
+    pub(crate) fn skin_binding(&self, geometry: &Geometry) -> dome_gpu::BufferBinding<'_> {
         if geometry.skin_count == 0 {
             self.skin_buffer.binding(0, SKIN_BYTES)
         } else {

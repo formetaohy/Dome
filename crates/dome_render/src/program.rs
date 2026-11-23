@@ -28,8 +28,8 @@ use crate::abi::{
     SHADOW_CASCADES, SkinVertexRecord, SkyRecord, TemporalRecord, TonemapRecord,
     TransparentSetupRecord, VERTEX_FLOATS, ViewRecord, WORKGROUP,
 };
-use dome_gpu::AtomicU32;
-use dome_gpu::{ComputeProgram, Fvec2, Fvec4, GraphicsProgram, Read, ReadWrite, Uvec3};
+use dome_shader::AtomicU32;
+use dome_shader::{ComputeProgram, Fvec2, Fvec4, GraphicsProgram, Read, ReadWrite, Uvec3};
 
 pub(crate) const CULL_VIEW: u32 = 0;
 pub(crate) const CULL_INSTANCES: u32 = 1;

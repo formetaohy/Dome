@@ -1,5 +1,5 @@
 use crate::view::View;
-use dome_gpu_device::ClipSpace;
+use dome_gpu::ClipSpace;
 use dome_math::{Mat4, Transform, Vec2, Vec3, Vec4};
 
 #[derive(Clone, Copy, Debug, PartialEq)]

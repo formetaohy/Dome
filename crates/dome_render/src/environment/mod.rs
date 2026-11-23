@@ -4,7 +4,7 @@ mod brdf;
 mod panorama;
 mod sample;
 
-use dome_gpu_device::{Sampler, Texture, TextureFormat};
+use dome_gpu::{Sampler, Texture, TextureFormat};
 use dome_math::Vec3;
 
 pub use atmosphere::{Atmosphere, MODEL_VERSION, PANORAMA_HEIGHT, PANORAMA_WIDTH};

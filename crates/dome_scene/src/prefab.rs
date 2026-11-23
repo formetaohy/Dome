@@ -1,13 +1,13 @@
 use crate::animation::AnimationEntry;
+use crate::component::Schema;
+use crate::component::{FieldKind, ReferenceKind};
 use crate::delta::{Asset, owned};
 use crate::edit::Edit;
 use crate::graph::GraphEntry;
 use crate::image::ImageSource;
 use crate::node::Node;
 use crate::nodes::Nodes;
-use crate::registry::Registry;
 use crate::scene::Scene;
-use crate::schema::{FieldKind, ReferenceKind};
 use crate::skin::SkinEntry;
 use crate::value::Value;
 use std::cmp::Reverse;
@@ -20,24 +20,23 @@ pub(crate) const FORMAT: &str = "dome_prefab";
 
 pub(crate) struct Loader {
     top: PathBuf,
-    registry: Arc<Registry>,
+    schema: Arc<dyn Schema>,
     stack: Vec<PathBuf>,
     cache: HashMap<PathBuf, Scene>,
 }
 
 impl Loader {
-    pub(crate) fn new(top: PathBuf, registry: Arc<Registry>) -> Self {
+    pub(crate) fn new(top: PathBuf, schema: Arc<dyn Schema>) -> Self {
         Self {
             top,
-            registry,
+            schema,
             stack: Vec::new(),
             cache: HashMap::new(),
         }
     }
 
     pub(crate) fn document(&mut self, text: &str, root: PathBuf, what: &str) -> Scene {
-        let mut scene =
-            crate::parse::document(text, root.clone(), what, Arc::clone(&self.registry));
+        let mut scene = crate::parse::document(text, root.clone(), what, Arc::clone(&self.schema));
         self.expand(&mut scene, &root, what);
         scene.validate(what);
         scene
@@ -362,15 +361,10 @@ fn remap_overrides(template: &Scene, node: &mut Node, prefix: &str) {
             continue;
         };
         let field = rest.split('.').next().unwrap_or(rest);
-        let Some(registration) = template.registry().registration(component) else {
+        let Some(spec) = template.schema().spec(component) else {
             continue;
         };
-        let Some(field) = registration
-            .spec
-            .fields
-            .iter()
-            .find(|held| held.name == field)
-        else {
+        let Some(field) = spec.fields.iter().find(|held| held.name == field) else {
             continue;
         };
         let kind = match field.kind {

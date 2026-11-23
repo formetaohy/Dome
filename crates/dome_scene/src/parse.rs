@@ -1,4 +1,5 @@
 use crate::animation::{AnimationAsset, AnimationEntry};
+use crate::component::Schema;
 use crate::environment::EnvironmentEntry;
 use crate::graph::{GraphEntry, parse as graph};
 use crate::image::{ImageEntry, address_of, filter_of};
@@ -8,7 +9,6 @@ use crate::model::ModelEntry;
 use crate::node::{InstanceOverride, Node};
 use crate::nodes::Nodes;
 use crate::reference::{ImageId, ModelId, NodeId};
-use crate::registry::Registry;
 use crate::scene::{FORMAT, Scene};
 use crate::shape::Shape;
 use crate::skin::{SkinAsset, SkinEntry};
@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub(crate) fn document(text: &str, root: PathBuf, what: &str, registry: Arc<Registry>) -> Scene {
+pub(crate) fn document(text: &str, root: PathBuf, what: &str, schema: Arc<dyn Schema>) -> Scene {
     let mut scene = Fields::of(Toml::parse(text, what), what);
     let format = scene
         .need("format")
@@ -66,11 +66,11 @@ pub(crate) fn document(text: &str, root: PathBuf, what: &str, registry: Arc<Regi
             .collect::<Vec<GraphEntry>>(),
         None => Vec::new(),
     };
-    let nodes = nodes(scene.need("nodes"), what, &registry);
+    let nodes = nodes(scene.need("nodes"), what, schema.as_ref());
     scene.done();
     Scene {
         root,
-        registry,
+        schema,
         prefab,
         owners: Arc::new(Vec::new()),
         instances: Arc::new(BTreeMap::new()),
@@ -492,18 +492,19 @@ fn address(value: Toml, what: &str) -> dome_render::AddressMode {
     address_of(&name).unwrap_or_else(|| panic!("{what} holds the wrap {name}"))
 }
 
-fn nodes(value: Toml, what: &str, registry: &Registry) -> Vec<Node> {
+fn nodes(value: Toml, what: &str, schema: &dyn Schema) -> Vec<Node> {
     value
         .array_items(&format!("the nodes of {what}"))
         .into_iter()
         .enumerate()
-        .map(|(index, item)| node(item, &format!("node {index} of {what}"), registry))
+        .map(|(index, item)| node(item, &format!("node {index} of {what}"), schema))
         .collect()
 }
 
-fn node(value: Toml, what: &str, registry: &Registry) -> Node {
+fn node(value: Toml, what: &str, schema: &dyn Schema) -> Node {
     let mut id = None;
     let mut parent = None;
+    let mut transform = None;
     let mut prefab = None;
     let mut overrides = Vec::new();
     let mut additions = Vec::new();
@@ -515,6 +516,12 @@ fn node(value: Toml, what: &str, registry: &Registry) -> Node {
             "parent" => {
                 parent = Some(value.string_value(&format!("the parent of {what}")));
             }
+            "transform" => {
+                transform = Some(crate::transform::parse(
+                    value,
+                    &format!("the transform of {what}"),
+                ));
+            }
             "prefab" => {
                 prefab = Some(PathBuf::from(
                     value.string_value(&format!("the prefab of {what}")),
@@ -524,7 +531,7 @@ fn node(value: Toml, what: &str, registry: &Registry) -> Node {
                 overrides = instance_overrides(value, &format!("the overrides of {what}"));
             }
             "additions" => {
-                additions = nodes(value, &format!("the additions of {what}"), registry);
+                additions = nodes(value, &format!("the additions of {what}"), schema);
             }
             "removals" => {
                 removals = value
@@ -535,7 +542,7 @@ fn node(value: Toml, what: &str, registry: &Registry) -> Node {
                     .collect();
             }
             other => {
-                let component = registry.parse(other, value, &format!("the {other} of {what}"));
+                let component = schema.parse(other, value, &format!("the {other} of {what}"));
                 components.insert(component.name(), component);
             }
         }
@@ -545,6 +552,7 @@ fn node(value: Toml, what: &str, registry: &Registry) -> Node {
     Node {
         id,
         parent,
+        transform: transform.unwrap_or(dome_math::Transform::IDENTITY),
         prefab,
         owner: None,
         overrides,

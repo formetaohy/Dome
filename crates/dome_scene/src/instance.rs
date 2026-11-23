@@ -6,7 +6,6 @@ use crate::target::{Target, valid_id};
 use crate::value::{Effect, Value};
 use std::collections::{BTreeSet, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 
 impl Scene {
     pub fn structurally_editable(&self, index: usize) -> bool {
@@ -252,7 +251,7 @@ impl Edit<'_> {
             .prefab
             .clone()
             .expect("a prefab instance names its prefab");
-        let mut loader = Loader::new(self.root.clone(), Arc::clone(&self.registry));
+        let mut loader = Loader::new(self.root.clone(), self.schema_arc());
         let loaded = catch_unwind(AssertUnwindSafe(|| {
             loader.load(&self.root, &path, "the instance")
         }))
@@ -555,7 +554,7 @@ impl Edit<'_> {
             .clone()
             .expect("a prefab instance names its prefab");
         let loaded = catch_unwind(AssertUnwindSafe(|| {
-            Loader::new(self.root.clone(), Arc::clone(&self.registry)).load(
+            Loader::new(self.root.clone(), self.schema_arc()).load(
                 &self.root,
                 &prefab,
                 "the instance",
@@ -581,7 +580,7 @@ impl Edit<'_> {
         restored.remap(&format!("{}_", self.nodes[marker].id));
         restored.validate(self.scene, &self.nodes[index].id)?;
         self.change_node(index, |held, _| {
-            held.insert_component_box(restored);
+            held.insert_component(restored);
             Ok(())
         })?;
         Ok(true)

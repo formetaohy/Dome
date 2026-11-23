@@ -1,0 +1,27 @@
+[package]
+name = "dome_asset"
+version.workspace = true
+edition.workspace = true
+description = "The asset library and its import pipeline, turning declared scene assets into runtime ones"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_animation = { workspace = true }
+dome_audio = { workspace = true }
+dome_gltf = { workspace = true }
+dome_image = { workspace = true }
+dome_math = { workspace = true }
+dome_physics = { workspace = true }
+dome_render = { workspace = true }
+dome_scene = { workspace = true }
+dome_schema = { workspace = true }
+
+[dev-dependencies]
+dome_ecs = { workspace = true }
+dome_gpu = { workspace = true }
+dome_math = { workspace = true }
+serde_json = { workspace = true }

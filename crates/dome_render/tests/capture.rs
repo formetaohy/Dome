@@ -1,5 +1,5 @@
 use dome_ecs::World;
-use dome_gpu_device::{
+use dome_gpu::{
     AddressMode, Backend, Filter, GpuContext, GpuRequest, SamplerDesc, Texture, TextureFormat,
     TextureUsages,
 };
@@ -46,7 +46,7 @@ const CLEAR: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
 #[test]
 fn a_probe_captures_the_boxes_and_damage_its_box_holds() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         capture(*backend);
         shadowed(*backend);
         damaged(*backend);

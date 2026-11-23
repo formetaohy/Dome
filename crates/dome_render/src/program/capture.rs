@@ -1,6 +1,6 @@
 use super::*;
 
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod capture_atlas {
     #[binding]
     fn setup(setup: Read<AtlasRecord>) {}

@@ -1,6 +1,6 @@
 use crate::abi::{HZB_LEVEL, HZB_SCALE, HZB_STEP, HzbLevelRecord, HzbStepRecord};
 use crate::program;
-use dome_gpu_device::{
+use dome_gpu::{
     BindGroup, Binding, BufferBinding, BufferUsages, Device, Draw, GpuBuffer, GraphicsPipeline,
     Pass, PipelineHandle, Queue, Sampler, Submission, Texture, TextureFormat, TextureUsages,
     Viewport,

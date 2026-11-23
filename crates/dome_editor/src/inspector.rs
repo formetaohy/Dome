@@ -27,13 +27,14 @@ pub(crate) fn panel<'a>(ctx: &BuildContext<'_, Message>, view: &View<'a>) -> Ele
                 return section(ctx, "Inspector", children);
             };
             children.push(parent(ctx, view, id));
+            children.push(transform(ctx, view, target));
             let mut missing = Vec::new();
-            for spec in view.scene.registry().components() {
+            for spec in view.scene.schema().specs() {
                 let present = view.scene.nodes()[index].has_component(spec.name);
                 if spec.required || present {
                     children.push(component(ctx, view, target, spec, present));
                 } else {
-                    missing.push(spec);
+                    missing.push(*spec);
                 }
             }
             if !missing.is_empty() {
@@ -200,6 +201,21 @@ fn add_component<'a>(
         Message::AddComponent(target.clone(), names[at].clone())
     })
     .tooltip("Add component")
+}
+
+fn transform<'a>(
+    ctx: &BuildContext<'_, Message>,
+    view: &View<'a>,
+    target: &Target,
+) -> Element<'a, Message> {
+    let theme = ctx.theme();
+    Element::column().width(Length::Fill).gap(5.0).children([
+        text(
+            "Transform",
+            TextStyle::new(theme.font(dome_ui::Level::Label), theme.palette.on_surface),
+        ),
+        fields_section(ctx, view, target, "transform", dome_scene::TRANSFORM_FIELDS),
+    ])
 }
 
 fn fields_section<'a>(

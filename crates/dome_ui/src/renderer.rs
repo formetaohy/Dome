@@ -3,7 +3,7 @@ use crate::element::Layer;
 use crate::paint::{Instance, LayerBuffer};
 use crate::shader;
 use crate::texture::Textures;
-use dome_gpu_device::{
+use dome_gpu::{
     BindGroup, Binding, BufferUsages, ClipSpace, Device, Draw, GpuBuffer, GraphicsPipeline, Pass,
     PipelineState, Queue, Submission, Texture, TextureFormat, TextureUsages,
 };

@@ -1,7 +1,7 @@
+use crate::component::{FieldKind, ReferenceKind};
 use crate::field::{Axis, no_axis};
 use crate::scene::Scene;
 use crate::scene_value::SceneValue;
-use crate::schema::{FieldKind, ReferenceKind};
 use crate::target::valid_id;
 use crate::value::Value;
 use dome_toml::Toml;

@@ -1,4 +1,4 @@
-use dome_gpu_device::{Texture, TextureFormat, TextureUsages};
+use dome_gpu::{Texture, TextureFormat, TextureUsages};
 use dome_math::Vec3;
 use half::f16;
 

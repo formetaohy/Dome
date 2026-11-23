@@ -1,7 +1,7 @@
+use crate::component::{FieldKind, ReferenceKind};
 use crate::field::Axis;
 use crate::field::{finite, no_axis, number, with_axis};
 use crate::scene::Scene;
-use crate::schema::{FieldKind, ReferenceKind};
 use crate::value::Value;
 use dome_math::Vec3;
 use dome_toml::{Toml, floats};

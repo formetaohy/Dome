@@ -1,4 +1,4 @@
-use dome_gpu_device::{AddressMode, Backend, Filter, GpuContext, GpuRequest, Queue, Texture};
+use dome_gpu::{AddressMode, Backend, Filter, GpuContext, GpuRequest, Queue, Texture};
 use dome_math::Vec3;
 use dome_render::environment::{LEVELS, Panorama, SPECULAR_WIDTH};
 use dome_render::{Renderer, SamplerDesc, TextureFormat};
@@ -10,7 +10,7 @@ const HEIGHT: u32 = 16;
 
 #[test]
 fn a_baked_environment_lights_a_uniform_sky_evenly_and_holds_its_hemispheres_apart() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         baked(*backend);
     }
 }
@@ -78,7 +78,7 @@ fn baked(backend: Backend) {
 
 #[test]
 fn an_atmosphere_paints_a_blue_day_and_a_red_sunset() {
-    for backend in dome_gpu_device::PREFERENCE {
+    for backend in dome_gpu::PREFERENCE {
         painted(*backend);
     }
 }

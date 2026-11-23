@@ -1,6 +1,6 @@
+use crate::component::ReferenceKind;
 use crate::edit::Edit;
 use crate::graph::{GraphAsset, GraphEntry};
-use crate::schema::ReferenceKind;
 use dome_animation::{Comparison, Parameter};
 
 impl Edit<'_> {

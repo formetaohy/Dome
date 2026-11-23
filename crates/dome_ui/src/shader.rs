@@ -1,7 +1,7 @@
 use crate::abi::{UiInstanceRecord, UiScreenRecord};
-use dome_gpu::{Fvec2, Fvec4, GraphicsProgram};
+use dome_shader::{Fvec2, Fvec4, GraphicsProgram};
 
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod paint {
     #[binding]
     fn screen(screen: Read<UiScreenRecord>) {}

@@ -33,7 +33,7 @@ pub use abi::{SkinVertexRecord, Vertex};
 pub use camera::Camera;
 pub use capture::{Capture, CaptureProbe, PROBE_RESOLUTION, install_captures};
 pub use damage::SceneDamage;
-pub use dome_gpu_device::{
+pub use dome_gpu::{
     AddressMode, Filter, Sampler, SamplerDesc, Texture, TextureFormat, TextureUsages,
 };
 pub use environment::{Baked, Environment};

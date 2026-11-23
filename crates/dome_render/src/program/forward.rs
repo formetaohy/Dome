@@ -1,6 +1,6 @@
 use super::*;
 
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod instanced {
     #[binding]
     fn light(light: Read<LightRecord>) {}
@@ -952,7 +952,7 @@ mod instanced {
         if stored.x < depth { 0.0 } else { 1.0 }
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod casting {
     #[binding]
     fn palette(palette: Read<JointRecord>) {}
@@ -1045,7 +1045,7 @@ mod casting {
         target = fvec4(placed.z / placed.w, 0.0, 0.0, 1.0);
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod selection {
     #[binding]
     fn view(view: Read<ViewRecord>) {}
@@ -1124,7 +1124,7 @@ mod selection {
         target = space;
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod depth {
     #[binding]
     fn view(view: Read<ViewRecord>) {}
@@ -1252,7 +1252,7 @@ pub(crate) fn picking() -> GraphicsProgram {
 pub(crate) fn debug_lines() -> GraphicsProgram {
     lines()
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod lines {
     #[binding]
     fn view(view: Read<ViewRecord>) {}
@@ -1334,7 +1334,7 @@ mod lines {
         a * local.x + b * local.y + c * local.z + d * local.w
     }
 }
-#[dome_gpu::graphics]
+#[dome_shader::graphics]
 mod motion {
     #[binding]
     fn view(view: Read<MotionRecord>) {}

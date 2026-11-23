@@ -1,7 +1,7 @@
 use dome_app::{App, AppConfig, HeadlessConfig, Time};
 use dome_ecs::World;
 use dome_image::Image;
-use dome_scene::SceneNode;
+use dome_schema::SceneNode;
 use std::fs;
 use std::path::PathBuf;
 
