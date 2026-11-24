@@ -282,7 +282,7 @@ fn a_scene_resolves_its_skin_and_graph_into_runtime_components() {
             .playing(),
         "an authored playback change replaces the machine an asset reload kept",
     );
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     let parsed = Scene::parse(&written, ".", "the written scene", schema());
     assert_eq!(parsed, scene);
     assert!(parsed.graph("rig_graph").is_some());

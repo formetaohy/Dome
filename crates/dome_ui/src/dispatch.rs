@@ -866,12 +866,11 @@ impl<A: Clone> Ui<A> {
         let Some(node) = self.edit else {
             return;
         };
-        let preedit = self.preedit.clone().unwrap_or_default();
         let text = self.tree.nodes[node]
             .runtime
             .edit
             .take()
-            .map_or_else(String::new, |edit| edit.composed(&preedit));
+            .map_or_else(String::new, |edit| edit.text().to_string());
         self.edit = None;
         self.input.clear_preedit();
         self.preedit = None;

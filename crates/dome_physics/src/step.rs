@@ -5,7 +5,7 @@ use crate::body::Body;
 use crate::cache::{self, ContactCache};
 use crate::contact::{self, Manifold};
 use crate::event::Collisions;
-use crate::island;
+use crate::island::Islands;
 use crate::joint_solver::{self, JointConstraint};
 use crate::solid::Solid;
 use crate::solver::{self, Contact};
@@ -47,6 +47,7 @@ pub(crate) struct Simulation {
     wakes: Vec<usize>,
     adjacency: Vec<Vec<usize>>,
     pending: Vec<usize>,
+    islands: Islands,
 }
 
 impl Simulation {
@@ -181,7 +182,8 @@ impl Simulation {
         self.links
             .extend(self.contacts.iter().map(|held| (held.first, held.second)));
         self.links.extend_from_slice(&self.pairs);
-        island::settle(self.table.bodies_mut(), &self.links, &self.driven, delta);
+        self.islands
+            .settle(self.table.bodies_mut(), &self.links, &self.driven, delta);
         self.cache.clear();
         for at in 0..self.contacts.len() {
             let held = &self.contacts[at];

@@ -121,7 +121,7 @@ fn to_byte(value: f32) -> u8 {
 
 #[test]
 fn a_user_interface_recycles_the_texture_slots_of_removed_images() {
-    const RESERVED: u32 = 2;
+    let reserved = dome_ui::RESERVED_SLOTS;
     let context = Gpu::open(&GpuRequest::default())
         .unwrap_or_else(|error| panic!("no device recycles interface textures: {error}"));
     let device = context.device();
@@ -137,7 +137,7 @@ fn a_user_interface_recycles_the_texture_slots_of_removed_images() {
         format,
         TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
     );
-    let slot = device.tables().textures - RESERVED;
+    let slot = device.tables().textures - reserved;
     let red = Texture::new(
         device,
         "dome recycled red",

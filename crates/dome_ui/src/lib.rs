@@ -54,5 +54,6 @@ pub use renderer::Renderer;
 pub use scroll::Window;
 pub use style::{Border, Fill, State, Surface};
 pub use text::{Text, TextLayout, TextStyle};
+pub use texture::RESERVED_SLOTS;
 pub use theme::{Level, Metrics, Palette, Role, Theme, TypeStyle, Typography};
 pub use ui::{BuildContext, Ui};

@@ -81,12 +81,7 @@ impl Text {
         if self.frame.is_multiple_of(120) {
             self.evict();
         }
-        let recycled = self.atlas.take_recycled();
-        if !self.atlas.exhausted() {
-            return recycled;
-        }
-        self.atlas.reset();
-        true
+        self.atlas.take_recycled()
     }
 
     pub fn set_pixels_per_point(&mut self, pixels_per_point: f32) {

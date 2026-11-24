@@ -341,7 +341,6 @@ impl<'a> Painter<'a> {
         } = self;
         let clip = *clip;
         let gamma = *gamma;
-        let (atlas, sampler) = textures.atlas();
         let mut ink: Option<Rect> = None;
         text.emit(layout, origin, color.to_array(), |plot| {
             let rect = Rect::from_min_size(
@@ -354,7 +353,7 @@ impl<'a> Painter<'a> {
             instance.color = plot.color;
             instance.uv = plot.slot.uv;
             instance.extra = [gamma, 1.0, 0.0, 0.0];
-            (instance.meta[2], instance.meta[3]) = (atlas, sampler);
+            (instance.meta[2], instance.meta[3]) = textures.atlas(plot.slot.page);
             if instance.touches(clip.rect) {
                 instances.material.push(clipped(instance, clip));
             }
@@ -385,14 +384,13 @@ impl<'a> Painter<'a> {
         } = self;
         let clip = *clip;
         let gamma = *gamma;
-        let (atlas, sampler) = textures.atlas();
         text.icon(icon.character(), glyph, center, color.to_array(), |plot| {
             let mut instance = Instance::blank(KIND_GLYPH);
             instance.rect = [plot.left, plot.top, plot.width, plot.height];
             instance.color = plot.color;
             instance.uv = plot.slot.uv;
             instance.extra = [gamma, cosine, sine, 0.0];
-            (instance.meta[2], instance.meta[3]) = (atlas, sampler);
+            (instance.meta[2], instance.meta[3]) = textures.atlas(plot.slot.page);
             if instance.touches(clip.rect) {
                 instances.material.push(clipped(instance, clip));
             }

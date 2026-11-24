@@ -267,9 +267,10 @@ impl Table {
             let swept = self.bodies[at].swept_aabb(delta);
             self.bodies[at].bounds = swept.map(|(aabb, _)| aabb);
             match (swept, self.bodies[at].proxy) {
-                (Some((aabb, _)), Some(proxy)) => {
-                    let held = self.tree.refresh(proxy, aabb);
-                    if held && !self.bodies[at].active() {
+                (Some((aabb, _)), Some(mut proxy)) => {
+                    let grown = self.tree.refresh(&mut proxy, at as u32, aabb);
+                    self.bodies[at].proxy = Some(proxy);
+                    if grown && !self.bodies[at].active() {
                         self.wake_overlap(aabb, at);
                     }
                 }

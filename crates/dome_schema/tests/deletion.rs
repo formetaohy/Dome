@@ -183,7 +183,7 @@ fn deleting_a_prefab_instance_prunes_the_assets_it_owns() {
 #[test]
 fn a_refused_deletion_leaves_the_scene_as_it_stood() {
     let mut scene = Scene::parse(REFERENCED, ".", "a referenced scene", schema());
-    let before = scene.write();
+    let before = scene.write().expect("a scene writes its text");
     assert!(
         edit(&mut scene, |edit| edit
             .remove(&Target::Mesh(String::from("cube"))))
@@ -191,23 +191,23 @@ fn a_refused_deletion_leaves_the_scene_as_it_stood() {
         "a scene refuses to delete the mesh a node renders",
     );
     assert_eq!(
-        scene.write(),
+        scene.write().expect("a scene writes its text"),
         before,
         "a refused deletion changes no node and no asset",
     );
-    let baked = scene.write();
+    let baked = scene.write().expect("a scene writes its text");
     edit(&mut scene, |edit| {
         edit.remove(&Target::Node(String::from("cube")))
     })
     .expect("an unreferenced node deletes");
     assert_ne!(
-        scene.write(),
+        scene.write().expect("a scene writes its text"),
         baked,
         "a deletion that stands writes its own scene",
     );
 
     let mut rigged = Scene::parse(ARMATURE, ".", "an armature scene", schema());
-    let stood = rigged.write();
+    let stood = rigged.write().expect("a rigged scene writes its text");
     assert!(
         edit(&mut rigged, |edit| edit
             .remove(&Target::Node(String::from("rig"))))
@@ -215,7 +215,7 @@ fn a_refused_deletion_leaves_the_scene_as_it_stood() {
         "a scene refuses to delete a subtree a joint of another node reaches into",
     );
     assert_eq!(
-        rigged.write(),
+        rigged.write().expect("a rigged scene writes its text"),
         stood,
         "a refused subtree deletion leaves the scene as it stood",
     );

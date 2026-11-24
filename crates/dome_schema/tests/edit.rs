@@ -59,7 +59,7 @@ fn an_edit_transaction_returns_the_scene_it_edited() {
     fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), INSTANCE).expect("a test writes its scene");
     let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
-    let before = scene.write();
+    let before = scene.write().expect("a scene writes its text");
     let (_, delta) = scene
         .edit(|edit| {
             edit.insert_child(
@@ -79,24 +79,24 @@ fn an_edit_transaction_returns_the_scene_it_edited() {
         .expect("an instance node joins the prefab instance");
     assert!(scene.node_index("prop_antenna").is_some());
     assert_eq!(scene.instance_changes("prop"), 2);
-    let after = scene.write();
+    let after = scene.write().expect("a scene writes its text");
     assert_ne!(after, before);
 
     delta.revert(&mut scene);
     assert_eq!(
-        scene.write(),
+        scene.write().expect("a scene writes its text"),
         before,
         "an undone edit returns every node, asset and instance the scene stood on",
     );
     assert_eq!(scene.instance_changes("prop"), 0);
     delta.apply(&mut scene);
     assert_eq!(
-        scene.write(),
+        scene.write().expect("a scene writes its text"),
         after,
         "a redone edit returns every change it recorded",
     );
     delta.revert(&mut scene);
-    assert_eq!(scene.write(), before);
+    assert_eq!(scene.write().expect("a scene writes its text"), before);
 
     let failed = scene.edit(|edit| {
         edit.add_mesh("extra", Shape::Cube)?;
@@ -112,7 +112,7 @@ fn an_edit_transaction_returns_the_scene_it_edited() {
         "an edit of a node the scene holds not fails",
     );
     assert_eq!(
-        scene.write(),
+        scene.write().expect("a scene writes its text"),
         before,
         "a failed edit leaves no mesh and no node it added",
     );
@@ -126,6 +126,40 @@ fn an_edit_transaction_returns_the_scene_it_edited() {
     );
     delta.revert(&mut scene);
     assert_eq!(scene.meshes().len(), 1, "an undone mesh leaves the scene");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_edit_that_breaks_a_scene_invariant_returns_the_scene_it_started_on() {
+    let root = directory("edit_gate");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
+    fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
+    fs::write(root.join("scene.toml"), INSTANCE).expect("a test writes its scene");
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
+    let before = scene.write().expect("a scene writes its text");
+    let index = scene
+        .node_index("prop")
+        .expect("the scene holds its prefab instance");
+    let failed = edit(&mut scene, |edit| {
+        edit.set_transform(
+            index,
+            dome_math::Transform::from_scale_rotation_translation(
+                dome_math::Vec3::new(0.0, 1.0, 1.0),
+                dome_math::Quat::IDENTITY,
+                dome_math::Vec3::ZERO,
+            ),
+        )
+    });
+    assert!(
+        failed.is_err(),
+        "an edit that collapses the scale of a node fails",
+    );
+    assert_eq!(
+        scene.write().expect("a scene writes its text"),
+        before,
+        "a refused edit leaves the scene it started on",
+    );
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -163,7 +197,7 @@ fn an_unpacked_instance_keeps_the_nodes_and_assets_it_materialized() {
             .is_none(),
         "the unpacked instance leaves its assets to the scene",
     );
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     assert!(
         !written.contains("prefab = "),
         "no instance survives unpacking"

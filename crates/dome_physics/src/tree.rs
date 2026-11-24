@@ -100,12 +100,12 @@ impl Tree {
         self.nodes[leaf].left = proxy as usize;
     }
 
-    pub(crate) fn refresh(&mut self, leaf: usize, aabb: Aabb) -> bool {
-        if covers(self.nodes[leaf].aabb, aabb) {
+    pub(crate) fn refresh(&mut self, leaf: &mut usize, proxy: u32, aabb: Aabb) -> bool {
+        if covers(self.nodes[*leaf].aabb, aabb) {
             return false;
         }
-        self.nodes[leaf].aabb = fat(aabb);
-        self.climb(leaf);
+        self.remove(*leaf);
+        *leaf = self.insert(aabb, proxy);
         true
     }
 

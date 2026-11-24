@@ -84,7 +84,7 @@ mask = 65535
 #[test]
 fn a_scene_installs_bodies_and_steps_them() {
     let scene = Scene::parse(SCENE, ".", "the physics scene", schema());
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     let reloaded = Scene::parse(&written, ".", "the written physics scene", schema());
     assert_eq!(scene, reloaded);
     let mut world = World::new();
@@ -214,7 +214,7 @@ mask = 65535
 #[test]
 fn a_scene_composes_the_colliders_of_a_node_into_its_body() {
     let scene = Scene::parse(COMPOUND, ".", "the compound scene", schema());
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     assert_eq!(
         Scene::parse(&written, ".", "the written compound scene", schema()),
         scene,
@@ -358,7 +358,7 @@ mask = 65535
 #[test]
 fn a_scene_collides_the_triangles_of_its_mesh() {
     let scene = Scene::parse(MESH, ".", "the mesh scene", schema());
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     assert!(written.contains("shape = \"mesh\""));
     assert!(written.contains("mesh = \"ground\""));
     assert_eq!(

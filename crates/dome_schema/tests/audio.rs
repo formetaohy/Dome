@@ -143,7 +143,12 @@ fn an_authored_audio_source_installs_and_edits() {
         edit.set_property(&sound, "stream", &Value::Bool(true))
     })
     .expect("a sound streams");
-    assert!(scene.write().contains("stream = true"));
+    assert!(
+        scene
+            .write()
+            .expect("a scene writes its text")
+            .contains("stream = true")
+    );
     assert_eq!(source.priority(), 0);
     assert_eq!(
         scene.asset_ids(ReferenceKind::AudioBus),
@@ -207,7 +212,7 @@ fn an_authored_audio_source_installs_and_edits() {
     assert!(state.contains("bus = \"quiet\""));
     assert!(state.contains("playing = false"));
     assert!(state.contains("gain_db = -6.0"));
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     assert!(written.contains("[[sounds]]"));
     assert!(written.contains("[nodes.audio_source]"));
     assert!(written.contains("[nodes.audio_bus]"));

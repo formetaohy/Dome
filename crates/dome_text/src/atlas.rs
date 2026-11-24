@@ -5,6 +5,8 @@ use crate::glyph::GlyphRaster;
 
 const PADDING: u32 = 1;
 const SIZE: u32 = 2048;
+const PAGES: usize = 4;
+pub const PAGE_LIMIT: u16 = PAGES as u16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GlyphKey {
@@ -55,11 +57,12 @@ pub struct GlyphSlot {
     pub top: i32,
     pub width: u32,
     pub height: u32,
-    pub shelf: u16,
+    pub page: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Region {
+    pub page: u16,
     pub x: u32,
     pub y: u32,
     pub width: u32,
@@ -71,6 +74,7 @@ impl Region {
         let x = self.x.min(other.x);
         let y = self.y.min(other.y);
         Self {
+            page: self.page,
             x,
             y,
             width: (self.x + self.width).max(other.x + other.width) - x,
@@ -89,19 +93,59 @@ struct Shelf {
     top: u32,
     height: u32,
     cursor: u32,
-    used: u64,
     keys: Vec<GlyphKey>,
 }
 
-pub struct Atlas {
+struct Page {
     pixels: Vec<u8>,
     shelves: Vec<Shelf>,
+    used: u64,
+}
+
+impl Page {
+    fn new(size: u32) -> Self {
+        Self {
+            pixels: vec![0u8; (size * size) as usize],
+            shelves: Vec::new(),
+            used: 0,
+        }
+    }
+
+    fn allocate(&mut self, size: u32, width: u32, height: u32) -> Option<(u32, u32, u16)> {
+        for (index, shelf) in self.shelves.iter_mut().enumerate() {
+            if shelf.height >= height && shelf.cursor + width + PADDING <= size {
+                let x = shelf.cursor;
+                shelf.cursor += width + PADDING;
+                return Some((x, shelf.top, index as u16));
+            }
+        }
+        let top = self
+            .shelves
+            .last()
+            .map_or(0, |shelf| shelf.top + shelf.height);
+        if top + height > size {
+            return None;
+        }
+        let index = self.shelves.len() as u16;
+        self.shelves.push(Shelf {
+            top,
+            height,
+            cursor: width + PADDING,
+            keys: Vec::new(),
+        });
+        Some((0, top, index))
+    }
+}
+
+pub struct Atlas {
+    size: u32,
+    capacity: usize,
+    pages: Vec<Page>,
     slots: HashMap<GlyphKey, Option<GlyphSlot>>,
     dirty: Vec<Region>,
     revision: u64,
     frame: u64,
     recycled: bool,
-    exhausted: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -119,37 +163,47 @@ impl Default for Atlas {
 
 impl Atlas {
     pub fn new() -> Self {
+        Self::with_capacity(SIZE, PAGES)
+    }
+
+    pub fn with_capacity(size: u32, pages: usize) -> Self {
+        assert!(
+            size.is_power_of_two(),
+            "an atlas of {size} texels a side keeps every glyph upload aligned",
+        );
+        assert!(pages > 0, "an atlas holds at least one page");
         Self {
-            pixels: vec![0u8; (SIZE * SIZE) as usize],
-            shelves: Vec::new(),
+            size,
+            capacity: pages,
+            pages: vec![Page::new(size)],
             slots: HashMap::new(),
             dirty: vec![Region {
+                page: 0,
                 x: 0,
                 y: 0,
-                width: SIZE,
-                height: SIZE,
+                width: size,
+                height: size,
             }],
             revision: 0,
             frame: 0,
             recycled: false,
-            exhausted: false,
         }
     }
 
     pub fn size(&self) -> u32 {
-        SIZE
+        self.size
     }
 
-    pub fn pixels(&self) -> &[u8] {
-        &self.pixels
+    pub fn page_count(&self) -> u16 {
+        self.pages.len() as u16
+    }
+
+    pub fn pixels(&self, page: u16) -> &[u8] {
+        &self.pages[page as usize].pixels
     }
 
     pub fn revision(&self) -> u64 {
         self.revision
-    }
-
-    pub fn exhausted(&self) -> bool {
-        self.exhausted
     }
 
     pub fn advance(&mut self) {
@@ -167,21 +221,6 @@ impl Atlas {
         std::mem::take(&mut self.dirty)
     }
 
-    pub fn reset(&mut self) {
-        self.pixels.fill(0);
-        self.shelves.clear();
-        self.slots.clear();
-        self.exhausted = false;
-        self.dirty.clear();
-        self.dirty.push(Region {
-            x: 0,
-            y: 0,
-            width: SIZE,
-            height: SIZE,
-        });
-        self.touch();
-    }
-
     pub fn slot(&mut self, fonts: &mut Fonts, request: GlyphRequest) -> Slot {
         let key = GlyphKey::new(
             request.face,
@@ -191,14 +230,11 @@ impl Atlas {
         );
         match self.slots.get(&key).copied() {
             Some(Some(slot)) => {
-                self.touch_shelf(slot.shelf);
+                self.pages[slot.page as usize].used = self.frame;
                 return Slot::Ready(slot);
             }
             Some(None) => return Slot::Missing,
             None => {}
-        }
-        if self.exhausted {
-            return Slot::Full;
         }
         let Some(raster) = fonts.rasterize(
             request.face,
@@ -210,124 +246,104 @@ impl Atlas {
             self.slots.insert(key, None);
             return Slot::Missing;
         };
-        let Some(slot) = self.insert(key, &raster) else {
-            self.exhausted = true;
-            return Slot::Full;
-        };
-        self.slots.insert(key, Some(slot));
-        Slot::Ready(slot)
+        match self.insert(key, &raster) {
+            Some(slot) => Slot::Ready(slot),
+            None => Slot::Full,
+        }
     }
 
     fn insert(&mut self, key: GlyphKey, raster: &GlyphRaster) -> Option<GlyphSlot> {
+        let size = self.size;
         let width = raster.width + PADDING * 2;
         let height = raster.height + PADDING * 2;
-        if width > SIZE || height > SIZE {
+        if width > size || height > size {
             return None;
         }
+        let mut page = 0usize;
         let (x, y, shelf) = loop {
-            if let Some(at) = self.allocate(width, height) {
-                break at;
+            if page < self.pages.len()
+                && let Some(held) = self.pages[page].allocate(size, width, height)
+            {
+                break held;
             }
-            if !self.recycle() {
-                return None;
+            if page + 1 < self.pages.len() {
+                page += 1;
+                continue;
             }
+            if self.pages.len() < self.capacity {
+                self.pages.push(Page::new(size));
+                page = self.pages.len() - 1;
+                continue;
+            }
+            page = usize::from(self.recycle()?);
         };
+        let held = &mut self.pages[page];
+        let stride = size as usize;
         for row in 0..raster.height {
             let source = (row * raster.width) as usize;
-            let destination = ((y + PADDING + row) * SIZE + x + PADDING) as usize;
-            self.pixels[destination..destination + raster.width as usize]
+            let destination = (y + PADDING + row) as usize * stride + (x + PADDING) as usize;
+            held.pixels[destination..destination + raster.width as usize]
                 .copy_from_slice(&raster.data[source..source + raster.width as usize]);
         }
+        held.shelves[shelf as usize].keys.push(key);
+        held.used = self.frame;
         self.mark(Region {
+            page: page as u16,
             x,
             y,
             width,
             height,
         });
-        self.shelves[shelf as usize].keys.push(key);
-        self.touch();
-        Some(GlyphSlot {
+        let scale = size as f32;
+        let slot = GlyphSlot {
             uv: [
-                (x + PADDING) as f32 / SIZE as f32,
-                (y + PADDING) as f32 / SIZE as f32,
-                (x + PADDING + raster.width) as f32 / SIZE as f32,
-                (y + PADDING + raster.height) as f32 / SIZE as f32,
+                (x + PADDING) as f32 / scale,
+                (y + PADDING) as f32 / scale,
+                (x + PADDING + raster.width) as f32 / scale,
+                (y + PADDING + raster.height) as f32 / scale,
             ],
             left: raster.left,
             top: raster.top,
             width: raster.width,
             height: raster.height,
-            shelf,
-        })
+            page: page as u16,
+        };
+        self.slots.insert(key, Some(slot));
+        self.bump_revision();
+        Some(slot)
     }
 
-    fn allocate(&mut self, width: u32, height: u32) -> Option<(u32, u32, u16)> {
-        for (index, shelf) in self.shelves.iter_mut().enumerate() {
-            if shelf.height >= height && shelf.cursor + width + PADDING <= SIZE {
-                let x = shelf.cursor;
-                shelf.cursor += width + PADDING;
-                shelf.used = self.frame;
-                return Some((x, shelf.top, index as u16));
-            }
-        }
-        let top = self
-            .shelves
-            .last()
-            .map_or(0, |shelf| shelf.top + shelf.height);
-        if top + height > SIZE {
-            return None;
-        }
-        let index = self.shelves.len() as u16;
-        self.shelves.push(Shelf {
-            top,
-            height,
-            cursor: width + PADDING,
-            used: self.frame,
-            keys: Vec::new(),
-        });
-        Some((0, top, index))
-    }
-
-    fn recycle(&mut self) -> bool {
+    fn recycle(&mut self) -> Option<u16> {
         let frame = self.frame;
-        let Some(index) = self
-            .shelves
+        let index = self
+            .pages
             .iter()
             .enumerate()
-            .filter(|(_, shelf)| shelf.used < frame)
-            .min_by_key(|(_, shelf)| shelf.used)
-            .map(|(index, _)| index)
-        else {
-            return false;
-        };
-        let (top, height, keys) = {
-            let shelf = &mut self.shelves[index];
-            shelf.cursor = 0;
-            shelf.used = frame;
-            (shelf.top, shelf.height, std::mem::take(&mut shelf.keys))
+            .filter(|(_, page)| page.used < frame)
+            .min_by_key(|(_, page)| page.used)
+            .map(|(index, _)| index)?;
+        let keys = {
+            let page = &mut self.pages[index];
+            page.used = frame;
+            page.pixels.fill(0);
+            page.shelves
+                .drain(..)
+                .flat_map(|shelf| shelf.keys)
+                .collect::<Vec<_>>()
         };
         for key in keys {
             self.slots.remove(&key);
         }
-        for row in top..top + height {
-            let start = (row * SIZE) as usize;
-            self.pixels[start..start + SIZE as usize].fill(0);
-        }
         self.mark(Region {
+            page: index as u16,
             x: 0,
-            y: top,
-            width: SIZE,
-            height,
+            y: 0,
+            width: self.size,
+            height: self.size,
         });
         self.recycled = true;
-        self.touch();
-        true
-    }
-
-    fn touch_shelf(&mut self, shelf: u16) {
-        if let Some(held) = self.shelves.get_mut(shelf as usize) {
-            held.used = self.frame;
-        }
+        self.bump_revision();
+        Some(index as u16)
     }
 
     fn mark(&mut self, region: Region) {
@@ -344,7 +360,7 @@ impl Atlas {
         self.dirty.push(held);
     }
 
-    fn touch(&mut self) {
+    fn bump_revision(&mut self) {
         self.revision = self
             .revision
             .checked_add(1)

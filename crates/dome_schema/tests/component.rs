@@ -270,7 +270,7 @@ fn a_derived_component_travels_through_every_layer() {
     })
     .expect("a derived tag joins its node");
     assert_eq!(scene.property(&player, "player"), Some(Value::Bool(true)));
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     assert!(written.contains("[nodes.health]"));
     assert!(written.contains("team = \"blue\""));
     assert!(!written.contains("cooldown"));
@@ -431,7 +431,7 @@ fn a_derived_component_holds_custom_values_and_asset_references() {
         scene.property(&player, "spawn.reach"),
         Some(Value::Number(0.0))
     );
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     assert!(written.contains("reach = 0.0"));
     let again = Scene::parse(&written, ".", "the written spawn scene", registry);
     assert_eq!(again, scene);

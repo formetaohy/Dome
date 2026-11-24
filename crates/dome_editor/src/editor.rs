@@ -254,25 +254,28 @@ impl Editor {
             ));
             return false;
         }
-        self.write();
-        true
+        self.write()
     }
 
-    fn overwrite(&mut self) {
+    fn overwrite(&mut self) -> bool {
         self.conflict = false;
-        self.write();
+        self.write()
     }
 
-    fn write(&mut self) {
+    fn write(&mut self) -> bool {
         self.finish_drag();
         self.commit();
         self.finish_property();
-        self.scene.save(&self.path);
+        if let Err(error) = self.scene.save(&self.path) {
+            self.error = Some(error);
+            return false;
+        }
         if let Some(watch) = &mut self.watch {
             watch.adopt(&self.path);
         }
         self.rewatch();
         self.dirty = false;
+        true
     }
 
     fn commit(&mut self) {
@@ -852,7 +855,9 @@ impl Editor {
             Action::Save => {
                 self.save();
             }
-            Action::Overwrite => self.overwrite(),
+            Action::Overwrite => {
+                self.overwrite();
+            }
             Action::Reload => self.reload(),
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),

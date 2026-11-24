@@ -59,7 +59,9 @@ pub(crate) fn write(root: &Path) {
             Ok(())
         })
         .expect("a new project builds its entry scene");
-    scene.save(root.join(Folder::Scene.name()).join(ENTRY));
+    scene
+        .save(root.join(Folder::Scene.name()).join(ENTRY))
+        .unwrap_or_else(|error| panic!("{error}"));
     write_script(root);
 }
 

@@ -214,7 +214,6 @@ impl Edit<'_> {
         })?;
         let candidates = self.subtree(marker_index);
         crate::prefab::apply_overrides(self, candidates);
-        self.validate("an added instance node");
         Ok(Target::Node(id))
     }
 
@@ -238,7 +237,6 @@ impl Edit<'_> {
         nodes.push(marker);
         nodes.extend(generated);
         self.append_nodes(nodes);
-        self.validate("an added prefab instance");
         Ok(Target::Node(id))
     }
 
@@ -384,8 +382,7 @@ impl Edit<'_> {
                 self.set_owners(owners);
             }
         }
-        self.validate("an unpacked prefab instance");
-        Ok(())
+        self.validate("an unpacked prefab instance")
     }
 
     pub(crate) fn apply_override(

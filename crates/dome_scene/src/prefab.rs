@@ -35,12 +35,12 @@ impl Loader {
         }
     }
 
-    pub(crate) fn document(&mut self, text: &str, what: &str) -> Scene {
+    pub(crate) fn document(&mut self, text: &str, what: &str) -> Result<Scene, String> {
         let mut scene =
             crate::parse::document(text, self.root.clone(), what, Arc::clone(&self.schema));
         self.expand(&mut scene, what);
-        scene.validate(what);
-        scene
+        scene.validate(what)?;
+        Ok(scene)
     }
 
     pub(crate) fn load(&mut self, path: &Path, what: &str) -> Result<(Scene, PathBuf), String> {
@@ -57,7 +57,7 @@ impl Loader {
         let text = fs::read_to_string(&file)
             .map_err(|error| format!("the prefab {} reads no text: {error}", key.display()))?;
         self.stack.push(key.clone());
-        let scene = self.document(&text, &format!("the prefab {}", key.display()));
+        let scene = self.document(&text, &format!("the prefab {}", key.display()))?;
         self.stack.pop();
         if !scene.is_prefab() {
             return Err(format!(

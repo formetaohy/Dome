@@ -74,7 +74,6 @@ pub(crate) fn apply(edit: &mut Edit<'_>, deletion: Deletion) {
     for held in &edits {
         held.apply(edit);
     }
-    edit.validate("a removed instance node");
 }
 
 fn detach_entry(edit: &mut Edit<'_>, kind: ReferenceKind, id: &str) {

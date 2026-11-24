@@ -143,17 +143,19 @@ impl Scene {
         schema: Arc<dyn Schema>,
     ) -> Self {
         let root = root.into();
-        crate::prefab::Loader::new(root.clone(), schema).document(text, what)
+        crate::prefab::Loader::new(root.clone(), schema)
+            .document(text, what)
+            .unwrap_or_else(|error| panic!("{error}"))
     }
 
-    pub fn write(&self) -> String {
-        self.validate("a written scene");
-        crate::document::write(self)
+    pub fn write(&self) -> Result<String, String> {
+        self.validate("a written scene")?;
+        Ok(crate::document::write(self))
     }
 
-    pub fn save(&self, path: impl AsRef<Path>) {
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), String> {
         let path = path.as_ref();
-        let text = self.write();
+        let text = self.write()?;
         let mut staging = path.as_os_str().to_owned();
         staging.push(format!(".{}.tmp", std::process::id()));
         let staging = PathBuf::from(staging);
@@ -163,10 +165,10 @@ impl Scene {
                 file.sync_all()
             })
             .and_then(|()| fs::rename(&staging, path));
-        written.unwrap_or_else(|error| {
+        written.map_err(|error| {
             let _ = fs::remove_file(&staging);
-            panic!("the scene {} writes no text: {error}", path.display())
-        });
+            format!("the scene {} writes no text: {error}", path.display())
+        })
     }
 
     pub fn schema(&self) -> &dyn Schema {
@@ -541,347 +543,380 @@ impl Scene {
         world
     }
 
-    pub(crate) fn validate(&self, what: &str) {
-        unique(self.images.iter(), what, "image");
-        unique(self.sounds.iter(), what, "sound");
-        unique(self.meshes.iter(), what, "mesh");
-        unique(self.materials.iter(), what, "material");
-        unique(self.models.iter(), what, "model");
-        unique(self.skins.iter(), what, "skin");
-        unique(self.animations.iter(), what, "animation");
-        unique(self.graphs.iter(), what, "graph");
+    pub(crate) fn validate(&self, what: &str) -> Result<(), String> {
+        unique(self.images.iter(), what, "image")?;
+        unique(self.sounds.iter(), what, "sound")?;
+        unique(self.meshes.iter(), what, "mesh")?;
+        unique(self.materials.iter(), what, "material")?;
+        unique(self.models.iter(), what, "model")?;
+        unique(self.skins.iter(), what, "skin")?;
+        unique(self.animations.iter(), what, "animation")?;
+        unique(self.graphs.iter(), what, "graph")?;
         for graph in self.graphs.iter() {
             graph
                 .asset
-                .validate(|clip| self.animation_index(clip).is_some());
+                .validate(|clip| self.animation_index(clip).is_some())
+                .map_err(|error| format!("{what}: {error}"))?;
         }
-        unique(self.nodes.iter(), what, "node");
+        unique(self.nodes.iter(), what, "node")?;
         for node in &self.nodes {
             if node.prefab.is_some() {
-                assert!(
-                    node.components().next().is_none(),
-                    "the prefab instance {} holds its transform alone",
-                    node.id,
-                );
+                if node.components().next().is_some() {
+                    return Err(format!(
+                        "{what} holds the prefab instance {} holds its transform alone",
+                        node.id,
+                    ));
+                }
                 let path = node
                     .prefab
                     .as_deref()
                     .expect("a prefab instance names its prefab");
-                assert!(
-                    Folder::Prefab.holds(path),
-                    "the prefab instance {} holds the path {} outside the prefabs folder",
-                    node.id,
-                    path.display(),
-                );
+                if !Folder::Prefab.holds(path) {
+                    return Err(format!(
+                        "{what} holds the prefab instance {} holds the path {} outside the prefabs folder",
+                        node.id,
+                        path.display(),
+                    ));
+                }
             }
-            if let Some(owner) = &node.owner {
-                assert!(
-                    self.node_index(owner)
-                        .is_some_and(|index| self.nodes[index].prefab.is_some()),
+            if let Some(owner) = &node.owner
+                && !self
+                    .node_index(owner)
+                    .is_some_and(|index| self.nodes[index].prefab.is_some())
+            {
+                return Err(format!(
                     "{what} holds the node {} of the prefab instance {owner}, which it does not hold",
                     node.id,
-                );
+                ));
             }
-            assert!(
-                node.overrides().is_empty() || node.prefab.is_some(),
-                "{what} holds the node {} of overrides and no prefab",
-                node.id,
-            );
+            if !node.overrides().is_empty() && node.prefab.is_none() {
+                return Err(format!(
+                    "{what} holds the node {} of overrides and no prefab",
+                    node.id,
+                ));
+            }
             for entry in node.overrides() {
-                assert!(
-                    !entry.node.is_empty() && valid_id(&entry.node),
-                    "{what} holds the override node {} of {}",
-                    entry.node,
-                    node.id,
-                );
-                assert!(
-                    !entry.path.is_empty() && entry.path != "parent",
-                    "{what} holds the override {}\\.{} of {}",
-                    entry.node,
-                    entry.path,
-                    node.id,
-                );
+                if entry.node.is_empty() || !valid_id(&entry.node) {
+                    return Err(format!(
+                        "{what} holds the override node {} of {}",
+                        entry.node, node.id,
+                    ));
+                }
+                if entry.path.is_empty() || entry.path == "parent" {
+                    return Err(format!(
+                        "{what} holds the override {}\\.{} of {}",
+                        entry.node, entry.path, node.id,
+                    ));
+                }
             }
-            assert!(
-                node.additions().is_empty() || node.prefab.is_some(),
-                "{what} holds the node {} of additions and no prefab",
-                node.id,
-            );
-            assert!(
-                node.removals().is_empty() || node.prefab.is_some(),
-                "{what} holds the node {} of removals and no prefab",
-                node.id,
-            );
+            if !node.additions().is_empty() && node.prefab.is_none() {
+                return Err(format!(
+                    "{what} holds the node {} of additions and no prefab",
+                    node.id,
+                ));
+            }
+            if !node.removals().is_empty() && node.prefab.is_none() {
+                return Err(format!(
+                    "{what} holds the node {} of removals and no prefab",
+                    node.id,
+                ));
+            }
             let mut additions = HashSet::new();
             for addition in node.additions() {
-                assert!(
-                    !addition.id.is_empty() && valid_id(&addition.id),
-                    "{what} holds the addition {} of {}",
-                    addition.id,
-                    node.id,
-                );
-                assert!(
-                    additions.insert(addition.id.as_str()),
-                    "{what} holds the addition {} of {} twice",
-                    addition.id,
-                    node.id,
-                );
-                assert!(
-                    addition.owner.is_none()
-                        && addition.additions.is_empty()
-                        && addition.removals.is_empty(),
-                    "{what} holds the addition {} of {} with its own structure",
-                    addition.id,
-                    node.id,
-                );
-                if let Some(parent) = &addition.parent {
-                    assert!(
-                        !parent.is_empty() && valid_id(parent) && parent != &addition.id,
+                if addition.id.is_empty() || !valid_id(&addition.id) {
+                    return Err(format!(
+                        "{what} holds the addition {} of {}",
+                        addition.id, node.id,
+                    ));
+                }
+                if !additions.insert(addition.id.as_str()) {
+                    return Err(format!(
+                        "{what} holds the addition {} of {} twice",
+                        addition.id, node.id,
+                    ));
+                }
+                if addition.owner.is_some()
+                    || !addition.additions.is_empty()
+                    || !addition.removals.is_empty()
+                {
+                    return Err(format!(
+                        "{what} holds the addition {} of {} with its own structure",
+                        addition.id, node.id,
+                    ));
+                }
+                if let Some(parent) = &addition.parent
+                    && (parent.is_empty() || !valid_id(parent) || parent == &addition.id)
+                {
+                    return Err(format!(
                         "{what} parents the addition {} of {} to {parent}",
-                        addition.id,
-                        node.id,
-                    );
+                        addition.id, node.id,
+                    ));
                 }
                 for component in self.schema.specs() {
-                    if component.required {
-                        assert!(
-                            addition.has_component(component.name),
+                    if component.required && !addition.has_component(component.name) {
+                        return Err(format!(
                             "{what} holds no {} for the addition {} of {}",
-                            component.name,
-                            addition.id,
-                            node.id,
-                        );
+                            component.name, addition.id, node.id,
+                        ));
                     }
                 }
                 for (name, _) in addition.components() {
-                    assert!(
-                        self.schema.spec(name).is_some(),
-                        "{what} holds the component {name} on the addition {} of {}, which its schema does not hold",
-                        addition.id,
-                        node.id,
-                    );
+                    if self.schema.spec(name).is_none() {
+                        return Err(format!(
+                            "{what} holds the component {name} on the addition {} of {}, which its schema does not hold",
+                            addition.id, node.id,
+                        ));
+                    }
                 }
                 let id = format!("{}_{}", node.id, addition.id);
-                let index = self.node_index(&id).unwrap_or_else(|| {
-                    panic!(
+                let Some(index) = self.node_index(&id) else {
+                    return Err(format!(
                         "{what} holds the addition {} of {}, which it does not materialize",
                         addition.id, node.id,
-                    )
-                });
-                assert_eq!(
-                    self.nodes[index].owner.as_deref(),
-                    Some(node.id.as_str()),
-                    "{what} holds the addition {id} of another node",
-                );
+                    ));
+                };
+                if self.nodes[index].owner.as_deref() != Some(node.id.as_str()) {
+                    return Err(format!("{what} holds the addition {id} of another node",));
+                }
                 let parent = addition
                     .parent
                     .as_ref()
                     .map(|parent| format!("{}_{parent}", node.id))
                     .unwrap_or_else(|| node.id.clone());
-                assert!(
-                    self.node_index(&parent).is_some(),
-                    "{what} parents the addition {id} to {parent}, which it does not hold",
-                );
-                assert_eq!(
-                    self.nodes[index].parent.as_deref(),
-                    Some(parent.as_str()),
-                    "{what} materializes the addition {id} under another parent",
-                );
+                if self.node_index(&parent).is_none() {
+                    return Err(format!(
+                        "{what} parents the addition {id} to {parent}, which it does not hold",
+                    ));
+                }
+                if self.nodes[index].parent.as_deref() != Some(parent.as_str()) {
+                    return Err(format!(
+                        "{what} materializes the addition {id} under another parent",
+                    ));
+                }
             }
             let mut removals = HashSet::new();
             for removal in node.removals() {
-                assert!(
-                    !removal.is_empty() && valid_id(removal),
-                    "{what} holds the removal {removal} of {}",
-                    node.id,
-                );
-                assert!(
-                    removals.insert(removal.as_str()),
-                    "{what} holds the removal {removal} of {} twice",
-                    node.id,
-                );
-                assert!(
-                    !additions.contains(removal.as_str()),
-                    "{what} removes the addition {removal} of {}",
-                    node.id
-                );
+                if removal.is_empty() || !valid_id(removal) {
+                    return Err(format!("{what} holds the removal {removal} of {}", node.id,));
+                }
+                if !removals.insert(removal.as_str()) {
+                    return Err(format!(
+                        "{what} holds the removal {removal} of {} twice",
+                        node.id,
+                    ));
+                }
+                if additions.contains(removal.as_str()) {
+                    return Err(format!(
+                        "{what} removes the addition {removal} of {}",
+                        node.id
+                    ));
+                }
             }
         }
         for model in self.models.iter() {
-            assert!(
-                Folder::Asset.holds(&model.path),
-                "{what} holds the model {} of path {} outside the assets folder",
-                model.id,
-                model.path.display(),
-            );
+            if !Folder::Asset.holds(&model.path) {
+                return Err(format!(
+                    "{what} holds the model {} of path {} outside the assets folder",
+                    model.id,
+                    model.path.display(),
+                ));
+            }
         }
         for image in self.images.iter() {
             match &image.source {
-                crate::image::ImageSource::Path(path) => assert!(
-                    Folder::Asset.holds(path),
-                    "{what} holds the image {} of path {} outside the assets folder",
-                    image.id,
-                    path.display(),
-                ),
-                crate::image::ImageSource::Model { model, .. } => assert!(
-                    self.model_index(model.as_str()).is_some(),
-                    "{what} holds the image {} from the model {model}, which it does not hold",
-                    image.id,
-                ),
+                crate::image::ImageSource::Path(path) => {
+                    if !Folder::Asset.holds(path) {
+                        return Err(format!(
+                            "{what} holds the image {} of path {} outside the assets folder",
+                            image.id,
+                            path.display(),
+                        ));
+                    }
+                }
+                crate::image::ImageSource::Model { model, .. } => {
+                    if self.model_index(model.as_str()).is_none() {
+                        return Err(format!(
+                            "{what} holds the image {} from the model {model}, which it does not hold",
+                            image.id,
+                        ));
+                    }
+                }
             }
         }
         for sound in self.sounds.iter() {
-            assert!(
-                Folder::Asset.holds(&sound.path),
-                "{what} holds the sound {} of path {} outside the assets folder",
-                sound.id,
-                sound.path.display(),
-            );
+            if !Folder::Asset.holds(&sound.path) {
+                return Err(format!(
+                    "{what} holds the sound {} of path {} outside the assets folder",
+                    sound.id,
+                    sound.path.display(),
+                ));
+            }
         }
         for environment in self.environments.iter() {
-            if let Some(path) = environment.panorama() {
-                assert!(
-                    Folder::Asset.holds(path),
+            if let Some(path) = environment.panorama()
+                && !Folder::Asset.holds(path)
+            {
+                return Err(format!(
                     "{what} holds the environment {} of path {} outside the assets folder",
                     environment.id,
                     path.display(),
-                );
+                ));
             }
         }
         for skin in self.skins.iter() {
-            assert!(
-                self.model_index(skin.asset.model_of().as_str()).is_some(),
-                "{what} holds the skin {} from the model {}, which it does not hold",
-                skin.id,
-                skin.asset.model_of(),
-            );
+            if self.model_index(skin.asset.model_of().as_str()).is_none() {
+                return Err(format!(
+                    "{what} holds the skin {} from the model {}, which it does not hold",
+                    skin.id,
+                    skin.asset.model_of(),
+                ));
+            }
             let mut joints = HashSet::new();
             for joint in skin.asset.joints() {
-                assert!(
-                    self.node_index(joint.as_str()).is_some(),
-                    "{what} holds the skin {} of joint {joint}, which it does not hold",
-                    skin.id,
-                );
-                assert!(
-                    joints.insert(joint.as_str()),
-                    "{what} holds the skin {} of joint {joint} twice",
-                    skin.id,
-                );
+                if self.node_index(joint.as_str()).is_none() {
+                    return Err(format!(
+                        "{what} holds the skin {} of joint {joint}, which it does not hold",
+                        skin.id,
+                    ));
+                }
+                if !joints.insert(joint.as_str()) {
+                    return Err(format!(
+                        "{what} holds the skin {} of joint {joint} twice",
+                        skin.id,
+                    ));
+                }
             }
         }
         for animation in self.animations.iter() {
-            assert!(
-                self.model_index(animation.asset.model_of().as_str())
-                    .is_some(),
-                "{what} holds the animation {} from the model {}, which it does not hold",
-                animation.id,
-                animation.asset.model_of(),
-            );
-            for target in animation.asset.targets() {
-                assert!(
-                    self.node_index(target.as_str()).is_some(),
-                    "{what} holds the animation {} of target {target}, which it does not hold",
+            if self
+                .model_index(animation.asset.model_of().as_str())
+                .is_none()
+            {
+                return Err(format!(
+                    "{what} holds the animation {} from the model {}, which it does not hold",
                     animation.id,
-                );
+                    animation.asset.model_of(),
+                ));
+            }
+            for target in animation.asset.targets() {
+                if self.node_index(target.as_str()).is_none() {
+                    return Err(format!(
+                        "{what} holds the animation {} of target {target}, which it does not hold",
+                        animation.id,
+                    ));
+                }
             }
         }
         for mesh in self.meshes.iter() {
-            assert!(
-                !mesh.asset.is_empty(),
-                "{what} holds the mesh {} of no vertex",
-                mesh.id,
-            );
-            if let Some((model, ..)) = mesh.asset.model_of() {
-                assert!(
-                    self.model_index(model.as_str()).is_some(),
+            if mesh.asset.is_empty() {
+                return Err(format!("{what} holds the mesh {} of no vertex", mesh.id,));
+            }
+            if let Some((model, ..)) = mesh.asset.model_of()
+                && self.model_index(model.as_str()).is_none()
+            {
+                return Err(format!(
                     "{what} holds the mesh {} from the model {model}, which it does not hold",
                     mesh.id,
-                );
+                ));
             }
         }
         for material in self.materials.iter() {
-            assert!(
-                (0.0..=1.0).contains(&material.asset.metallic),
-                "{what} holds the material {} of metallic {}",
-                material.id,
-                material.asset.metallic,
-            );
-            assert!(
-                material.asset.roughness > 0.0 && material.asset.roughness <= 1.0,
-                "{what} holds the material {} of roughness {}",
-                material.id,
-                material.asset.roughness,
-            );
-            assert!(
-                material.asset.normal_scale.is_finite() && material.asset.normal_scale >= 0.0,
-                "{what} holds the material {} of normal scale {}",
-                material.id,
-                material.asset.normal_scale,
-            );
-            assert!(
-                (0.0..=1.0).contains(&material.asset.occlusion_strength),
-                "{what} holds the material {} of occlusion strength {}",
-                material.id,
-                material.asset.occlusion_strength,
-            );
+            if !(0.0..=1.0).contains(&material.asset.metallic) {
+                return Err(format!(
+                    "{what} holds the material {} of metallic {}",
+                    material.id, material.asset.metallic,
+                ));
+            }
+            if material.asset.roughness <= 0.0 || material.asset.roughness > 1.0 {
+                return Err(format!(
+                    "{what} holds the material {} of roughness {}",
+                    material.id, material.asset.roughness,
+                ));
+            }
+            if !material.asset.normal_scale.is_finite() || material.asset.normal_scale < 0.0 {
+                return Err(format!(
+                    "{what} holds the material {} of normal scale {}",
+                    material.id, material.asset.normal_scale,
+                ));
+            }
+            if !(0.0..=1.0).contains(&material.asset.occlusion_strength) {
+                return Err(format!(
+                    "{what} holds the material {} of occlusion strength {}",
+                    material.id, material.asset.occlusion_strength,
+                ));
+            }
             for (name, color) in [
                 ("base color", material.asset.base_color),
                 ("emissive", material.asset.emissive),
             ] {
-                assert!(
-                    (0.0..=1.0).contains(&color.x)
-                        && (0.0..=1.0).contains(&color.y)
-                        && (0.0..=1.0).contains(&color.z),
-                    "{what} holds the material {} of {name} {color:?} outside the unit cube",
-                    material.id,
-                );
+                if !(0.0..=1.0).contains(&color.x)
+                    || !(0.0..=1.0).contains(&color.y)
+                    || !(0.0..=1.0).contains(&color.z)
+                {
+                    return Err(format!(
+                        "{what} holds the material {} of {name} {color:?} outside the unit cube",
+                        material.id,
+                    ));
+                }
             }
             for image in material.asset.images().into_iter().flatten() {
-                assert!(
-                    self.image_index(image.as_str()).is_some(),
-                    "{what} samples the image {image}, which it does not hold",
-                );
+                if self.image_index(image.as_str()).is_none() {
+                    return Err(format!(
+                        "{what} samples the image {image}, which it does not hold",
+                    ));
+                }
             }
         }
         for node in &self.nodes {
             for component in self.schema.specs() {
-                if component.required {
-                    assert!(
-                        node.has_component(component.name),
+                if component.required && !node.has_component(component.name) {
+                    return Err(format!(
                         "{what} holds no {} for node {}",
-                        component.name,
-                        node.id,
-                    );
+                        component.name, node.id,
+                    ));
                 }
             }
             for (name, component) in node.components() {
-                assert!(
-                    self.schema.spec(name).is_some(),
-                    "{what} holds the component {name} on node {}, which its schema does not hold",
-                    node.id,
-                );
+                if self.schema.spec(name).is_none() {
+                    return Err(format!(
+                        "{what} holds the component {name} on node {}, which its schema does not hold",
+                        node.id,
+                    ));
+                }
                 component
                     .validate(self, &node.id)
-                    .unwrap_or_else(|error| panic!("{what}: {error}"));
+                    .map_err(|error| format!("{what}: {error}"))?;
             }
         }
         self.check_audio_buses()
-            .unwrap_or_else(|error| panic!("{what}: {error}"));
-        for (at, node) in self.nodes.iter().enumerate() {
-            if let Some(parent) = node.parent.as_deref() {
-                let parent = self.node_index(parent).unwrap_or_else(|| {
-                    panic!(
-                        "{what} parents {} to {parent}, which it does not hold",
-                        node.id,
-                    )
-                });
-                assert!(
-                    !self.is_ancestor(at, parent),
-                    "{what} closes the parent chain of {} into a cycle",
+            .map_err(|error| format!("{what}: {error}"))?;
+        for node in self.nodes.iter() {
+            crate::transform::validate(&node.transform())
+                .map_err(|error| format!("{what}: {error}"))?;
+            if let Some(parent) = node.parent.as_deref()
+                && self.node_index(parent).is_none()
+            {
+                return Err(format!(
+                    "{what} parents {} to {parent}, which it does not hold",
                     node.id,
-                );
+                ));
+            }
+            let mut steps = 1;
+            let mut current = node.parent.as_deref();
+            while let Some(parent) = current {
+                if steps > self.nodes.len() {
+                    return Err(format!(
+                        "{what} closes the parent chain of {} into a cycle",
+                        node.id,
+                    ));
+                }
+                steps += 1;
+                current = self
+                    .node_index(parent)
+                    .and_then(|index| self.nodes[index].parent.as_deref());
             }
         }
+        Ok(())
     }
 }
 
@@ -943,20 +978,27 @@ impl Identified for Node {
     }
 }
 
-fn unique<'a, T: Identified + 'a>(entries: impl Iterator<Item = &'a T>, what: &str, kind: &str) {
+fn unique<'a, T: Identified + 'a>(
+    entries: impl Iterator<Item = &'a T>,
+    what: &str,
+    kind: &str,
+) -> Result<(), String> {
     let mut ids = HashMap::new();
     for (at, entry) in entries.enumerate() {
-        assert!(
-            valid_id(entry.id()),
-            "{what} holds the {kind} id {}, which holds no letter, digit, _ or -",
-            entry.id(),
-        );
-        assert!(
-            ids.insert(entry.id(), at).is_none(),
-            "{what} holds two {kind} entries named {}",
-            entry.id(),
-        );
+        if !valid_id(entry.id()) {
+            return Err(format!(
+                "{what} holds the {kind} id {}, which holds no letter, digit, _ or -",
+                entry.id(),
+            ));
+        }
+        if ids.insert(entry.id(), at).is_some() {
+            return Err(format!(
+                "{what} holds two {kind} entries named {}",
+                entry.id(),
+            ));
+        }
     }
+    Ok(())
 }
 
 fn shared<T: PartialEq>(left: &Arc<T>, right: &Arc<T>) -> bool {

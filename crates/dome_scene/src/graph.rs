@@ -284,116 +284,125 @@ impl GraphAsset {
         Ok(())
     }
 
-    pub fn validate(&self, holds_animation: impl Fn(&str) -> bool) {
-        assert!(
-            self.state(&self.entry).is_some(),
-            "the animation graph enters {}, which it does not hold",
-            self.entry,
-        );
+    pub fn validate(&self, holds_animation: impl Fn(&str) -> bool) -> Result<(), String> {
+        if self.state(&self.entry).is_none() {
+            return Err(format!(
+                "the animation graph enters {}, which it does not hold",
+                self.entry,
+            ));
+        }
         let mut parameters = Vec::new();
         for parameter in &self.parameters {
-            assert!(
-                valid_id(&parameter.name),
-                "the animation graph parameter {} holds no letter, digit, _ or -",
-                parameter.name,
-            );
-            assert!(
-                !parameters.contains(&parameter.name.as_str()),
-                "the animation graph holds the parameter {} twice",
-                parameter.name,
-            );
+            if !valid_id(&parameter.name) {
+                return Err(format!(
+                    "the animation graph parameter {} holds no letter, digit, _ or -",
+                    parameter.name,
+                ));
+            }
+            if parameters.contains(&parameter.name.as_str()) {
+                return Err(format!(
+                    "the animation graph holds the parameter {} twice",
+                    parameter.name,
+                ));
+            }
             parameters.push(parameter.name.as_str());
         }
-        assert!(
-            !self.states.is_empty(),
-            "the animation graph holds no state",
-        );
+        if self.states.is_empty() {
+            return Err(String::from("the animation graph holds no state"));
+        }
         let mut states = Vec::new();
         for state in &self.states {
-            assert!(
-                valid_id(&state.id),
-                "the animation state {} holds no letter, digit, _ or -",
-                state.id,
-            );
-            assert!(
-                !states.contains(&state.id.as_str()),
-                "the animation graph holds the state {} twice",
-                state.id,
-            );
+            if !valid_id(&state.id) {
+                return Err(format!(
+                    "the animation state {} holds no letter, digit, _ or -",
+                    state.id,
+                ));
+            }
+            if states.contains(&state.id.as_str()) {
+                return Err(format!(
+                    "the animation graph holds the state {} twice",
+                    state.id,
+                ));
+            }
             states.push(state.id.as_str());
-            assert!(
-                holds_animation(state.clip.as_str()),
-                "the animation state {} plays the animation {}, which the scene does not hold",
-                state.id,
-                state.clip,
-            );
-        }
-        for transition in &self.transitions {
-            assert!(
-                states.contains(&transition.from.as_str()),
-                "the animation transition leaves {}, which the graph does not hold",
-                transition.from,
-            );
-            assert!(
-                states.contains(&transition.to.as_str()),
-                "the animation transition enters {}, which the graph does not hold",
-                transition.to,
-            );
-            assert!(
-                transition.from != transition.to,
-                "the animation transition leaves {} for itself",
-                transition.from,
-            );
-            assert!(
-                transition.fade.is_finite() && transition.fade >= 0.0,
-                "the animation transition {} to {} fades over {}",
-                transition.from,
-                transition.to,
-                transition.fade,
-            );
-            assert!(
-                transition.exit.is_finite() && (0.0..=1.0).contains(&transition.exit),
-                "the animation transition {} to {} exits at {}",
-                transition.from,
-                transition.to,
-                transition.exit,
-            );
-            assert!(
-                !transition.conditions.is_empty() || transition.exit > 0.0,
-                "the animation transition {} to {} holds no condition and no exit time",
-                transition.from,
-                transition.to,
-            );
-            for condition in &transition.conditions {
-                let parameter = self.parameter(&condition.parameter).unwrap_or_else(|| {
-                    panic!(
-                        "the animation transition {} to {} conditions the parameter {}, which the graph does not hold",
-                        transition.from, transition.to, condition.parameter,
-                    )
-                });
-                assert!(
-                    parameter.default.shares_kind(condition.value),
-                    "the animation transition {} to {} compares the {} parameter {} with a {}",
-                    transition.from,
-                    transition.to,
-                    parameter.default.name(),
-                    condition.parameter,
-                    condition.value.name(),
-                );
-                assert!(
-                    !matches!(parameter.default, Parameter::Boolean(_))
-                        || matches!(
-                            condition.comparison,
-                            Comparison::Equal | Comparison::NotEqual
-                        ),
-                    "the animation transition {} to {} compares the boolean parameter {} with {}",
-                    transition.from,
-                    transition.to,
-                    condition.parameter,
-                    condition.comparison.name(),
-                );
+            if !holds_animation(state.clip.as_str()) {
+                return Err(format!(
+                    "the animation state {} plays the animation {}, which the scene does not hold",
+                    state.id, state.clip,
+                ));
             }
         }
+        for transition in &self.transitions {
+            if !states.contains(&transition.from.as_str()) {
+                return Err(format!(
+                    "the animation transition leaves {}, which the graph does not hold",
+                    transition.from,
+                ));
+            }
+            if !states.contains(&transition.to.as_str()) {
+                return Err(format!(
+                    "the animation transition enters {}, which the graph does not hold",
+                    transition.to,
+                ));
+            }
+            if transition.from == transition.to {
+                return Err(format!(
+                    "the animation transition leaves {} for itself",
+                    transition.from,
+                ));
+            }
+            if !transition.fade.is_finite() || transition.fade < 0.0 {
+                return Err(format!(
+                    "the animation transition {} to {} fades over {}",
+                    transition.from, transition.to, transition.fade,
+                ));
+            }
+            if !transition.exit.is_finite() || !(0.0..=1.0).contains(&transition.exit) {
+                return Err(format!(
+                    "the animation transition {} to {} exits at {}",
+                    transition.from, transition.to, transition.exit,
+                ));
+            }
+            if transition.conditions.is_empty() && transition.exit <= 0.0 {
+                return Err(format!(
+                    "the animation transition {} to {} holds no condition and no exit time",
+                    transition.from, transition.to,
+                ));
+            }
+            for condition in &transition.conditions {
+                let Some(parameter) = self.parameter(&condition.parameter) else {
+                    return Err(format!(
+                        "the animation transition {} to {} conditions the parameter {}, which the graph does not hold",
+                        transition.from, transition.to, condition.parameter,
+                    ));
+                };
+                if !parameter.default.shares_kind(condition.value) {
+                    return Err(format!(
+                        "the animation transition {} to {} compares the {} parameter {} with a {}",
+                        transition.from,
+                        transition.to,
+                        parameter.default.name(),
+                        condition.parameter,
+                        condition.value.name(),
+                    ));
+                }
+                if matches!(parameter.default, Parameter::Boolean(_))
+                    && !matches!(
+                        condition.comparison,
+                        Comparison::Equal | Comparison::NotEqual
+                    )
+                {
+                    return Err(format!(
+                        "the animation transition {} to {} compares the boolean parameter {} with {}",
+                        transition.from,
+                        transition.to,
+                        condition.parameter,
+                        condition.comparison.name(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 

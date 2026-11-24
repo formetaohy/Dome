@@ -70,7 +70,7 @@ mask = 65535
 #[test]
 fn a_scene_installs_and_steps_the_joints_it_authors() {
     let scene = Scene::parse(SCENE, ".", "the joint scene", schema());
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     let reloaded = Scene::parse(&written, ".", "the written joint scene", schema());
     assert_eq!(scene, reloaded);
     let mut world = World::new();

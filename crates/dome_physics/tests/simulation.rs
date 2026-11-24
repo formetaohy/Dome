@@ -243,6 +243,49 @@ fn a_posed_platform_carries_the_pile_it_slides_under() {
 }
 
 #[test]
+fn a_body_resting_on_the_floor_of_a_moving_neighbour_stays_asleep() {
+    let mut world = world();
+    floor(&mut world);
+    let pushed = spawn(
+        &mut world,
+        Vec3::new(-4.0, 0.5, 0.0),
+        Quat::IDENTITY,
+        Shape::cuboid(Vec3::splat(0.5)),
+        BodyKind::Dynamic,
+    );
+    let resting = spawn(
+        &mut world,
+        Vec3::new(4.0, 0.5, 0.0),
+        Quat::IDENTITY,
+        Shape::cuboid(Vec3::splat(0.5)),
+        BodyKind::Dynamic,
+    );
+    for step_at in 0..600 {
+        world
+            .get_mut::<RigidBody>(pushed)
+            .expect("the pushed cube holds a body")
+            .set_linear_velocity(Vec3::new(0.5, 0.0, 0.0));
+        step(&mut world, DELTA);
+        if step_at == 300 {
+            assert!(
+                world
+                    .get::<RigidBody>(resting)
+                    .expect("the resting cube holds a body")
+                    .is_sleeping(),
+                "a cube resting on the floor falls asleep while another cube slides over it",
+            );
+        }
+    }
+    assert!(
+        world
+            .get::<RigidBody>(resting)
+            .expect("the resting cube holds a body")
+            .is_sleeping(),
+        "a cube asleep on a floor stays asleep while another cube slides over the same floor",
+    );
+}
+
+#[test]
 fn friction_stops_a_sliding_cube() {
     let mut world = world();
     floor(&mut world);

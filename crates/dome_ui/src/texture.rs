@@ -9,6 +9,8 @@ const WHITE: [u8; 4] = [255, 255, 255, 255];
 
 pub(crate) const LINEAR_SAMPLER: u32 = 0;
 
+pub const RESERVED_SLOTS: u32 = 1 + dome_text::PAGE_LIMIT as u32;
+
 pub(crate) const LINEAR: SamplerDesc = SamplerDesc {
     min_filter: FilterMode::Linear,
     mag_filter: FilterMode::Linear,
@@ -38,9 +40,9 @@ pub(crate) struct Textures {
     table: TextureTable,
     samplers: SamplerTable,
     white: Texture,
-    atlas: Option<Texture>,
+    atlas: Vec<Option<Texture>>,
     atlas_revision: Option<u64>,
-    atlas_index: u32,
+    atlas_index: Vec<u32>,
     scene_index: u32,
     scene_identity: ResourceId,
     named: HashMap<String, Named>,
@@ -61,7 +63,9 @@ impl Textures {
         let capacity = *device.tables();
         let mut table = TextureTable::new(device, capacity.textures, &white);
         let scene_index = table.add(&white);
-        let atlas_index = table.add(&white);
+        let atlas_index = (0..dome_text::PAGE_LIMIT)
+            .map(|_| table.add(&white))
+            .collect();
         let mut samplers =
             SamplerTable::new(device, capacity.samplers, &Sampler::new(device, LINEAR));
         samplers.add(&Sampler::new(device, LINEAR));
@@ -71,7 +75,7 @@ impl Textures {
             table,
             samplers,
             white: white.clone(),
-            atlas: None,
+            atlas: (0..dome_text::PAGE_LIMIT).map(|_| None).collect(),
             atlas_revision: None,
             atlas_index,
             scene_index,
@@ -86,12 +90,41 @@ impl Textures {
             return;
         }
         let size = text.atlas().size();
-        if self.atlas.as_ref().is_some_and(|held| held.width() == size) {
-            let regions = text.atlas_mut().drain();
-            let atlas = text.atlas();
-            let pixels = atlas.pixels();
-            let texture = self.atlas.as_ref().expect("a held atlas names its texture");
-            for region in regions {
+        let regions = text.atlas_mut().drain();
+        for page in 0..text.atlas().page_count() {
+            let fresh = self.atlas[page as usize].is_none();
+            if !fresh && !regions.iter().any(|region| region.page == page) {
+                continue;
+            }
+            if fresh {
+                let texture = Texture::new(
+                    &self.device,
+                    "dome ui atlas",
+                    size,
+                    size,
+                    1,
+                    TextureFormat::R8Unorm,
+                    TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                );
+                self.table.set(self.atlas_index[page as usize], &texture);
+                self.atlas[page as usize] = Some(texture);
+                let texture = self.atlas[page as usize]
+                    .as_ref()
+                    .expect("a held atlas page names its texture");
+                submission.write_texture_region(
+                    texture,
+                    0,
+                    TextureRegion::new(0, 0, size, size),
+                    u64::from(size),
+                    text.atlas().pixels(page),
+                );
+                continue;
+            }
+            let texture = self.atlas[page as usize]
+                .as_ref()
+                .expect("a held atlas page names its texture");
+            let pixels = text.atlas().pixels(page);
+            for region in regions.iter().filter(|region| region.page == page) {
                 let offset = (region.y * size + region.x) as usize;
                 submission.write_texture_region(
                     texture,
@@ -101,27 +134,6 @@ impl Textures {
                     &pixels[offset..],
                 );
             }
-        } else {
-            let atlas = text.atlas();
-            let texture = Texture::new(
-                &self.device,
-                "dome ui atlas",
-                size,
-                size,
-                1,
-                TextureFormat::R8Unorm,
-                TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            );
-            submission.write_texture_region(
-                &texture,
-                0,
-                TextureRegion::new(0, 0, size, size),
-                u64::from(size),
-                atlas.pixels(),
-            );
-            let _ = text.atlas_mut().drain();
-            self.table.set(self.atlas_index, &texture);
-            self.atlas = Some(texture);
         }
         self.atlas_revision = Some(revision);
     }
@@ -205,8 +217,8 @@ impl Textures {
         (self.scene_index, LINEAR_SAMPLER)
     }
 
-    pub(crate) fn atlas(&self) -> (u32, u32) {
-        (self.atlas_index, LINEAR_SAMPLER)
+    pub(crate) fn atlas(&self, page: u16) -> (u32, u32) {
+        (self.atlas_index[page as usize], LINEAR_SAMPLER)
     }
 
     pub(crate) fn table(&self) -> &TextureTable {

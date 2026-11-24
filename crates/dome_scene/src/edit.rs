@@ -35,6 +35,7 @@ impl Scene {
     ) -> Result<(T, Delta), String> {
         let mut held = Edit::begin(self);
         let value = edit(&mut held)?;
+        held.confirm()?;
         Ok((value, held.settle()))
     }
 }
@@ -55,6 +56,13 @@ impl<'a> Edit<'a> {
             self.scene.touch();
         }
         delta
+    }
+
+    fn confirm(&self) -> Result<(), String> {
+        if self.delta.is_empty() {
+            return Ok(());
+        }
+        self.scene.validate("an edited scene")
     }
 
     pub(crate) fn insert_nodes(&mut self, at: usize, nodes: Vec<Node>) {

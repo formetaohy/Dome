@@ -211,7 +211,7 @@ fn an_imported_model_expands_into_the_assets_and_nodes_it_holds() {
             .map(|animation| animation.graph.as_str()),
         Some("rig_graph"),
     );
-    let written = scene.write();
+    let written = scene.write().expect("a scene writes its text");
     let mut parsed = Scene::parse(&written, &root, "the written scene", schema());
     assert_eq!(parsed, scene);
     assert!(
