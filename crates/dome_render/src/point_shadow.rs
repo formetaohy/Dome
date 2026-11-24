@@ -9,9 +9,10 @@ use dome_gpu::{
 use dome_math::{Mat4, Vec3};
 use std::mem::size_of;
 
-pub(crate) const POINT_SHADOW_SIDE: u32 = 256;
+pub const POINT_SHADOW_SIDE: u32 = 256;
 pub(crate) const POINT_SHADOW_FACES: u32 = 6;
 pub(crate) const POINT_SHADOW_NEAR: f32 = 0.05;
+pub(crate) const POINT_SHADOW_NONE: f32 = -1.0;
 
 const VIEW_BYTES: u64 = size_of::<ViewRecord>() as u64;
 const DRAW_BYTES: u64 = size_of::<DrawRecord>() as u64;
@@ -84,8 +85,8 @@ impl PointShadows {
         }
     }
 
-    pub(crate) fn ensure(&mut self, device: &Device, lights: usize) {
-        let rows = (lights as u32).max(1);
+    pub(crate) fn ensure(&mut self, device: &Device, rows: u32) {
+        let rows = rows.clamp(1, capacity(device));
         if self.rows == rows {
             return;
         }
@@ -112,12 +113,17 @@ impl PointShadows {
             "a frame writes {} argument words, not whole draws",
             arguments.len(),
         );
+        let casting = lights
+            .iter()
+            .filter(|light| light.shadow.x >= 0.0)
+            .collect::<Vec<_>>();
         assert_eq!(
-            lights.len().max(1) as u32,
+            casting.len().max(1) as u32,
             self.rows,
             "a frame prepares the point shadow rows its lights span",
         );
-        if lights.is_empty() {
+        let casting = casting.as_slice();
+        if casting.is_empty() {
             self.slots = slots;
             self.batches = (arguments.len() / 4) as u32;
             return;
@@ -132,7 +138,7 @@ impl PointShadows {
         self.drawn.fit(device, cells * self.drawn_span);
         self.arguments.fit(device, cells * self.argument_span);
         let mut views = Vec::with_capacity(cells as usize);
-        for light in lights {
+        for light in casting {
             let far = light.position.w;
             assert!(
                 far > POINT_SHADOW_NEAR && far.is_finite(),
@@ -241,6 +247,10 @@ fn atlas(device: &Device, rows: u32) -> Texture {
         TextureFormat::Depth32Float,
         TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
     )
+}
+
+pub(crate) fn capacity(device: &Device) -> u32 {
+    (device.limits().max_texture_dimension_2d / POINT_SHADOW_SIDE).max(1)
 }
 
 const _: () = assert!(

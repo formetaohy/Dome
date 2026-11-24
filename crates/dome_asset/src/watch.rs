@@ -1,65 +1,99 @@
-use crate::digest::Digest;
-use crate::source::Sources;
+mod worker;
+
 use dome_scene::Scene;
+use notify::Event;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-const SWEEP_FILES: usize = 32;
-const SETTLE_SWEEPS: u32 = 2;
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread::JoinHandle;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Change {
     pub scene: bool,
     pub model: bool,
     pub asset: bool,
+    pub script: bool,
 }
 
 impl Change {
-    fn any(self) -> bool {
-        self.scene || self.model || self.asset
+    pub fn any(self) -> bool {
+        self.scene || self.model || self.asset || self.script
     }
 
-    fn absorb(&mut self, other: Self) {
+    pub fn absorb(&mut self, other: Self) {
         self.scene |= other.scene;
         self.model |= other.model;
         self.asset |= other.asset;
+        self.script |= other.script;
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
+pub struct Report {
+    pub change: Change,
+    pub errors: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Kind {
     Scene,
-    Model,
+    Model(String),
     Asset,
+    Script,
+}
+
+impl Kind {
+    fn change(&self) -> Change {
+        let mut change = Change::default();
+        match self {
+            Self::Scene => change.scene = true,
+            Self::Model(_) => change.model = true,
+            Self::Asset => change.asset = true,
+            Self::Script => change.script = true,
+        }
+        change
+    }
+}
+
+enum Message {
+    Set(BTreeMap<PathBuf, Kind>),
+    Adopt(PathBuf),
+    Event(notify::Result<Event>),
+    Flush(Sender<()>),
+    Stop,
 }
 
 pub struct Watch {
     path: PathBuf,
-    sources: Sources,
-    files: Vec<(PathBuf, Kind, Option<Digest>)>,
-    errors: Vec<String>,
-    pending: Option<Change>,
-    cursor: usize,
-    held: u32,
+    commands: Option<Sender<Message>>,
+    reports: Receiver<Report>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl Watch {
-    pub fn new(scene: &Path, root: &Scene) -> Self {
+    pub fn new(scene: &Path, root: &Scene, wake: impl Fn() + Send + Sync + 'static) -> Self {
+        let (commands, requests) = channel();
+        let (reports, received) = channel();
+        let worker = worker::spawn(
+            requests,
+            commands.clone(),
+            reports,
+            Arc::new(wake),
+            root.root().to_path_buf(),
+        );
         let mut watch = Self {
             path: scene.to_path_buf(),
-            sources: Sources::new(),
-            files: Vec::new(),
-            errors: Vec::new(),
-            pending: None,
-            cursor: 0,
-            held: 0,
+            commands: Some(commands),
+            reports: received,
+            worker: Some(worker),
         };
         watch.renew(root);
+        watch.flush();
         watch
     }
 
     pub fn renew(&mut self, root: &Scene) {
-        self.errors.clear();
         let mut desired = BTreeMap::new();
         desired.insert(self.path.clone(), Kind::Scene);
         for owners in root.instances().values() {
@@ -81,83 +115,119 @@ impl Watch {
             }
         }
         for model in root.models() {
-            let path = root.asset(&model.path);
-            desired.insert(path.clone(), Kind::Model);
-            let held = self.sources.dependencies(&path);
-            if let Some(error) = held.error() {
-                self.errors.push(String::from(error));
-            }
-            for dependency in held.sources().buffers.iter().chain(&held.sources().images) {
-                let inside = dependency
-                    .strip_prefix(root.root())
-                    .is_ok_and(|relative| dome_scene::Folder::Asset.holds(relative));
-                if inside {
-                    desired.insert(dependency.clone(), Kind::Asset);
-                } else {
-                    self.errors.push(format!(
-                        "the model {} reads {} outside the assets folder",
-                        model.id,
-                        dependency.display(),
-                    ));
-                }
-            }
+            desired.insert(root.asset(&model.path), Kind::Model(model.id.clone()));
         }
-        let mut files = Vec::with_capacity(desired.len());
-        for (path, kind) in desired {
-            files.push((path.clone(), kind, self.sources.digest(&path).ok()));
-        }
-        self.files = files;
-        self.pending = None;
-        self.cursor = 0;
-        self.held = 0;
+        self.send(Message::Set(desired));
     }
 
-    pub fn changed(&mut self) -> Option<Change> {
-        let (polled, swept) = self.poll();
-        if polled.any() {
-            self.pending.get_or_insert(Change::default()).absorb(polled);
-            self.held = 0;
-            return None;
-        }
-        self.pending.as_ref()?;
-        if !swept {
-            return None;
-        }
-        self.held += 1;
-        if self.held < SETTLE_SWEEPS {
-            return None;
-        }
-        self.held = 0;
-        self.pending.take()
+    pub fn adopt(&mut self, path: &Path) {
+        self.send(Message::Adopt(path.to_path_buf()));
     }
 
-    fn poll(&mut self) -> (Change, bool) {
-        let mut changed = Change::default();
-        let count = self.files.len();
-        if count == 0 {
-            return (changed, true);
-        }
-        let take = count.min(SWEEP_FILES);
-        let cursor = self.cursor;
-        let (files, sources) = (&mut self.files, &mut self.sources);
-        for offset in 0..take {
-            let (path, kind, digest) = &mut files[(cursor + offset) % count];
-            let current = sources.digest(path).ok();
-            if *digest == current {
-                continue;
-            }
-            *digest = current;
-            match kind {
-                Kind::Scene => changed.scene = true,
-                Kind::Model => changed.model = true,
-                Kind::Asset => changed.asset = true,
+    pub fn changed(&mut self) -> Option<Report> {
+        if self.worker.as_ref().is_some_and(JoinHandle::is_finished) {
+            let worker = self
+                .worker
+                .take()
+                .expect("a finished watcher holds its thread");
+            match worker.join() {
+                Ok(()) => panic!("the file watcher thread stops before its watch stops"),
+                Err(payload) => std::panic::resume_unwind(payload),
             }
         }
-        self.cursor = (cursor + take) % count;
-        (changed, self.cursor == 0)
+        let mut report: Option<Report> = None;
+        while let Ok(held) = self.reports.try_recv() {
+            let merged = report.get_or_insert(Report {
+                change: Change::default(),
+                errors: None,
+            });
+            merged.change.absorb(held.change);
+            if held.errors.is_some() {
+                merged.errors = held.errors;
+            }
+        }
+        report
     }
 
-    pub fn errors(&self) -> impl Iterator<Item = &str> + '_ {
-        self.errors.iter().map(String::as_str)
+    fn send(&self, message: Message) {
+        if let Some(commands) = &self.commands {
+            let _ = commands.send(message);
+        }
+    }
+
+    fn flush(&self) {
+        let (flushed, ready) = channel();
+        self.send(Message::Flush(flushed));
+        let _ = ready.recv();
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        self.send(Message::Stop);
+        self.commands = None;
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Report, Watch};
+    use dome_scene::Scene;
+    use dome_schema::Registry;
+    use std::fs;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    const SCENE: &str = r#"format = "dome_scene"
+images = []
+meshes = []
+materials = []
+nodes = []
+"#;
+    const SCRIPT: &str = "fn update() {\n}\n";
+
+    #[test]
+    fn a_watch_reports_the_script_it_witnesses() {
+        let root = std::env::temp_dir().join(format!("dome_watch_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("scripts")).expect("a watch test opens its scripts");
+        let path = root.join("scene.toml");
+        fs::write(&path, SCENE).expect("a watch test writes its scene");
+        let script = root.join("scripts/main.lampas");
+        fs::write(&script, SCRIPT).expect("a watch test writes its script");
+        let scene = Scene::load(&path, root.clone(), Arc::new(Registry::default()));
+        let mut watch = Watch::new(&path, &scene, || {});
+        assert!(
+            watch.changed().is_none(),
+            "a watch reports nothing before it witnesses a write",
+        );
+        fs::write(&script, format!("{SCRIPT}fn fixed() {{\n}}\n"))
+            .expect("a watch test rewrites its script");
+        let report = settled(&mut watch).expect("a watch reports the script it witnesses");
+        assert!(
+            report.change.script,
+            "a watch reports the script it witnessed: {:?}",
+            report.change,
+        );
+        assert!(
+            !report.change.scene && !report.change.model && !report.change.asset,
+            "a watch reports only the script it witnessed: {:?}",
+            report.change,
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn settled(watch: &mut Watch) -> Option<Report> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if let Some(report) = watch.changed() {
+                return Some(report);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        None
     }
 }

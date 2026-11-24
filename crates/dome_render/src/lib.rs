@@ -44,6 +44,7 @@ pub use light::{DirectionalLight, PointLight};
 pub use line::{Line, Lines};
 pub use material::{AlphaMode, Material, MaterialDesc, MaterialImage};
 pub use mesh::Mesh;
+pub use point_shadow::POINT_SHADOW_SIDE;
 pub use renderer::{Renderer, Target};
 pub use skin::Skin;
 pub use view::View;

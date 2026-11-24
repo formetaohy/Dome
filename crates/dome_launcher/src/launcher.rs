@@ -4,7 +4,7 @@ use crate::stage::{self, State};
 use dome_gpu::{Gpu, GpuRequest, Submission, WindowHandle};
 use dome_math::Vec2;
 use dome_project::{Catalog, Project};
-use dome_window::{Event, Flow, Handler, KeyCode, Window, WindowConfig, run as run_window};
+use dome_window::{Event, Flow, Handler, KeyCode, Waker, Window, WindowConfig, run as run_window};
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -282,7 +282,7 @@ impl Launcher {
 }
 
 impl Handler for Launcher {
-    fn opened(&mut self, window: &Window) {
+    fn opened(&mut self, window: &Window, _waker: Waker) {
         self.open(window);
     }
 

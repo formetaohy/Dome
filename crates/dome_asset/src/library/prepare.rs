@@ -104,7 +104,7 @@ impl Models<'_> {
         let path = self.scene.asset(&entry.path);
         files.insert(path.clone());
         let file = sources.digest(&path)?;
-        let external = sources.dependencies(&path);
+        let dependencies = sources.dependencies(&path);
         let mut digest = Digest::builder();
         digest
             .text("model")
@@ -115,7 +115,6 @@ impl Models<'_> {
             .text(id)
             .text(&path.to_string_lossy())
             .digest(file);
-        let dependencies = external.sources();
         for source in &dependencies.buffers {
             asset_dependency(self.scene, id, "buffer", source)?;
             files.insert(source.clone());

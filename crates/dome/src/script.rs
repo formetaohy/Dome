@@ -1,4 +1,5 @@
 use dome_app::{App, Time};
+use dome_asset::Change;
 use dome_ecs::{Entity, LocalTransform, World};
 use dome_math::Quat;
 use dome_schema::SceneNode;
@@ -9,15 +10,32 @@ use std::rc::Rc;
 use std::time::Duration;
 
 pub(crate) fn install(app: &mut App, root: &Path) {
-    let scripts = Scripts::load(root, hosts())
-        .unwrap_or_else(|error| panic!("the lampas scripts of {} check: {error}", root.display()));
-    let scripts = Rc::new(RefCell::new(scripts));
+    let scripts = Rc::new(RefCell::new(load(root)));
     let boot = Rc::clone(&scripts);
     app.add_startup(move |world: &mut World, _| boot.borrow_mut().boot(world));
     let update = Rc::clone(&scripts);
     app.add_system(move |world: &mut World| update.borrow_mut().update(world));
     let fixed = Rc::clone(&scripts);
     app.add_fixed(move |world: &mut World| fixed.borrow_mut().fixed(world));
+    let reload = Rc::clone(&scripts);
+    let folder = root.to_path_buf();
+    app.add_reload(move |_: &mut World, change: Change| {
+        if !change.script {
+            return;
+        }
+        match Scripts::load(&folder, hosts()) {
+            Ok(fresh) => *reload.borrow_mut() = fresh,
+            Err(error) => eprintln!(
+                "the lampas scripts of {} keep the version they checked: {error}",
+                folder.display(),
+            ),
+        }
+    });
+}
+
+fn load(root: &Path) -> Scripts {
+    Scripts::load(root, hosts())
+        .unwrap_or_else(|error| panic!("the lampas scripts of {} check: {error}", root.display()))
 }
 
 fn hosts() -> Hosts {

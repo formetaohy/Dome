@@ -1,4 +1,5 @@
 use crate::event::{Event, Ime};
+use crate::wake::{Wake, Waker};
 use crate::window::{Window, WindowConfig};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -16,7 +17,7 @@ pub enum Flow {
 }
 
 pub trait Handler: 'static {
-    fn opened(&mut self, window: &Window);
+    fn opened(&mut self, window: &Window, waker: Waker);
 
     fn frame(&mut self, window: &Window, real: Duration) -> Flow;
 
@@ -30,10 +31,14 @@ pub trait Handler: 'static {
 }
 
 pub fn run<H: Handler>(config: WindowConfig, handler: H) {
-    let event_loop = EventLoop::new().expect("the platform opens a window event loop");
+    let event_loop = EventLoop::<Wake>::with_user_event()
+        .build()
+        .expect("the platform opens a window event loop");
+    let waker = Waker::new(event_loop.create_proxy());
     let mut host = Host {
         config,
         handler,
+        waker,
         window: None,
         last: None,
         timer: false,
@@ -46,6 +51,7 @@ pub fn run<H: Handler>(config: WindowConfig, handler: H) {
 struct Host<H: Handler> {
     config: WindowConfig,
     handler: H,
+    waker: Waker,
     window: Option<Window>,
     last: Option<Instant>,
     timer: bool,
@@ -93,7 +99,7 @@ impl<H: Handler> Host<H> {
     }
 }
 
-impl<H: Handler> ApplicationHandler for Host<H> {
+impl<H: Handler> ApplicationHandler<Wake> for Host<H> {
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
         if !matches!(cause, StartCause::ResumeTimeReached { .. }) {
             return;
@@ -127,11 +133,15 @@ impl<H: Handler> ApplicationHandler for Host<H> {
                 .create_window(attributes)
                 .expect("the platform creates a window"),
         );
-        self.handler.opened(&window);
+        self.handler.opened(&window, self.waker.clone());
         self.last = None;
         self.timer = false;
         window.request_redraw();
         self.window = Some(window);
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: Wake) {
+        self.redraw();
     }
 
     fn window_event(

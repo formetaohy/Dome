@@ -1,5 +1,5 @@
 use crate::time::Time;
-use dome_asset::{Library, Watch};
+use dome_asset::{Change, Library, Watch};
 use dome_audio::Audio;
 use dome_ecs::{Entity, Schedule, System, World, propagate};
 use dome_gpu::{Gpu, GpuRequest, Surface, Texture, TextureFormat, TextureUsages, WindowHandle};
@@ -7,7 +7,7 @@ use dome_math::{Transform, Vec3};
 use dome_render::{Camera, Lines, Renderer, Target};
 use dome_scene::{Changed, Scene};
 use dome_schema::{Registry, SceneSync};
-use dome_window::{Event, Flow, Handler, Input, Window, WindowConfig, run as run_window};
+use dome_window::{Event, Flow, Handler, Input, Waker, Window, WindowConfig, run as run_window};
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
@@ -76,13 +76,16 @@ impl Default for ClearColor {
 }
 
 type Startup = Box<dyn FnOnce(&mut World, &mut Renderer)>;
+type Observer = Box<dyn Fn(&mut World, Change)>;
 
 pub struct App {
     world: World,
     fixed: Schedule,
     update: Schedule,
     startup: Vec<Startup>,
+    reloads: Vec<Observer>,
     config: AppConfig,
+    wake: Option<Waker>,
     session: Option<Session>,
     reload: Option<String>,
     started: bool,
@@ -120,6 +123,7 @@ struct LiveScene {
     wanted: Option<Scene>,
     requested: Option<Scene>,
     renew: bool,
+    change: Change,
 }
 
 struct Reload {
@@ -134,6 +138,7 @@ impl LiveScene {
         renderer: &mut Renderer,
         world: &mut World,
         blocking: bool,
+        wake: impl Fn() + Send + Sync + 'static,
     ) -> Self {
         let scene = Scene::load(&file.path, file.root.clone(), registry.clone());
         let mut assets = Library::new();
@@ -155,7 +160,7 @@ impl LiveScene {
             assert!(assets.request(&scene), "a new library loads its scene");
             (Some(scene.clone()), Some(scene.clone()))
         };
-        let watch = Watch::new(&file.path, &scene);
+        let watch = Watch::new(&file.path, &scene, wake);
         Self {
             path: file.path,
             root: file.root,
@@ -167,6 +172,7 @@ impl LiveScene {
             wanted,
             requested,
             renew: false,
+            change: Change::default(),
         }
     }
 
@@ -177,15 +183,20 @@ impl LiveScene {
         renderer: &mut Renderer,
         blocking: bool,
     ) -> Option<Reload> {
-        if let Some(change) = self.watch.changed() {
+        if let Some(report) = self.watch.changed() {
+            if let Some(errors) = report.errors
+                && !errors.is_empty()
+            {
+                self.messages.push(errors.join("; "));
+            }
+            let change = report.change;
             self.renew = true;
+            self.change.absorb(change);
             if change.scene {
                 match catch_unwind(AssertUnwindSafe(|| {
                     Scene::load(&self.path, self.root.clone(), registry.clone())
                 })) {
                     Ok(scene) => {
-                        self.watch.renew(&scene);
-                        self.messages.extend(self.watch.errors().map(String::from));
                         self.wanted = Some(scene);
                     }
                     Err(payload) => {
@@ -194,11 +205,7 @@ impl LiveScene {
                         return Some(self.reloaded());
                     }
                 }
-            } else {
-                if change.model {
-                    self.watch.renew(&self.scene);
-                    self.messages.extend(self.watch.errors().map(String::from));
-                }
+            } else if change.model || change.asset {
                 self.wanted = Some(self.scene.clone());
             }
         }
@@ -261,9 +268,13 @@ impl LiveScene {
         }
     }
 
+    fn take_change(&mut self) -> Option<Change> {
+        let change = std::mem::take(&mut self.change);
+        change.any().then_some(change)
+    }
+
     fn rewatch(&mut self) {
         self.watch.renew(&self.scene);
-        self.messages.extend(self.watch.errors().map(String::from));
     }
 }
 
@@ -352,6 +363,7 @@ impl Session {
         file: &SceneConfig,
         registry: &Arc<Registry>,
         blocking: bool,
+        wake: impl Fn() + Send + Sync + 'static,
     ) {
         self.live = Some(LiveScene::new(
             SceneConfig {
@@ -362,6 +374,7 @@ impl Session {
             &mut self.renderer,
             world,
             blocking,
+            wake,
         ));
     }
 
@@ -373,6 +386,10 @@ impl Session {
     ) -> Option<Reload> {
         let live = self.live.as_mut()?;
         live.update(world, registry, &mut self.renderer, blocking)
+    }
+
+    fn take_change(&mut self) -> Option<Change> {
+        self.live.as_mut()?.take_change()
     }
 
     fn rewatch(&mut self) {
@@ -482,7 +499,9 @@ impl App {
             fixed,
             update: Schedule::new(),
             startup: Vec::new(),
+            reloads: Vec::new(),
             config,
+            wake: None,
             session: None,
             reload: None,
             started: false,
@@ -519,6 +538,11 @@ impl App {
         setup: impl FnOnce(&mut World, &mut Renderer) + 'static,
     ) -> &mut Self {
         self.startup.push(Box::new(setup));
+        self
+    }
+
+    pub fn add_reload(&mut self, reload: impl Fn(&mut World, Change) + 'static) -> &mut Self {
+        self.reloads.push(Box::new(reload));
         self
     }
 
@@ -599,8 +623,14 @@ impl App {
             .resource_mut::<Input>()
             .expect("an application keeps its input")
             .handle(Event::Focused(focused));
+        let waker = self.wake.clone();
+        let wake = move || {
+            if let Some(waker) = &waker {
+                waker.wake();
+            }
+        };
         if let Some(file) = &self.config.scene {
-            session.load_scene(&mut self.world, file, &self.config.registry, blocking);
+            session.load_scene(&mut self.world, file, &self.config.registry, blocking, wake);
             self.reload = session.live.as_mut().and_then(LiveScene::take_error);
         }
         if !blocking && self.config.scene.is_some() {
@@ -674,8 +704,13 @@ impl App {
     }
 
     fn reload_scene(&mut self, session: &mut Session) {
-        let Some(reload) = session.reload(&mut self.world, &self.config.registry, self.headless)
-        else {
+        let reload = session.reload(&mut self.world, &self.config.registry, self.headless);
+        if let Some(change) = session.take_change() {
+            for observer in &self.reloads {
+                observer(&mut self.world, change);
+            }
+        }
+        let Some(reload) = reload else {
             return;
         };
         if reload.renew {
@@ -695,7 +730,8 @@ impl App {
 }
 
 impl Handler for App {
-    fn opened(&mut self, window: &Window) {
+    fn opened(&mut self, window: &Window, waker: Waker) {
+        self.wake = Some(waker);
         let mut session = Session::window(window, &self.config.gpu);
         self.start(&mut session, window.has_focus());
         self.session = Some(session);

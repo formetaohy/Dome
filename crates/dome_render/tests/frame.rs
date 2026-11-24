@@ -582,6 +582,61 @@ fn points() {
     );
 }
 
+#[test]
+fn a_frame_shadows_the_point_lights_the_device_affords() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device shadows a crowded frame: {error}"));
+    let device = context.device();
+    let target = Texture::new(
+        device,
+        "crowded point lights",
+        64,
+        64,
+        1,
+        TextureFormat::Rgba8Unorm,
+        TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+    );
+    let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
+    let material = renderer.material(MaterialDesc::new(WHITE));
+    let quad = renderer.mesh(&QUAD);
+    let mut world = World::new();
+    let eye = world.spawn();
+    world.insert(eye, Transform::from_translation(Vec3::new(0.0, 0.0, 6.0)));
+    world.insert(
+        eye,
+        Camera {
+            vertical_fov: std::f32::consts::FRAC_PI_2,
+            near: 0.1,
+            far: 100.0,
+        },
+    );
+    let wall = world.spawn();
+    world.insert(wall, Transform::from_scale(Vec3::new(12.0, 6.0, 1.0)));
+    world.insert(
+        wall,
+        MeshInstance {
+            mesh: quad,
+            material,
+            tint: WHITE,
+        },
+    );
+    let lights = device.limits().max_texture_dimension_2d / dome_render::POINT_SHADOW_SIDE + 1;
+    for index in 0..lights {
+        let light = world.spawn();
+        let at = (index as f32 - lights as f32 * 0.5) * 0.25;
+        world.insert(light, Transform::from_translation(Vec3::new(at, 0.0, 1.0)));
+        world.insert(light, PointLight::new(WHITE, 0.5, 3.0));
+    }
+    renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
+    let pixels = read(&context, &target);
+    assert!(
+        pixels
+            .iter()
+            .any(|pixel| pixel.iter().take(3).all(|channel| *channel > 24)),
+        "a frame of {lights} point lights lights the wall the nearest of them shadows",
+    );
+}
+
 fn read(context: &Gpu, target: &Texture) -> Vec<[u8; 4]> {
     let device = context.device();
     let readback = GpuBuffer::new(

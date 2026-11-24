@@ -339,3 +339,43 @@ fn a_ray_ignores_a_layer_outside_its_filter() {
         hit.distance,
     );
 }
+
+#[test]
+fn a_teleported_body_lands_without_pushing_what_it_touches() {
+    let mut world = World::new();
+    world.insert_resource(Gravity(Vec3::ZERO));
+    floor(&mut world);
+    let resting = spawn(
+        &mut world,
+        Vec3::new(0.0, 0.5, 0.0),
+        Quat::IDENTITY,
+        Shape::sphere(0.5),
+        BodyKind::Dynamic,
+    );
+    let moving = spawn(
+        &mut world,
+        Vec3::new(-6.0, 0.5, 0.0),
+        Quat::IDENTITY,
+        Shape::sphere(0.5),
+        BodyKind::Dynamic,
+    );
+    settle(&mut world, 120);
+    world.insert(
+        moving,
+        LocalTransform(Transform::from_translation(Vec3::new(-0.98, 0.5, 0.0))),
+    );
+    settle(&mut world, 30);
+    let held = world
+        .get::<RigidBody>(resting)
+        .expect("the resting body holds its state");
+    assert!(
+        held.linear_velocity().length() < 0.1,
+        "a teleported body leaves the body it lands against at {:?}",
+        held.linear_velocity(),
+    );
+    let drifted = position(&world, resting);
+    assert!(
+        (drifted - Vec3::new(0.0, 0.5, 0.0)).length() < 0.2,
+        "a teleported body lets the body it lands against rest at {drifted:?}",
+    );
+}

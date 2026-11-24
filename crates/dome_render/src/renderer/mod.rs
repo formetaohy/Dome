@@ -39,7 +39,7 @@ use crate::material::{AlphaMode, Material, MaterialDesc, MaterialLibrary};
 use crate::mesh::{Mesh, MeshLibrary};
 use crate::palette::Palettes;
 use crate::pick::{PickBatch, PickFrame, PickResources, Picker};
-use crate::point_shadow::{POINT_SHADOW_NEAR, PointShadowFrame, PointShadows};
+use crate::point_shadow::{POINT_SHADOW_NEAR, POINT_SHADOW_NONE, PointShadowFrame, PointShadows};
 use crate::post::Post;
 use crate::probe::Probes;
 use crate::program;
@@ -634,6 +634,10 @@ impl Renderer {
         if probe_textures {
             self.ambient = None;
         }
+        let (camera, transform) = camera_of(world);
+        let (light, light_transform) = light_of(world);
+        let eye = transform.translation;
+        let forward = transform.rotation.rotate_vec3(-Vec3::Z).normalize();
         let mut point_light_records = Vec::new();
         world.for_each_pair::<Transform, PointLight>(|entity, transform, light| {
             if world.contains::<Hidden>(entity) {
@@ -660,18 +664,37 @@ impl Renderer {
                 },
             });
         });
-        let point_light_count = point_light_records.len() as u32;
-        let rows = point_light_count.max(1) as f32;
+        point_light_records.sort_by(|first, second| {
+            let distance = |record: &PointLightRecord| {
+                let dx = record.position.x - eye.x;
+                let dy = record.position.y - eye.y;
+                let dz = record.position.z - eye.z;
+                dx * dx + dy * dy + dz * dz
+            };
+            distance(first).total_cmp(&distance(second))
+        });
+        let capacity = crate::point_shadow::capacity(&self.device) as usize;
+        let casting = point_light_records.len().min(capacity);
+        let rows = (casting as u32).max(1);
+        let span = 1.0 / rows as f32;
         for (index, record) in point_light_records.iter_mut().enumerate() {
-            record.shadow = Fvec4 {
-                x: index as f32 / rows,
-                y: 1.0 / rows,
-                z: POINT_SHADOW_NEAR,
-                w: record.position.w,
+            record.shadow = if index < casting {
+                Fvec4 {
+                    x: index as f32 * span,
+                    y: span,
+                    z: POINT_SHADOW_NEAR,
+                    w: record.position.w,
+                }
+            } else {
+                Fvec4 {
+                    x: POINT_SHADOW_NONE,
+                    y: 0.0,
+                    z: POINT_SHADOW_NEAR,
+                    w: record.position.w,
+                }
             };
         }
-        self.point_shadows
-            .ensure(&self.device, point_light_records.len());
+        self.point_shadows.ensure(&self.device, rows);
         self.refresh_ambient(environment);
         let width = texture.width();
         let height = texture.height();
@@ -680,10 +703,6 @@ impl Renderer {
             .prepare(&self.device, &self.queue, width, height);
         let jitter = self.temporality.jitter();
         let aspect = width as f32 / height as f32;
-        let (camera, transform) = camera_of(world);
-        let (light, light_transform) = light_of(world);
-        let eye = transform.translation;
-        let forward = transform.rotation.rotate_vec3(-Vec3::Z).normalize();
         let view = camera.view_jittered(transform, aspect, jitter, width, height);
         let pose = Pose {
             clip: view.clip,

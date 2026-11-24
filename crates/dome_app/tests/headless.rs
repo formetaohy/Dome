@@ -289,15 +289,15 @@ fn a_headless_run_follows_a_changed_prefab_and_keeps_the_last_good_scene() {
             fs::write(&prefab, WATCH_PREFAB_EXTENDED)
                 .expect("a headless system extends the prefab");
         }
-        if frame == 5 {
+        if frame == 25 {
             fs::write(&prefab, WATCH_BROKEN).expect("a headless system breaks the prefab");
         }
     });
     app.run_headless(HeadlessConfig {
         width: 32,
         height: 32,
-        frames: Some(8),
-        realtime: false,
+        frames: Some(60),
+        realtime: true,
         screenshot: false,
     });
 

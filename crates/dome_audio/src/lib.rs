@@ -4,6 +4,7 @@ mod component;
 mod device;
 mod effect;
 mod frames;
+mod garbage;
 mod graph;
 mod mixer;
 mod ring;

@@ -18,6 +18,11 @@ impl ContactCache {
         self.points.clear();
     }
 
+    pub(crate) fn forget(&mut self, entity: Entity) {
+        self.points
+            .retain(|key, _| key.0 != entity && key.1 != entity);
+    }
+
     pub(crate) fn take(
         &mut self,
         first: Entity,

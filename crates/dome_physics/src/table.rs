@@ -21,6 +21,7 @@ pub(crate) struct Table {
     found: Vec<u32>,
     stack: Vec<usize>,
     stale: Vec<Entity>,
+    teleported: Vec<Entity>,
 }
 
 impl Default for Table {
@@ -40,6 +41,7 @@ impl Table {
             found: Vec::new(),
             stack: Vec::new(),
             stale: Vec::new(),
+            teleported: Vec::new(),
         }
     }
 
@@ -51,6 +53,10 @@ impl Table {
         &mut self.bodies
     }
 
+    pub(crate) fn teleported(&self) -> &[Entity] {
+        &self.teleported
+    }
+
     pub(crate) fn index(&self, entity: Entity) -> Option<usize> {
         let slot = self.slots.get(entity.index() as usize)?;
         (slot.generation == entity.generation() && slot.body != VACANT)
@@ -58,11 +64,16 @@ impl Table {
     }
 
     pub(crate) fn sync(&mut self, world: &World, joints: &[(Entity, Joint)], delta: f32) {
+        self.teleported.clear();
         self.prune(world, joints);
         self.discover(world, joints);
         for at in 0..self.bodies.len() {
-            if self.bodies[at].refresh(world, delta) {
+            let refresh = self.bodies[at].refresh(world, delta);
+            if refresh.rebuilt() {
                 self.rebuild(at, world);
+            }
+            if refresh.teleported() {
+                self.teleported.push(self.bodies[at].entity);
             }
         }
     }

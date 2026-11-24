@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 dome_app = { workspace = true }
+dome_asset = { workspace = true }
 dome_ecs = { workspace = true }
 dome_editor = { workspace = true }
 dome_launcher = { workspace = true }

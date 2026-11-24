@@ -69,9 +69,11 @@ impl Transparency {
             return;
         }
         let pixels = u64::from(width) * u64::from(height);
-        let layer_bytes = pixels * u64::from(TRANSPARENT_LAYERS) * WORD_BYTES;
+        let budget = device.limits().max_storage_buffer_binding_size;
+        let layers = layers_of(budget, pixels);
+        let layer_bytes = pixels * u64::from(layers) * WORD_BYTES;
         assert!(
-            layer_bytes <= device.limits().max_storage_buffer_binding_size,
+            layer_bytes <= budget,
             "a {width} by {height} frame slots {layer_bytes} transparent layers beyond the device storage binding",
         );
         let storage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
@@ -87,7 +89,7 @@ impl Transparency {
         settings.write(
             queue,
             bytemuck::bytes_of(&TransparentSetupRecord {
-                layers: TRANSPARENT_LAYERS,
+                layers,
                 width,
                 height,
                 vertical,
@@ -100,7 +102,7 @@ impl Transparency {
             settings,
             width,
             height,
-            layers: TRANSPARENT_LAYERS,
+            layers,
         });
     }
 
@@ -198,3 +200,35 @@ const _: () = assert!(
     SETTINGS_BYTES == 16,
     "the transparent settings pack the layers, viewport and vertical direction",
 );
+
+fn layers_of(budget: u64, pixels: u64) -> u32 {
+    let layer = pixels.max(1) * WORD_BYTES;
+    let held = budget / layer;
+    TRANSPARENT_LAYERS
+        .min(u32::try_from(held).unwrap_or(u32::MAX))
+        .max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::layers_of;
+
+    #[test]
+    fn a_frame_the_device_cannot_hold_slots_the_layers_its_binding_affords() {
+        assert_eq!(
+            layers_of(8 << 20, 1024 * 1024),
+            2,
+            "a frame of four megabytes per layer slots two of them",
+        );
+        assert_eq!(
+            layers_of(8 << 20, 32 * 32),
+            4,
+            "a frame that fits every layer slots them all",
+        );
+        assert_eq!(
+            layers_of(2 << 20, 1024 * 1024),
+            1,
+            "a frame beyond the binding keeps its nearest layer",
+        );
+    }
+}

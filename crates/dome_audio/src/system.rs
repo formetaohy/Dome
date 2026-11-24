@@ -2,6 +2,7 @@ use crate::bus::{AudioBus, BusState};
 use crate::command::{Command, Event, VoiceId};
 use crate::component::{AudioListener, AudioSource};
 use crate::device::{Output, Stream};
+use crate::garbage;
 use crate::graph::{self, BusParams, Layout};
 use crate::mixer::{MAX_VOICES, Mixer};
 use crate::ring;
@@ -18,12 +19,14 @@ pub use crate::device::Unavailable as AudioUnavailable;
 
 const COMMAND_CAPACITY: usize = 8192;
 const EVENT_CAPACITY: usize = 4096;
+const GARBAGE_CAPACITY: usize = 1024;
 const RETRY: Duration = Duration::from_secs(1);
 
 struct Deck {
     stream: Stream,
     commands: Mutex<ring::Producer<Command>>,
     events: Mutex<ring::Consumer<Event>>,
+    garbage: garbage::Bin,
     active: Arc<AtomicUsize>,
 }
 
@@ -33,11 +36,13 @@ impl Deck {
         let format = output.format();
         let (commands, command_consumer) = ring::channel(COMMAND_CAPACITY);
         let (event_producer, events) = ring::channel(EVENT_CAPACITY);
+        let (garbage, bin) = garbage::channel(GARBAGE_CAPACITY);
         let active = Arc::new(AtomicUsize::new(0));
         let mut mixer = Mixer::new(
             format.sample_rate(),
             command_consumer,
             event_producer,
+            garbage,
             Arc::clone(&active),
         );
         let stream = output.start(Box::new(move |out: &mut [f32]| mixer.render(out)))?;
@@ -45,12 +50,17 @@ impl Deck {
             stream,
             commands: Mutex::new(commands),
             events: Mutex::new(events),
+            garbage: bin,
             active,
         })
     }
 
     fn alive(&self) -> bool {
         self.stream.alive()
+    }
+
+    fn empty(&mut self) {
+        self.garbage.empty();
     }
 
     fn send(&self, command: Command) {
@@ -243,7 +253,10 @@ impl Audio {
     }
 
     fn supervise(&mut self) {
-        if self.deck.as_ref().is_some_and(Deck::alive) {
+        if let Some(deck) = &mut self.deck
+            && deck.alive()
+        {
+            deck.empty();
             return;
         }
         let now = Instant::now();

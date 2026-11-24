@@ -2,12 +2,14 @@ mod event;
 mod host;
 mod input;
 mod key;
+mod wake;
 mod window;
 
 pub use event::{Event, Ime};
 pub use host::{Flow, Handler, run};
 pub use input::Input;
 pub use key::{KEY_NAMES, key_code, key_name};
+pub use wake::{Wake, Waker};
 pub use window::{Window, WindowConfig};
 
 pub use winit::event::MouseButton;

@@ -57,6 +57,9 @@ impl Simulation {
             collisions.settle(&[]);
             return;
         }
+        for entity in self.table.teleported() {
+            self.cache.forget(*entity);
+        }
         for body in self.table.bodies_mut() {
             if body.carried.moves() {
                 body.wake();

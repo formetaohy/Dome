@@ -262,6 +262,23 @@ enum Nodes {
     Invalid,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Refresh {
+    Stable,
+    Rebuilt,
+    Teleported,
+}
+
+impl Refresh {
+    pub(crate) fn rebuilt(self) -> bool {
+        self != Self::Stable
+    }
+
+    pub(crate) fn teleported(self) -> bool {
+        self == Self::Teleported
+    }
+}
+
 pub(crate) struct Body {
     pub entity: Entity,
     pub rigid: RigidBody,
@@ -417,7 +434,7 @@ impl Body {
         self.turn(rotation);
     }
 
-    pub(crate) fn refresh(&mut self, world: &World, delta: f32) -> bool {
+    pub(crate) fn refresh(&mut self, world: &World, delta: f32) -> Refresh {
         let rigid = world.get::<RigidBody>(self.entity).copied();
         let mut rebuilt = false;
         if rigid != self.published {
@@ -427,7 +444,8 @@ impl Body {
             self.rigid = held;
         }
         let parent = world.get::<Parent>(self.entity).map(Parent::entity);
-        if parent != self.parent {
+        let reparented = parent != self.parent;
+        if reparented {
             if let Some(held) = parent {
                 assert!(
                     !under_body(world, held),
@@ -443,15 +461,30 @@ impl Body {
             Some(frame) => frame.compose(local),
             None => local,
         };
+        let mut teleported = false;
         if transform != self.transform || local != self.local {
             rebuilt |= transform.scale != self.transform.scale;
-            self.carried = Velocity::of(self.transform, transform, delta);
+            let moved = local.translation != self.local.translation
+                || local.rotation != self.local.rotation
+                || reparented;
+            if self.rigid.kind == BodyKind::Dynamic && moved {
+                self.rigid.linear_velocity = Vec3::ZERO;
+                self.rigid.angular_velocity = Vec3::ZERO;
+                self.rigid.wake();
+                self.carried = Velocity::STILL;
+                rebuilt = true;
+                teleported = true;
+            } else {
+                self.carried = Velocity::of(self.transform, transform, delta);
+            }
             self.transform = transform;
             self.local = local;
             let rotation = transform.rotation.normalize();
             self.position = transform.translation + rotation.rotate_vec3(self.center_offset);
             self.rotation = rotation;
             self.turn(rotation);
+        } else {
+            self.carried = Velocity::STILL;
         }
         self.frame = frame;
         match self.nodes_changed(world) {
@@ -474,7 +507,11 @@ impl Body {
                 None => rebuilt = true,
             }
         }
-        rebuilt
+        match (rebuilt, teleported) {
+            (_, true) => Refresh::Teleported,
+            (true, false) => Refresh::Rebuilt,
+            (false, false) => Refresh::Stable,
+        }
     }
 
     fn nodes_changed(&mut self, world: &World) -> Nodes {

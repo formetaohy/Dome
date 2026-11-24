@@ -1,6 +1,7 @@
 use crate::bus::decibels;
 use crate::command::{Command, Event, VoiceId};
 use crate::effect::{Compressor, Filter, Reverb};
+use crate::garbage::{self, Garbage};
 use crate::graph::{BLOCK_FRAMES, BusParams, Layout, MAX_BUSES};
 use crate::ring::{Consumer, Producer};
 use crate::voice::{Settings, Voice as Playing};
@@ -58,10 +59,20 @@ struct Assigned {
     located: bool,
 }
 
+impl Assigned {
+    fn discard(self) -> Garbage {
+        Garbage::Voice {
+            input: self.voice.release(),
+            bus: self.bus,
+        }
+    }
+}
+
 pub(crate) struct Mixer {
     rate: u32,
     commands: Consumer<Command>,
     events: Producer<Event>,
+    garbage: garbage::Queue,
     voices: Vec<Option<Assigned>>,
     retiring: [Option<Assigned>; RETIRING],
     buses: Vec<Bus>,
@@ -80,6 +91,7 @@ impl Mixer {
         rate: u32,
         commands: Consumer<Command>,
         events: Producer<Event>,
+        garbage: garbage::Queue,
         active: Arc<AtomicUsize>,
     ) -> Self {
         let layout = Arc::new(Layout::master());
@@ -88,6 +100,7 @@ impl Mixer {
             rate,
             commands,
             events,
+            garbage,
             voices: (0..MAX_VOICES).map(|_| None).collect(),
             retiring: [const { None }; RETIRING],
             buses,
@@ -103,6 +116,7 @@ impl Mixer {
     }
 
     pub(crate) fn render(&mut self, out: &mut [f32]) {
+        self.garbage.flush();
         while let Some(command) = self.commands.take() {
             self.apply(command);
         }
@@ -148,7 +162,8 @@ impl Mixer {
                 .voice
                 .mix(&mut self.buses[index].buffer[..samples], self.rate)
             {
-                *slot = None;
+                let assigned = slot.take().expect("a retiring voice leaves its slot");
+                self.garbage.discard(assigned.discard());
             }
         }
         for slot in &mut self.voices {
@@ -158,7 +173,8 @@ impl Mixer {
             let bus = &mut self.buses[assigned.index];
             if assigned.voice.mix(&mut bus.buffer[..samples], self.rate) {
                 let id = assigned.voice.id();
-                *slot = None;
+                let assigned = slot.take().expect("a finished voice leaves its slot");
+                self.garbage.discard(assigned.discard());
                 let _ = self.events.send(Event::Finished(id));
             }
         }
@@ -233,6 +249,7 @@ impl Mixer {
                     start,
                 };
                 let Some(index) = self.slot(priority, gain) else {
+                    self.garbage.discard(Garbage::Voice { input, bus });
                     let _ = self.events.send(Event::Dropped(voice));
                     return;
                 };
@@ -279,9 +296,14 @@ impl Mixer {
             }
             Command::Replace { voice, input } => {
                 let rate = self.rate;
-                if let Some(held) = self.voice_mut(voice) {
-                    held.replace(input, rate);
-                }
+                let replaced = match self.voice_mut(voice) {
+                    Some(held) => held.replace(input, rate),
+                    None => input,
+                };
+                self.garbage.discard(Garbage::Voice {
+                    input: replaced,
+                    bus: None,
+                });
             }
             Command::Buses(layout) => {
                 self.used = layout.len();
@@ -297,7 +319,8 @@ impl Mixer {
                 {
                     assigned.index = bus_index(assigned.bus.as_deref(), &layout, used);
                 }
-                self.layout = layout;
+                let replaced = std::mem::replace(&mut self.layout, layout);
+                self.garbage.discard(Garbage::Layout(replaced));
             }
             Command::Params(params) => {
                 assert_eq!(
@@ -316,6 +339,7 @@ impl Mixer {
                     };
                     bus.send_target = decibels(params.send_db);
                 }
+                self.garbage.discard(Garbage::Params(params));
             }
             Command::Master { gain } => {
                 self.master_target = if gain.is_finite() {
@@ -382,7 +406,9 @@ impl Mixer {
             });
         assigned.sequence = self.sequence;
         self.sequence = self.sequence.wrapping_add(1);
-        self.retiring[free] = Some(assigned);
+        if let Some(replaced) = self.retiring[free].replace(assigned) {
+            self.garbage.discard(replaced.discard());
+        }
     }
 
     fn voice_mut(&mut self, voice: VoiceId) -> Option<&mut Playing> {
@@ -471,10 +497,12 @@ mod tests {
         let (mut producer, command_consumer) = ring::channel(8);
         let (event_producer, mut events) = ring::channel(8);
         let active = Arc::new(AtomicUsize::new(0));
+        let (garbage, _bin) = garbage::channel(64);
         let mut mixer = Mixer::new(
             48_000,
             command_consumer,
             event_producer,
+            garbage,
             Arc::clone(&active),
         );
         let ramp = || tone((0..4_800).map(|at| at as f32 / 1_000.0).collect());
@@ -520,10 +548,12 @@ mod tests {
         let (mut producer, command_consumer) = ring::channel(8);
         let (event_producer, mut events) = ring::channel(8);
         let active = Arc::new(AtomicUsize::new(0));
+        let (garbage, _bin) = garbage::channel(64);
         let mut mixer = Mixer::new(
             48_000,
             command_consumer,
             event_producer,
+            garbage,
             Arc::clone(&active),
         );
         producer
@@ -564,10 +594,12 @@ mod tests {
         let (commands, command_consumer) = ring::channel(8);
         let (event_producer, mut events) = ring::channel(8);
         let active = Arc::new(AtomicUsize::new(0));
+        let (garbage, _bin) = garbage::channel(64);
         let mut mixer = Mixer::new(
             48_000,
             command_consumer,
             event_producer,
+            garbage,
             Arc::clone(&active),
         );
         let mut producer = commands;
@@ -617,14 +649,53 @@ mod tests {
     }
 
     #[test]
-    fn a_mixer_steals_the_quietest_voice_of_the_lowest_priority() {
-        let (mut producer, command_consumer) = ring::channel(1024);
-        let (event_producer, mut events) = ring::channel(1024);
+    fn a_mixer_hands_the_voice_it_finishes_to_the_main_thread() {
+        let (mut producer, command_consumer) = ring::channel(8);
+        let (event_producer, _events) = ring::channel(8);
+        let (garbage, mut bin) = garbage::channel(8);
         let active = Arc::new(AtomicUsize::new(0));
         let mut mixer = Mixer::new(
             48_000,
             command_consumer,
             event_producer,
+            garbage,
+            Arc::clone(&active),
+        );
+        producer
+            .send(Command::Play {
+                voice: VoiceId(1),
+                input: Input::Decoded(tone(vec![1.0; 2])),
+                bus: None,
+                gain: 1.0,
+                pan: 0.0,
+                cutoff: f32::INFINITY,
+                looping: false,
+                pitch: 1.0,
+                priority: 0,
+                start: 0,
+            })
+            .expect("the mixer accepts a one shot");
+        assert_eq!(bin.empty(), 0, "a mixer holds no garbage before it mixes");
+        let mut block = [0.0f32; 960];
+        mixer.render(&mut block);
+        assert_eq!(
+            bin.empty(),
+            1,
+            "a finished voice waits for the thread that releases it",
+        );
+    }
+
+    #[test]
+    fn a_mixer_steals_the_quietest_voice_of_the_lowest_priority() {
+        let (mut producer, command_consumer) = ring::channel(1024);
+        let (event_producer, mut events) = ring::channel(1024);
+        let active = Arc::new(AtomicUsize::new(0));
+        let (garbage, _bin) = garbage::channel(64);
+        let mut mixer = Mixer::new(
+            48_000,
+            command_consumer,
+            event_producer,
+            garbage,
             Arc::clone(&active),
         );
         for voice in 0..MAX_VOICES as u32 {
@@ -671,10 +742,12 @@ mod tests {
         let (mut producer, command_consumer) = ring::channel(8);
         let (event_producer, _events) = ring::channel(8);
         let active = Arc::new(AtomicUsize::new(0));
+        let (garbage, _bin) = garbage::channel(64);
         let mut mixer = Mixer::new(
             48_000,
             command_consumer,
             event_producer,
+            garbage,
             Arc::clone(&active),
         );
         let layout = buses(&[
@@ -719,10 +792,12 @@ mod tests {
         let (mut producer, command_consumer) = ring::channel(8);
         let (event_producer, _events) = ring::channel(8);
         let active = Arc::new(AtomicUsize::new(0));
+        let (garbage, _bin) = garbage::channel(64);
         let mut mixer = Mixer::new(
             48_000,
             command_consumer,
             event_producer,
+            garbage,
             Arc::clone(&active),
         );
         let layout = buses(&[("master", None, None), ("quiet", Some("master"), None)]);

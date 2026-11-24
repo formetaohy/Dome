@@ -19,6 +19,7 @@ dome_physics = { workspace = true }
 dome_render = { workspace = true }
 dome_scene = { workspace = true }
 dome_schema = { workspace = true }
+notify = { workspace = true }
 
 [dev-dependencies]
 dome_ecs = { workspace = true }

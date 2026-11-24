@@ -389,7 +389,7 @@ fn damaged() {
 }
 
 fn settled(renderer: &mut Renderer, world: &mut World, target: &Texture) -> Vec<Capture> {
-    for _ in 0..8 {
+    for _ in 0..256 {
         renderer.render(world, Target::Texture(target), CLEAR, None);
         let captures = renderer.take_captures();
         if !captures.is_empty() {

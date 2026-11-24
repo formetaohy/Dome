@@ -15,7 +15,7 @@ use dome_scene::{Atmosphere, Delta, Node, ReferenceKind, Scene, Shape, Target, V
 use dome_schema::Registry;
 use dome_ui::InputKey as Key;
 use dome_window::{
-    Event, Flow, Handler, KeyCode, ModifiersState, MouseButton, Window, WindowConfig,
+    Event, Flow, Handler, KeyCode, ModifiersState, MouseButton, Waker, Window, WindowConfig,
     run as run_window,
 };
 
@@ -28,7 +28,7 @@ use crate::session::Session;
 use crate::stage::{self, State};
 
 const SCENE_CLEAR: [f32; 4] = [0.035, 0.043, 0.063, 1.0];
-const WATCH_INTERVAL: Duration = Duration::from_millis(100);
+const PLAYER_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct EditorConfig {
     pub window: WindowConfig,
@@ -108,7 +108,7 @@ pub struct Editor {
     primary: bool,
     viewport: Rect,
     pointer: Vec2,
-    watch: Watch,
+    watch: Option<Watch>,
     modifiers: ModifiersState,
     origin: Instant,
     hover: Option<Grip>,
@@ -117,7 +117,7 @@ pub struct Editor {
     ime: bool,
     redraw: bool,
     ui_at: Option<Instant>,
-    watch_at: Instant,
+    player_at: Instant,
 }
 
 impl Editor {
@@ -131,7 +131,6 @@ impl Editor {
             .find(|node| node.has_component("mesh"))
             .or_else(|| scene.nodes().first())
             .map(|node| Target::Node(node.id.clone()));
-        let watch = Watch::new(&path, &scene);
         Self {
             scene,
             project: config.project,
@@ -162,7 +161,7 @@ impl Editor {
             primary: false,
             viewport: Rect::ZERO,
             pointer: Vec2::ZERO,
-            watch,
+            watch: None,
             modifiers: ModifiersState::default(),
             origin: Instant::now(),
             hover: None,
@@ -171,7 +170,7 @@ impl Editor {
             ime: false,
             redraw: true,
             ui_at: None,
-            watch_at: Instant::now(),
+            player_at: Instant::now(),
         }
     }
 
@@ -266,6 +265,9 @@ impl Editor {
         self.commit();
         self.finish_property();
         self.scene.save(&self.path);
+        if let Some(watch) = &mut self.watch {
+            watch.adopt(&self.path);
+        }
         self.rewatch();
         self.dirty = false;
     }
@@ -304,9 +306,15 @@ impl Editor {
     }
 
     fn reload_if_changed(&mut self) -> bool {
-        let Some(change) = self.watch.changed() else {
+        let Some(report) = self.watch.as_mut().and_then(Watch::changed) else {
             return false;
         };
+        if let Some(errors) = report.errors
+            && !errors.is_empty()
+        {
+            self.error = Some(errors.join("; "));
+        }
+        let change = report.change;
         if change.scene {
             if self.dirty {
                 self.conflict = true;
@@ -343,10 +351,8 @@ impl Editor {
     }
 
     fn rewatch(&mut self) {
-        self.watch.renew(&self.scene);
-        let errors = self.watch.errors().collect::<Vec<_>>();
-        if !errors.is_empty() {
-            self.error = Some(errors.join("; "));
+        if let Some(watch) = &mut self.watch {
+            watch.renew(&self.scene);
         }
     }
 
@@ -482,6 +488,7 @@ impl Editor {
         let child = process
             .spawn()
             .unwrap_or_else(|error| panic!("the editor starts its player: {error}"));
+        self.player_at = Instant::now() + PLAYER_INTERVAL;
         self.child = Some(child);
     }
 
@@ -1007,9 +1014,9 @@ impl Editor {
     fn frame(&mut self, window: &Window, real: Duration) -> Flow {
         let now = Instant::now();
         let mut redraw = std::mem::take(&mut self.redraw) || self.ui_at.is_some_and(|at| at <= now);
-        if now >= self.watch_at {
-            self.watch_at = now + WATCH_INTERVAL;
-            redraw |= self.reload_if_changed();
+        redraw |= self.reload_if_changed();
+        if self.child.is_some() && now >= self.player_at {
+            self.player_at = now + PLAYER_INTERVAL;
             redraw |= self.poll();
         }
         let (width, height) = window.size();
@@ -1178,8 +1185,13 @@ impl Editor {
 
     fn idle(&self) -> Flow {
         let now = Instant::now();
-        let deadline = self.ui_at.map_or(self.watch_at, |at| at.min(self.watch_at));
-        Flow::Wait(deadline.saturating_duration_since(now))
+        let player = self.child.is_some().then_some(self.player_at);
+        match (self.ui_at, player) {
+            (Some(at), Some(player)) => Flow::Wait(at.min(player).saturating_duration_since(now)),
+            (Some(at), None) => Flow::Wait(at.saturating_duration_since(now)),
+            (None, Some(player)) => Flow::Wait(player.saturating_duration_since(now)),
+            (None, None) => Flow::Idle,
+        }
     }
 
     fn pace(&mut self, wake: Option<Duration>, busy: bool) -> Flow {
@@ -1460,7 +1472,8 @@ fn shortcut_key(code: KeyCode) -> Option<Key> {
 }
 
 impl Handler for Editor {
-    fn opened(&mut self, window: &Window) {
+    fn opened(&mut self, window: &Window, waker: Waker) {
+        self.watch = Some(Watch::new(&self.path, &self.scene, move || waker.wake()));
         self.open(window);
     }
 

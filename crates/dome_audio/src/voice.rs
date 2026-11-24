@@ -66,9 +66,13 @@ impl Voice {
         }
     }
 
-    pub(crate) fn replace(&mut self, input: Input, rate: u32) {
+    pub(crate) fn replace(&mut self, input: Input, rate: u32) -> Input {
         self.step = f64::from(input.sample_rate()) / f64::from(rate) * f64::from(self.pitch);
-        self.input = input;
+        std::mem::replace(&mut self.input, input)
+    }
+
+    pub(crate) fn release(self) -> Input {
+        self.input
     }
 
     pub(crate) fn stop(&mut self) {

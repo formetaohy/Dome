@@ -11,18 +11,12 @@ struct Stamp {
     modified: Option<SystemTime>,
 }
 
-#[derive(Clone, Default)]
-pub struct Dependencies {
-    attempted: Option<Digest>,
-    sources: ModelSources,
-    error: Option<String>,
-}
-
 #[derive(Clone)]
 struct Held {
     stamp: Option<Stamp>,
     digest: Result<Digest, String>,
-    dependencies: Dependencies,
+    attempted: Option<Digest>,
+    dependencies: ModelSources,
 }
 
 #[derive(Clone, Default)]
@@ -54,43 +48,31 @@ impl Sources {
             Held {
                 stamp,
                 digest: Ok(digest),
+                attempted: None,
                 dependencies,
             },
         );
         Ok((digest, bytes))
     }
 
-    pub fn dependencies(&mut self, path: &Path) -> Dependencies {
-        let digest = match self.digest(path) {
-            Ok(digest) => digest,
-            Err(error) => {
-                let held = self
-                    .files
-                    .get_mut(path)
-                    .expect("a digested source holds its file");
-                held.dependencies.error = Some(error);
-                return held.dependencies.clone();
-            }
+    pub fn dependencies(&mut self, path: &Path) -> ModelSources {
+        let Ok(digest) = self.digest(path) else {
+            return self
+                .files
+                .get(path)
+                .map(|held| held.dependencies.clone())
+                .unwrap_or_default();
         };
         let held = self
             .files
             .get_mut(path)
             .expect("a digested source holds its file");
-        if held.dependencies.attempted == Some(digest) {
+        if held.attempted == Some(digest) {
             return held.dependencies.clone();
         }
-        match Model::sources(path) {
-            Ok(sources) => {
-                held.dependencies = Dependencies {
-                    attempted: Some(digest),
-                    sources,
-                    error: None,
-                }
-            }
-            Err(error) => {
-                held.dependencies.attempted = Some(digest);
-                held.dependencies.error = Some(error);
-            }
+        held.attempted = Some(digest);
+        if let Ok(sources) = Model::sources(path) {
+            held.dependencies = sources;
         }
         held.dependencies.clone()
     }
@@ -109,6 +91,7 @@ impl Sources {
                 Held {
                     stamp,
                     digest: read_digest(path),
+                    attempted: None,
                     dependencies,
                 },
             );
@@ -118,21 +101,11 @@ impl Sources {
             .expect("a refreshed source holds its file")
     }
 
-    fn dependencies_of(&self, path: &Path) -> Dependencies {
+    fn dependencies_of(&self, path: &Path) -> ModelSources {
         self.files
             .get(path)
             .map(|held| held.dependencies.clone())
             .unwrap_or_default()
-    }
-}
-
-impl Dependencies {
-    pub fn sources(&self) -> &ModelSources {
-        &self.sources
-    }
-
-    pub fn error(&self) -> Option<&str> {
-        self.error.as_deref()
     }
 }
 
@@ -183,12 +156,10 @@ mod tests {
                 .digest(&model)
                 .expect("a source test hashes its model"),
         );
-        let held = sources.dependencies(&model);
         assert_eq!(
-            held.sources().buffers.as_slice(),
-            [buffer.as_path()].as_slice()
+            sources.dependencies(&model).buffers.as_slice(),
+            [buffer.as_path()].as_slice(),
         );
-        assert!(held.error().is_none());
 
         fs::write(&model, b"half a model").expect("a source test breaks its model");
         assert_ne!(
@@ -197,22 +168,14 @@ mod tests {
                 .digest(&model)
                 .expect("a source test hashes its model"),
         );
-        let held = sources.dependencies(&model);
         assert_eq!(
-            held.sources().buffers.as_slice(),
+            sources.dependencies(&model).buffers.as_slice(),
             [buffer.as_path()].as_slice(),
             "a model that breaks keeps the dependencies it discovered",
         );
-        assert!(
-            held.error()
-                .is_some_and(|error| error.contains("glTF text")),
-            "a model that breaks reports the reason it holds no dependency",
-        );
 
         fs::write(&model, REPAIRED).expect("a source test repairs its model");
-        let held = sources.dependencies(&model);
-        assert!(held.sources().buffers.is_empty());
-        assert!(held.error().is_none());
+        assert!(sources.dependencies(&model).buffers.is_empty());
 
         sources.retain(&BTreeSet::from([model.clone()]));
         assert!(

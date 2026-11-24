@@ -298,6 +298,9 @@ fn point_visible(
     let scale = shadow.y;
     let near = shadow.z;
     let far = shadow.w;
+    if origin < 0.0 {
+        return 1.0;
+    }
     let dx = fragment.x - center.x;
     let dy = fragment.y - center.y;
     let dz = fragment.z - center.z;
