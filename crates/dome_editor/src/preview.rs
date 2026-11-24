@@ -3,9 +3,7 @@ use crate::camera;
 use crate::debug;
 use dome_asset::{Library, Refresh};
 use dome_ecs::{Entity, World, propagate};
-use dome_gpu::{
-    AddressMode, Filter, GpuContext, SamplerDesc, Texture, TextureFormat, TextureUsages,
-};
+use dome_gpu::{AddressMode, FilterMode, Gpu, SamplerDesc, Texture, TextureFormat, TextureUsages};
 use dome_math::{Quat, Transform, Vec3};
 use dome_render::{Camera, DirectionalLight, PointLight, Renderer, Target};
 use dome_scene::Scene;
@@ -17,11 +15,11 @@ use std::time::Duration;
 
 const ASSET_UPLOAD_BYTES: u64 = 8 << 20;
 pub(crate) const PREVIEW_SAMPLER: SamplerDesc = SamplerDesc {
-    min_filter: Filter::Linear,
-    mag_filter: Filter::Linear,
-    mip_filter: Filter::Linear,
-    address_u: AddressMode::ClampToEdge,
-    address_v: AddressMode::ClampToEdge,
+    min_filter: FilterMode::Linear,
+    mag_filter: FilterMode::Linear,
+    mipmap_filter: FilterMode::Linear,
+    address_mode_u: AddressMode::ClampToEdge,
+    address_mode_v: AddressMode::ClampToEdge,
     compare: None,
 };
 
@@ -39,7 +37,7 @@ pub(crate) struct Preview {
 }
 
 impl Preview {
-    pub(crate) fn new(context: &GpuContext, scene: &Scene, registry: Arc<Registry>) -> Self {
+    pub(crate) fn new(context: &Gpu, scene: &Scene, registry: Arc<Registry>) -> Self {
         let mut world = World::new();
         let camera = world.spawn();
         let renderer = Renderer::new(context, TextureFormat::Rgba8Unorm);
@@ -49,7 +47,7 @@ impl Preview {
             1,
             1,
             TextureFormat::Rgba8Unorm,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         renderer.write_texture(&preview_texture, &[&[255, 255, 255, 255]]);
         let mut preview = Self {

@@ -1,7 +1,6 @@
 use dome_ecs::World;
 use dome_gpu::{
-    AddressMode, Backend, Filter, GpuContext, GpuRequest, SamplerDesc, Texture, TextureFormat,
-    TextureUsages,
+    AddressMode, FilterMode, Gpu, GpuRequest, SamplerDesc, Texture, TextureFormat, TextureUsages,
 };
 use dome_math::{Quat, Transform, Vec3};
 use dome_render::{
@@ -46,28 +45,23 @@ const CLEAR: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
 #[test]
 fn a_probe_captures_the_boxes_and_damage_its_box_holds() {
-    for backend in dome_gpu::PREFERENCE {
-        capture(*backend);
-        shadowed(*backend);
-        damaged(*backend);
-    }
+    capture();
+    shadowed();
+    damaged();
 }
 
-fn shadowed(backend: Backend) {
-    let lit = lit_probe(backend, false);
-    let held = lit_probe(backend, true);
+fn shadowed() {
+    let lit = lit_probe(false);
+    let held = lit_probe(true);
     assert!(
         lit[0].x > held[0].x * 2.0,
-        "{backend:?} shades the probe it captures away from the main view: {lit:?} lit {held:?} occluded",
+        "shades the probe it captures away from the main view: {lit:?} lit {held:?} occluded",
     );
 }
 
-fn lit_probe(backend: Backend, occluder: bool) -> [Vec3; 9] {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device captures a probe: {error}"));
+fn lit_probe(occluder: bool) -> [Vec3; 9] {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device captures a probe: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -147,16 +141,13 @@ fn lit_probe(backend: Backend, occluder: bool) -> [Vec3; 9] {
     world.insert(probe, placeholder(&mut renderer));
     world.insert(probe, CaptureProbe::default());
     let captures = settled(&mut renderer, &mut world, &target);
-    assert_eq!(captures.len(), 1, "{backend:?} captures the lit probe");
+    assert_eq!(captures.len(), 1, "captures the lit probe");
     captures[0].environment.irradiance
 }
 
-fn capture(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device captures a probe: {error}"));
+fn capture() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device captures a probe: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -239,38 +230,34 @@ fn capture(backend: Backend) {
     world.insert(probe, CaptureProbe::default());
 
     let captures = settled(&mut renderer, &mut world, &target);
-    assert_eq!(
-        captures.len(),
-        1,
-        "{backend:?} captures the probe its box holds",
-    );
+    assert_eq!(captures.len(), 1, "captures the probe its box holds",);
     let held = &captures[0];
     assert_eq!(held.entity, probe);
-    assert!(held.environment.local, "{backend:?} keeps the probe local");
+    assert!(held.environment.local, "keeps the probe local");
     let irradiance = held.environment.irradiance;
     assert!(
         irradiance[3].x > 0.0 && irradiance[3].y < 0.0,
-        "{backend:?} lights the probe red on +x and green on -x: {irradiance:?}",
+        "lights the probe red on +x and green on -x: {irradiance:?}",
     );
     assert!(
         irradiance[1].z > 0.0,
-        "{backend:?} lights the probe blue above it: {irradiance:?}",
+        "lights the probe blue above it: {irradiance:?}",
     );
     assert!(
         irradiance[2].x > 0.0,
-        "{backend:?} lights the probe yellow in front of it: {irradiance:?}",
+        "lights the probe yellow in front of it: {irradiance:?}",
     );
     assert!(
         irradiance
             .iter()
             .all(|held| held.x.is_finite() && held.y.is_finite() && held.z.is_finite()),
-        "{backend:?} captures a finite environment: {irradiance:?}",
+        "captures a finite environment: {irradiance:?}",
     );
     dome_render::install_captures(&mut world, captures);
 
     assert!(
         settled(&mut renderer, &mut world, &target).is_empty(),
-        "{backend:?} captures a probe once for the box it holds",
+        "captures a probe once for the box it holds",
     );
     world.insert(
         probe,
@@ -283,16 +270,13 @@ fn capture(backend: Backend) {
     assert_eq!(
         settled(&mut renderer, &mut world, &target).len(),
         1,
-        "{backend:?} captures a probe whose box moved",
+        "captures a probe whose box moved",
     );
 }
 
-fn damaged(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device recaptures a probe: {error}"));
+fn damaged() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device recaptures a probe: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -367,28 +351,25 @@ fn damaged(backend: Backend) {
     let mut captured = Vec::new();
     while captured.len() < 2 {
         let captures = settled(&mut renderer, &mut world, &target);
-        assert!(
-            !captures.is_empty(),
-            "{backend:?} captures both probes: {captured:?}",
-        );
+        assert!(!captures.is_empty(), "captures both probes: {captured:?}",);
         captured.extend(captures.iter().map(|held| held.entity));
         dome_render::install_captures(&mut world, captures);
     }
     assert!(
         settled(&mut renderer, &mut world, &target).is_empty(),
-        "{backend:?} captures a probe once for the box it holds",
+        "captures a probe once for the box it holds",
     );
     world.insert_resource(SceneDamage::new(1, vec![near], false));
     let captures = settled(&mut renderer, &mut world, &target);
     assert_eq!(
         captures.iter().map(|held| held.entity).collect::<Vec<_>>(),
         [left],
-        "{backend:?} rebakes the probe whose box holds the damaged mesh",
+        "rebakes the probe whose box holds the damaged mesh",
     );
     dome_render::install_captures(&mut world, captures);
     assert!(
         settled(&mut renderer, &mut world, &target).is_empty(),
-        "{backend:?} leaves the probe the damage misses baked",
+        "leaves the probe the damage misses baked",
     );
     world.insert_resource(SceneDamage::new(2, Vec::new(), true));
     let mut again = Vec::new();
@@ -396,7 +377,7 @@ fn damaged(backend: Backend) {
         let captures = settled(&mut renderer, &mut world, &target);
         assert!(
             !captures.is_empty(),
-            "{backend:?} rebakes every probe the sky reaches: {again:?}",
+            "rebakes every probe the sky reaches: {again:?}",
         );
         again.extend(captures.iter().map(|held| held.entity));
         dome_render::install_captures(&mut world, captures);
@@ -404,10 +385,7 @@ fn damaged(backend: Backend) {
     again.sort();
     let mut both = vec![left, right];
     both.sort();
-    assert_eq!(
-        again, both,
-        "{backend:?} rebakes one probe per frame the sky changed",
-    );
+    assert_eq!(again, both, "rebakes one probe per frame the sky changed",);
 }
 
 fn settled(renderer: &mut Renderer, world: &mut World, target: &Texture) -> Vec<Capture> {
@@ -431,7 +409,7 @@ fn placeholder(renderer: &mut Renderer) -> Environment {
             1,
             1,
             TextureFormat::Rgba16Float,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         renderer.write_texture(&texture, &[bytes]);
         texture
@@ -439,11 +417,11 @@ fn placeholder(renderer: &mut Renderer) -> Environment {
     let radiance = texture("capture placeholder radiance");
     let panorama = texture("capture placeholder panorama");
     let sampler = renderer.sampler(SamplerDesc {
-        min_filter: Filter::Linear,
-        mag_filter: Filter::Linear,
-        mip_filter: Filter::Nearest,
-        address_u: AddressMode::Repeat,
-        address_v: AddressMode::ClampToEdge,
+        min_filter: FilterMode::Linear,
+        mag_filter: FilterMode::Linear,
+        mipmap_filter: FilterMode::Nearest,
+        address_mode_u: AddressMode::Repeat,
+        address_mode_v: AddressMode::ClampToEdge,
         compare: None,
     });
     Environment::new(radiance, panorama, sampler, 1, [Vec3::ZERO; 9]).local(0.5)

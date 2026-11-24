@@ -52,7 +52,7 @@ impl Panorama {
             self.height,
             1,
             TextureFormat::Rgba16Float,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         let one = f16::from_f32(1.0).to_bits();
         let mut halves = Vec::with_capacity(self.texels.len() * 4);

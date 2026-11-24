@@ -29,7 +29,6 @@ pub(super) struct FrameShared {
     pub(super) line_groups: Vec<BindGroup>,
     pub(super) line_vertices: u32,
     pub(super) sky: bool,
-    pub(super) cluster_offset_bytes: u64,
     pub(super) cluster_bytes: u64,
     pub(super) cluster_x: u32,
     pub(super) cluster_y: u32,
@@ -61,15 +60,7 @@ impl Renderer {
         } = frame;
         let _ = clear;
         let travel = Travel::of(light_transform);
-        let cascades = shadow::cascades(
-            camera,
-            transform,
-            aspect,
-            light,
-            &travel,
-            spheres,
-            self.device.clip_space(),
-        );
+        let cascades = shadow::cascades(camera, transform, aspect, light, &travel, spheres);
         let direction = travel.direction();
         let radiance = light.color * light.intensity;
         let hzb_levels = if total == 0 {
@@ -99,26 +90,13 @@ impl Renderer {
             texture.height(),
             cluster_x * cluster_y,
         );
-        let point_bytes = u64::from(point_lights.len() as u32) * POINT_LIGHT_BYTES;
-        let alignment = self
-            .device
-            .limits()
-            .min_storage_buffer_offset_alignment
-            .max(WORD_BYTES);
-        let cluster_offset_bytes = point_bytes.next_multiple_of(alignment);
-        let cluster_offset = (cluster_offset_bytes / WORD_BYTES) as u32;
-        let lighting_bytes = cluster_offset_bytes + cluster_bytes;
-        assert!(
-            lighting_bytes <= self.device.limits().max_storage_buffer_binding_size,
-            "a {} by {} frame of {lighting_bytes} lighting bytes outruns the device storage binding",
-            texture.width(),
-            texture.height(),
-        );
-        self.lighting
-            .fit(&self.device, lighting_bytes.max(POINT_LIGHT_BYTES));
-        self.lighting
+        let point_bytes =
+            (u64::from(point_lights.len() as u32) * POINT_LIGHT_BYTES).max(POINT_LIGHT_BYTES);
+        self.point_light.fit(&self.device, point_bytes);
+        self.point_light
             .buffer()
             .write(&self.queue, bytemuck::cast_slice(point_lights));
+        self.lighting.fit(&self.device, cluster_bytes);
         let palette_base = self.palettes.base();
         let main_view = record_of_main_view(
             view,
@@ -135,7 +113,7 @@ impl Renderer {
                 cluster_x,
                 cluster_y,
                 point_lights: point_lights.len() as u32,
-                cluster_offset,
+                cluster_offset: 0,
                 highlight,
             },
         );
@@ -272,11 +250,10 @@ impl Renderer {
             line_groups,
             line_vertices,
             sky: sky.is_some(),
-            cluster_offset_bytes,
             cluster_bytes,
             cluster_x,
             cluster_y,
-            lighting_bytes,
+            lighting_bytes: cluster_bytes,
         }
     }
 }

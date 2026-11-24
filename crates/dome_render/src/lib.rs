@@ -34,7 +34,8 @@ pub use camera::Camera;
 pub use capture::{Capture, CaptureProbe, PROBE_RESOLUTION, install_captures};
 pub use damage::SceneDamage;
 pub use dome_gpu::{
-    AddressMode, Filter, Sampler, SamplerDesc, Texture, TextureFormat, TextureUsages,
+    AddressMode, FilterMode, Sampler, SamplerDesc, Texture, TextureFormat, TextureFormatExt,
+    TextureUsages,
 };
 pub use environment::{Baked, Environment};
 pub use hidden::Hidden;

@@ -1,3 +1,4 @@
+use crate::abi::Fvec4;
 use crate::abi::{CascadeRecord, InstanceRecord, NO_HIGHLIGHT, ViewRecord};
 use crate::camera::Camera;
 use crate::environment::Environment;
@@ -9,9 +10,7 @@ use crate::palette::Skinning;
 use crate::shadow::Cascade;
 use crate::view::View;
 use dome_ecs::{Entity, World};
-use dome_gpu::{ClipSpace, Device};
 use dome_math::{Mat4, Transform, Vec3, Vec4};
-use dome_shader::Fvec4;
 
 pub(crate) struct Batch {
     pub(crate) mesh: Mesh,
@@ -30,11 +29,8 @@ pub(crate) struct Screen {
     pub(crate) highlight: u32,
 }
 
-pub(crate) fn vertical(device: &Device) -> f32 {
-    match device.clip_space() {
-        ClipSpace::YUp => -0.5,
-        ClipSpace::YDown => 0.5,
-    }
+pub(crate) fn vertical() -> f32 {
+    -0.5
 }
 
 pub(crate) fn camera_of(world: &World) -> (Camera, Transform) {

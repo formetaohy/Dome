@@ -16,6 +16,8 @@ workspace = true
 bytemuck = { workspace = true }
 half = { workspace = true }
 dome_ecs = { workspace = true }
-dome_shader = { workspace = true }
 dome_gpu = { workspace = true }
 dome_math = { workspace = true }
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in"] }

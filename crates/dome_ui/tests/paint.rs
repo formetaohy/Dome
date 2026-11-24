@@ -1,5 +1,5 @@
 use dome_gpu::{
-    AddressMode, BufferUsages, Filter, GpuBuffer, GpuContext, GpuRequest, SamplerDesc, Submission,
+    AddressMode, BufferUsages, FilterMode, Gpu, GpuBuffer, GpuRequest, SamplerDesc, Submission,
     Texture, TextureFormat, TextureUsages,
 };
 use dome_math::Vec2;
@@ -9,22 +9,22 @@ const SIDE: u32 = 160;
 const BACKGROUND: Color = Color::rgb(0.1, 0.1, 0.1);
 const SCENE: [u8; 4] = [0, 200, 0, 255];
 const SAMPLER: SamplerDesc = SamplerDesc {
-    min_filter: Filter::Nearest,
-    mag_filter: Filter::Nearest,
-    mip_filter: Filter::Nearest,
-    address_u: AddressMode::ClampToEdge,
-    address_v: AddressMode::ClampToEdge,
+    min_filter: FilterMode::Nearest,
+    mag_filter: FilterMode::Nearest,
+    mipmap_filter: FilterMode::Nearest,
+    address_mode_u: AddressMode::ClampToEdge,
+    address_mode_v: AddressMode::ClampToEdge,
     compare: None,
 };
 
 #[test]
 fn a_user_interface_paints_its_surfaces_glyphs_and_scene() {
-    let context = GpuContext::open(&GpuRequest::default())
+    let context = Gpu::open(&GpuRequest::default())
         .unwrap_or_else(|error| panic!("no device paints the interface: {error}"));
     let device = context.device();
     let queue = context.queue();
     let format = TextureFormat::Rgba8Unorm;
-    let mut ui: Ui<()> = Ui::new(device, queue, format);
+    let mut ui: Ui<()> = Ui::new(device, &queue, format);
     let target = Texture::new(
         device,
         "dome ui target",
@@ -41,9 +41,9 @@ fn a_user_interface_paints_its_surfaces_glyphs_and_scene() {
         1,
         1,
         format,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    backdrop.write(queue, &SCENE);
+    backdrop.write(&queue, &SCENE);
 
     ui.update(Vec2::splat(SIDE as f32), 1.0, 0.0);
     let element = {
@@ -79,8 +79,8 @@ fn a_user_interface_paints_its_surfaces_glyphs_and_scene() {
         BufferUsages::COPY_DST | BufferUsages::MAP_READ,
     );
     submission.copy_texture(&target, &readback, 0);
-    let index = submission.submit(queue);
-    let bytes = readback.read(queue, index, target.readback_bytes());
+    let index = submission.submit(&queue);
+    let bytes = readback.read(&queue, index, target.readback_bytes());
     let pixel = |x: u32, y: u32| {
         let row = (u64::from(y) * target.row_bytes()) as usize;
         let at = row + (x * 4) as usize;
@@ -122,12 +122,12 @@ fn to_byte(value: f32) -> u8 {
 #[test]
 fn a_user_interface_recycles_the_texture_slots_of_removed_images() {
     const RESERVED: u32 = 2;
-    let context = GpuContext::open(&GpuRequest::default())
+    let context = Gpu::open(&GpuRequest::default())
         .unwrap_or_else(|error| panic!("no device recycles interface textures: {error}"));
     let device = context.device();
     let queue = context.queue();
     let format = TextureFormat::Rgba8Unorm;
-    let mut ui: Ui<()> = Ui::new(device, queue, format);
+    let mut ui: Ui<()> = Ui::new(device, &queue, format);
     let target = Texture::new(
         device,
         "dome recycled target",
@@ -137,7 +137,7 @@ fn a_user_interface_recycles_the_texture_slots_of_removed_images() {
         format,
         TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
     );
-    let slot = dome_shader::TEXTURE_TABLE_CAPACITY - RESERVED;
+    let slot = dome_gpu::TEXTURE_TABLE_CAPACITY - RESERVED;
     let red = Texture::new(
         device,
         "dome recycled red",
@@ -145,7 +145,7 @@ fn a_user_interface_recycles_the_texture_slots_of_removed_images() {
         1,
         1,
         format,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
     let green = Texture::new(
         device,
@@ -154,12 +154,12 @@ fn a_user_interface_recycles_the_texture_slots_of_removed_images() {
         1,
         1,
         format,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
     let mut submission = Submission::new(device, "dome recycled textures");
     submission.write_texture(&red, 0, &[255, 0, 0, 255]);
     submission.write_texture(&green, 0, &[0, 255, 0, 255]);
-    submission.submit(queue);
+    submission.submit(&queue);
     let old = (0..slot)
         .map(|index| format!("image.{index}"))
         .collect::<Vec<_>>();
@@ -197,8 +197,8 @@ fn a_user_interface_recycles_the_texture_slots_of_removed_images() {
         BufferUsages::COPY_DST | BufferUsages::MAP_READ,
     );
     submission.copy_texture(&target, &readback, 0);
-    let index = submission.submit(queue);
-    let bytes = readback.read(queue, index, target.readback_bytes());
+    let index = submission.submit(&queue);
+    let bytes = readback.read(&queue, index, target.readback_bytes());
     let at = (32 * target.row_stride() + 32 * 4) as usize;
     let pixel = [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]];
     assert!(

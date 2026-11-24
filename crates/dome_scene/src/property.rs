@@ -446,15 +446,15 @@ fn set_image(
                         .ok_or_else(|| format!("the image {id} holds the filter {name}"))?;
                 }
                 "mip_filter" => {
-                    entry.sampler.mip_filter = filter_of(name)
+                    entry.sampler.mipmap_filter = filter_of(name)
                         .ok_or_else(|| format!("the image {id} holds the filter {name}"))?;
                 }
                 "wrap_u" => {
-                    entry.sampler.address_u = address_of(name)
+                    entry.sampler.address_mode_u = address_of(name)
                         .ok_or_else(|| format!("the image {id} holds the wrap {name}"))?;
                 }
                 _ => {
-                    entry.sampler.address_v = address_of(name)
+                    entry.sampler.address_mode_v = address_of(name)
                         .ok_or_else(|| format!("the image {id} holds the wrap {name}"))?;
                 }
             }
@@ -665,13 +665,13 @@ fn image_property(entry: &crate::image::ImageEntry, field: &str) -> Option<Value
             entry.sampler.mag_filter,
         )))),
         "mip_filter" => Some(Value::Text(String::from(filter_name(
-            entry.sampler.mip_filter,
+            entry.sampler.mipmap_filter,
         )))),
         "wrap_u" => Some(Value::Text(String::from(address_name(
-            entry.sampler.address_u,
+            entry.sampler.address_mode_u,
         )))),
         "wrap_v" => Some(Value::Text(String::from(address_name(
-            entry.sampler.address_v,
+            entry.sampler.address_mode_v,
         )))),
         _ => None,
     }

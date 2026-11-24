@@ -2,8 +2,7 @@ use dome_animation::AnimationMachine;
 use dome_asset::Import;
 use dome_ecs::{World, propagate};
 use dome_gpu::{
-    Backend, BufferUsages, GpuBuffer, GpuContext, GpuRequest, Submission, Texture, TextureFormat,
-    TextureUsages,
+    BufferUsages, Gpu, GpuBuffer, GpuRequest, Submission, Texture, TextureFormat, TextureUsages,
 };
 use dome_math::{Quat, Transform, Vec3};
 use dome_render::{Camera, DirectionalLight, Renderer, Skin, Target};
@@ -18,12 +17,10 @@ const CLEAR: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
 #[test]
 fn an_imported_skin_and_animation_deform_into_a_rendered_frame() {
-    for backend in dome_gpu::PREFERENCE {
-        paint(*backend);
-    }
+    paint();
 }
 
-fn paint(backend: Backend) {
+fn paint() {
     let root = directory();
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("assets")).expect("a test opens its directory");
@@ -35,11 +32,8 @@ fn paint(backend: Backend) {
     )
     .expect("a test writes a model");
 
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device renders a skin: {error}"));
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device renders a skin: {error}"));
     let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
     let target = Texture::new(
         context.device(),
@@ -90,12 +84,12 @@ fn paint(backend: Backend) {
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     assert!(
         renderer.pick(dome_math::Vec2::new(45.0, 40.0)).is_some(),
-        "{backend:?} picks the animated skin over its rest pose",
+        "picks the animated skin over its rest pose",
     );
     let pixels = read(&context, &target);
     assert!(
         pixels[(40 * SIDE + 45) as usize][0] > 16,
-        "{backend:?} paints the animated skin",
+        "paints the animated skin",
     );
     let _ = fs::remove_dir_all(&root);
 }
@@ -172,7 +166,8 @@ fn skinned_triangle() -> Vec<u8> {
     binary
 }
 
-fn read(context: &GpuContext, target: &Texture) -> Vec<[u8; 4]> {
+fn read(context: &Gpu, target: &Texture) -> Vec<[u8; 4]> {
+    let queue = context.queue();
     let readback = GpuBuffer::new(
         context.device(),
         "skinned readback",
@@ -181,8 +176,8 @@ fn read(context: &GpuContext, target: &Texture) -> Vec<[u8; 4]> {
     );
     let mut submission = Submission::new(context.device(), "skinned readback");
     submission.copy_texture(target, &readback, 0);
-    let index = submission.submit(context.queue());
-    let bytes = readback.read(context.queue(), index, target.readback_bytes());
+    let index = submission.submit(&queue);
+    let bytes = readback.read(&queue, index, target.readback_bytes());
     target
         .rows(&bytes)
         .flat_map(|row| row.as_chunks::<4>().0)

@@ -1,5 +1,4 @@
 use crate::view::View;
-use dome_gpu::ClipSpace;
 use dome_math::{Mat4, Transform, Vec2, Vec3, Vec4};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,15 +33,14 @@ impl Camera {
         );
     }
 
-    pub fn view(self, transform: Transform, aspect: f32, clip_space: ClipSpace) -> View {
-        self.view_jittered(transform, aspect, clip_space, Vec2::ZERO, 1, 1)
+    pub fn view(self, transform: Transform, aspect: f32) -> View {
+        self.view_jittered(transform, aspect, Vec2::ZERO, 1, 1)
     }
 
     pub fn view_jittered(
         self,
         transform: Transform,
         aspect: f32,
-        clip_space: ClipSpace,
         jitter: Vec2,
         width: u32,
         height: u32,
@@ -56,14 +54,7 @@ impl Camera {
         let forward = transform.rotation.rotate_vec3(Vec3::new(0.0, 0.0, -1.0));
         let up = transform.rotation.rotate_vec3(Vec3::Y);
         let projection = Mat4::perspective(self.vertical_fov, aspect, self.near, self.far);
-        let projection = match clip_space {
-            ClipSpace::YUp => projection,
-            ClipSpace::YDown => projection.flip_clip_y(),
-        };
-        let vertical = match clip_space {
-            ClipSpace::YUp => -0.5,
-            ClipSpace::YDown => 0.5,
-        };
+        let vertical = -0.5;
         let offset = Vec4::new(
             jitter.x * 2.0 / width as f32,
             jitter.y / height as f32 / vertical,

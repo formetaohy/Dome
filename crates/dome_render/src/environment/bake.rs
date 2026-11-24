@@ -6,9 +6,9 @@ use crate::environment::{LEVELS, SPECULAR_WIDTH};
 use crate::frame::vertical;
 use crate::program;
 use dome_gpu::{
-    Binding, BufferUsages, Device, Draw, GpuBuffer, GpuContext, GraphicsPipeline, Pass,
-    PipelineHandle, PipelineState, Queue, Sampler, Submission, SubmissionIndex, Texture,
-    TextureFormat, TextureUsages,
+    Binding, BufferUsages, ComputePipeline, Device, Draw, Gpu, GpuBuffer, GraphicsPipeline, Pass,
+    PipelineState, Queue, Sampler, Submission, SubmissionIndex, Texture, TextureFormat,
+    TextureUsages,
 };
 use dome_math::Vec3;
 use std::mem::size_of;
@@ -37,7 +37,7 @@ pub(crate) struct Baker {
     queue: Queue,
     prefilter: GraphicsPipeline,
     integration: GraphicsPipeline,
-    reduction: PipelineHandle,
+    reduction: ComputePipeline,
     accumulation: Texture,
     levels: GpuBuffer,
     level_span: u64,
@@ -47,13 +47,10 @@ pub(crate) struct Baker {
 }
 
 impl Baker {
-    pub(crate) fn new(context: &GpuContext) -> Self {
+    pub(crate) fn new(context: &Gpu) -> Self {
         let device = context.device().clone();
         let storage = BufferUsages::STORAGE;
-        let level_span = crate::span::padded(
-            device.limits().min_storage_buffer_offset_alignment,
-            LEVEL_BYTES,
-        );
+        let level_span = crate::span::padded(device.binding_alignment(), LEVEL_BYTES);
         Self {
             prefilter: GraphicsPipeline::new(
                 &device,
@@ -67,7 +64,7 @@ impl Baker {
                 TextureFormat::R32Float,
                 PipelineState::SCREEN,
             ),
-            reduction: context.declare(program::irradiance_reduction_program()),
+            reduction: ComputePipeline::new(&device, program::irradiance_reduction_program()),
             accumulation: Texture::new(
                 &device,
                 "dome irradiance",
@@ -109,7 +106,7 @@ impl Baker {
             "a baked environment samples half float panorama texels",
         );
         assert!(
-            panorama.usages().contains(TextureUsages::SAMPLED),
+            panorama.usages().contains(TextureUsages::TEXTURE_BINDING),
             "a baked environment samples its panorama",
         );
         let width = panorama.width();
@@ -119,7 +116,7 @@ impl Baker {
             texels <= u64::from(u32::MAX),
             "a {width} by {height} panorama outruns the texel count a bake walks",
         );
-        let vertical = vertical(&self.device);
+        let vertical = vertical();
         let radiance = Texture::new(
             &self.device,
             "dome radiance",
@@ -127,7 +124,7 @@ impl Baker {
             SPECULAR_WIDTH / 2,
             LEVELS,
             TextureFormat::Rgba16Float,
-            TextureUsages::SAMPLED | TextureUsages::RENDER_ATTACHMENT,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
         );
         let levels = (0..LEVELS)
             .map(|level| BakeLevelRecord {
@@ -232,21 +229,22 @@ impl Baker {
     }
 
     pub(crate) fn take(&self, job: &BakeJob) -> Option<Baked> {
-        if !self.queue.complete(job.submission) {
+        if !self.queue.complete(job.submission.clone()) {
             return None;
         }
         Some(self.collect(job))
     }
 
     pub(crate) fn wait(&self, job: &BakeJob) -> Baked {
-        self.queue.wait(job.submission, dome_gpu::READBACK_TIMEOUT);
+        self.queue
+            .wait(job.submission.clone(), dome_gpu::READBACK_TIMEOUT);
         self.collect(job)
     }
 
     fn collect(&self, job: &BakeJob) -> Baked {
         let bytes = job
             .readback
-            .read(&self.queue, job.submission, IRRADIANCE_TOTAL_BYTES);
+            .read(&self.queue, job.submission.clone(), IRRADIANCE_TOTAL_BYTES);
         let mut irradiance = [Vec3::ZERO; 9];
         for (coefficient, held) in irradiance
             .iter_mut()

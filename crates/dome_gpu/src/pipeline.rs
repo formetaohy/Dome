@@ -1,506 +1,365 @@
-use crate::buffer::{BufferBinding, GpuBuffer};
-use crate::capability::{BufferUsages, TextureUsages};
+use crate::binding::{BindGroup, BindGroupLayout, Binding, bind_group, pipeline_layout};
 use crate::context::Device;
-use crate::graphics::PipelineState;
-use crate::group::{GroupKey, ResourceKey};
 use crate::identity::ResourceId;
-use crate::native::{NativeGraphicsPipeline, NativeGroup, NativePipeline};
-use crate::sampler::Sampler;
-use crate::table::{SamplerTable, TextureTable};
-use crate::texture::Texture;
-use dome_shader::shader::{BindingKind, BindingSpec, ComputeProgram, GraphicsProgram};
+use crate::shader::{ComputeShader, GraphicsShader};
 use std::sync::Arc;
+use wgpu::{CompareFunction, TextureFormat};
 
-#[derive(Clone, Copy)]
-pub enum Resource<'a> {
-    Buffer(BufferBinding<'a>),
-    Texture(&'a Texture),
-    Sampler(&'a Sampler),
-    TextureTable(&'a TextureTable),
-    SamplerTable(&'a SamplerTable),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DepthState {
+    TestWrite,
+    TestCovered,
+    Test,
+    Off,
 }
 
-#[derive(Clone, Copy)]
-pub struct Binding<'a> {
-    pub index: u32,
-    pub resource: Resource<'a>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlendState {
+    Opaque,
+    Premultiplied,
+    Preserve,
 }
 
-impl<'a> Binding<'a> {
-    pub fn buffer(index: u32, binding: BufferBinding<'a>) -> Self {
-        Self {
-            index,
-            resource: Resource::Buffer(binding),
-        }
-    }
-
-    pub fn texture(index: u32, texture: &'a Texture) -> Self {
-        Self {
-            index,
-            resource: Resource::Texture(texture),
-        }
-    }
-
-    pub fn sampler(index: u32, sampler: &'a Sampler) -> Self {
-        Self {
-            index,
-            resource: Resource::Sampler(sampler),
-        }
-    }
-
-    pub fn texture_table(index: u32, table: &'a TextureTable) -> Self {
-        Self {
-            index,
-            resource: Resource::TextureTable(table),
-        }
-    }
-
-    pub fn sampler_table(index: u32, table: &'a SamplerTable) -> Self {
-        Self {
-            index,
-            resource: Resource::SamplerTable(table),
-        }
-    }
-
-    pub(crate) fn key(&self) -> ResourceKey {
-        match self.resource {
-            Resource::Buffer(binding) => ResourceKey::buffer(binding.range()),
-            Resource::Texture(texture) => ResourceKey::texture(texture.identity()),
-            Resource::Sampler(sampler) => ResourceKey::sampler(sampler.identity()),
-            Resource::TextureTable(table) => ResourceKey::textures(table),
-            Resource::SamplerTable(table) => ResourceKey::samplers(table),
-        }
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PipelineState {
+    pub depth: DepthState,
+    pub blend: BlendState,
+    pub alpha: bool,
 }
 
-#[derive(Clone)]
-pub(crate) struct BoundBuffer {
-    pub(crate) buffer: GpuBuffer,
-    pub(crate) offset: u64,
-    #[cfg(vulkan_backend)]
-    pub(crate) size: u64,
-    #[cfg(vulkan_backend)]
-    pub(crate) writable: bool,
+impl PipelineState {
+    pub const DEPTH_WRITE: Self = Self {
+        depth: DepthState::TestWrite,
+        blend: BlendState::Opaque,
+        alpha: true,
+    };
+
+    pub const SCREEN: Self = Self {
+        depth: DepthState::Off,
+        blend: BlendState::Opaque,
+        alpha: true,
+    };
+
+    pub const OVERLAY: Self = Self {
+        depth: DepthState::Off,
+        blend: BlendState::Premultiplied,
+        alpha: true,
+    };
+
+    pub const DEBUG: Self = Self {
+        depth: DepthState::Off,
+        blend: BlendState::Premultiplied,
+        alpha: false,
+    };
+
+    pub const TRANSPARENT: Self = Self {
+        depth: DepthState::Test,
+        blend: BlendState::Preserve,
+        alpha: false,
+    };
+
+    pub const TESTED: Self = Self {
+        depth: DepthState::Test,
+        blend: BlendState::Opaque,
+        alpha: true,
+    };
+
+    pub const COVERED: Self = Self {
+        depth: DepthState::TestCovered,
+        blend: BlendState::Opaque,
+        alpha: true,
+    };
 }
 
-#[derive(Clone)]
-pub(crate) enum BoundResource {
-    Buffer(BoundBuffer),
-    Texture(Texture),
-    Sampler(Sampler),
-    TextureTable(TextureTable),
-    SamplerTable(SamplerTable),
+pub(crate) struct PipelineLayout {
+    pub(crate) native: wgpu::PipelineLayout,
+    pub(crate) groups: Vec<Arc<BindGroupLayout>>,
 }
-
-pub(crate) struct Slot {
-    pub(crate) native: NativePipeline,
-    pub(crate) program: Arc<ComputeProgram>,
-    pub(crate) device: Device,
-    identity: ResourceId,
-}
-
-pub(crate) struct GraphicsSlot {
-    pub(crate) native: NativeGraphicsPipeline,
-    pub(crate) program: Arc<GraphicsProgram>,
-    pub(crate) device: Device,
-    pub(crate) format: Option<TextureFormat>,
-    pub(crate) depth: bool,
-    identity: ResourceId,
-}
-
-#[derive(Clone)]
-pub(crate) enum Owner {
-    Compute(Arc<Slot>),
-    Graphics(Arc<GraphicsSlot>),
-}
-
-#[derive(Clone)]
-pub struct PipelineHandle {
-    pub(crate) slot: Arc<Slot>,
-}
-
-use crate::texture::TextureFormat;
 
 #[derive(Clone)]
 pub struct GraphicsPipeline {
-    pub(crate) slot: Arc<GraphicsSlot>,
+    device: Device,
+    native: wgpu::RenderPipeline,
+    layout: Arc<PipelineLayout>,
+    shader: &'static GraphicsShader,
+    format: Option<TextureFormat>,
+    depth: bool,
 }
 
 #[derive(Clone)]
-pub struct BindGroup {
-    pub(crate) native: NativeGroup,
-    pub(crate) group: u32,
-    #[cfg(metal_backend)]
-    pub(crate) resources: Vec<BoundResource>,
-    pub(crate) owner: Owner,
-}
-
-impl PipelineHandle {
-    pub(crate) fn new(device: &Device, program: Arc<ComputeProgram>) -> Self {
-        assert!(
-            program
-                .bindings()
-                .iter()
-                .filter(|binding| binding.kind.storage())
-                .count() as u32
-                <= device.limits().max_storage_buffers_per_shader_stage
-        );
-        let workgroup = program.workgroup_size();
-        assert!(
-            workgroup <= device.limits().max_compute_workgroup_size_x
-                && workgroup <= device.limits().max_compute_invocations_per_workgroup,
-            "the kernel {} dispatches {workgroup} invocations the device cannot run",
-            program.label(),
-        );
-        let native = device.native().create_pipeline(&program);
-        let handle = Self {
-            slot: Arc::new(Slot {
-                device: device.clone(),
-                program,
-                native,
-                identity: ResourceId::next(),
-            }),
-        };
-        handle.compile();
-        handle
-    }
-
-    pub fn label(&self) -> &str {
-        self.slot.program.label()
-    }
-
-    pub fn bind_group(&self, group: u32, entries: &[Binding<'_>]) -> BindGroup {
-        let label = self.slot.program.label();
-        let specs = group_specs(self.slot.program.bindings(), group, label);
-        let owner = self.slot.identity;
-        let key = GroupKey::new(owner, group, entries.iter().map(|entry| entry.key()));
-        let device = &self.slot.device;
-        let submission = device.recording();
-        device.state.groups.fetch(key, submission, || {
-            let resources = bounded(device, &specs, entries, label);
-            let native = device
-                .native()
-                .create_group(&self.slot.native, group, &resources);
-            BindGroup {
-                native,
-                group,
-                #[cfg(metal_backend)]
-                resources,
-                owner: Owner::Compute(self.slot.clone()),
-            }
-        })
-    }
-
-    fn compile(&self) {
-        self.slot.device.native().compile(
-            &self.slot.native,
-            &self.slot.program,
-            self.slot.device.artifact_cache(),
-        );
-    }
+pub struct ComputePipeline {
+    device: Device,
+    native: wgpu::ComputePipeline,
+    layout: Arc<PipelineLayout>,
+    shader: &'static ComputeShader,
 }
 
 impl GraphicsPipeline {
     pub fn new(
         device: &Device,
-        program: GraphicsProgram,
+        shader: &'static GraphicsShader,
         format: TextureFormat,
         state: PipelineState,
     ) -> Self {
-        Self::layered(device, program, Some(format), state, false)
+        Self::layered(device, shader, Some(format), state, false)
     }
 
     pub fn new_depth(
         device: &Device,
-        program: GraphicsProgram,
+        shader: &'static GraphicsShader,
         format: TextureFormat,
         state: PipelineState,
     ) -> Self {
-        Self::layered(device, program, Some(format), state, true)
+        Self::layered(device, shader, Some(format), state, true)
     }
 
-    pub fn new_depth_only(device: &Device, program: GraphicsProgram, state: PipelineState) -> Self {
-        Self::layered(device, program, None, state, true)
+    pub fn new_depth_only(
+        device: &Device,
+        shader: &'static GraphicsShader,
+        state: PipelineState,
+    ) -> Self {
+        Self::layered(device, shader, None, state, true)
     }
 
     fn layered(
         device: &Device,
-        program: GraphicsProgram,
+        shader: &'static GraphicsShader,
         format: Option<TextureFormat>,
         state: PipelineState,
         depth: bool,
     ) -> Self {
-        assert!(
-            program
-                .bindings()
-                .iter()
-                .filter(|binding| binding.kind.storage())
-                .count() as u32
-                <= device.limits().max_storage_buffers_per_shader_stage
-        );
         assert_eq!(
-            program.targets(),
-            u32::from(format.is_some()),
+            shader.targets,
+            usize::from(format.is_some()),
             "the graphics program {} writes {} fragment targets into {} colour attachment",
-            program.label(),
-            program.targets(),
+            shader.label,
+            shader.targets,
             if format.is_some() { "one" } else { "no" },
         );
+        let layout = Arc::new(pipeline_layout(device, shader.bindings, shader.label, true));
+        let module = device
+            .cache()
+            .shader(device.native(), shader.label, shader.source);
+        let targets = format
+            .map(|format| {
+                vec![Some(wgpu::ColorTargetState {
+                    format,
+                    blend: match state.blend {
+                        BlendState::Opaque => None,
+                        other => Some(blend(other)),
+                    },
+                    write_mask: if state.alpha {
+                        wgpu::ColorWrites::ALL
+                    } else {
+                        wgpu::ColorWrites::COLOR
+                    },
+                })]
+            })
+            .unwrap_or_default();
+        let depth_stencil = depth.then(|| wgpu::DepthStencilState {
+            format: TextureFormat::Depth32Float,
+            depth_write_enabled: Some(matches!(
+                state.depth,
+                DepthState::TestWrite | DepthState::TestCovered
+            )),
+            depth_compare: Some(match state.depth {
+                DepthState::Off => CompareFunction::Always,
+                DepthState::TestCovered => CompareFunction::LessEqual,
+                _ => CompareFunction::Less,
+            }),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        });
         let native = device
             .native()
-            .create_graphics_pipeline(&program, format, state, depth);
-        let pipeline = Self {
-            slot: Arc::new(GraphicsSlot {
-                device: device.clone(),
-                program: Arc::new(program),
-                native,
-                format,
-                depth,
-                identity: ResourceId::next(),
-            }),
-        };
-        pipeline.compile();
-        pipeline
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(shader.label),
+                layout: Some(&layout.native),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some(shader.vertex),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some(shader.fragment),
+                    targets: &targets,
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+        Self {
+            device: device.clone(),
+            native,
+            layout,
+            shader,
+            format,
+            depth,
+        }
     }
 
     pub fn format(&self) -> Option<TextureFormat> {
-        self.slot.format
+        self.format
     }
 
-    pub fn label(&self) -> &str {
-        self.slot.program.label()
+    pub fn label(&self) -> &'static str {
+        self.shader.label
     }
 
     pub fn bind_group(&self, group: u32, entries: &[Binding<'_>]) -> BindGroup {
-        let label = self.slot.program.label();
-        let specs = group_specs(self.slot.program.bindings(), group, label);
-        let owner = self.slot.identity;
-        let key = GroupKey::new(owner, group, entries.iter().map(|entry| entry.key()));
-        let device = &self.slot.device;
-        let submission = device.recording();
-        device.state.groups.fetch(key, submission, || {
-            let resources = bounded(device, &specs, entries, label);
-            let native =
-                device
-                    .native()
-                    .create_graphics_group(&self.slot.native, group, &resources);
-            BindGroup {
-                native,
-                group,
-                #[cfg(metal_backend)]
-                resources,
-                owner: Owner::Graphics(self.slot.clone()),
-            }
-        })
+        let layout = self.layout.groups.get(group as usize).unwrap_or_else(|| {
+            panic!(
+                "the graphics program {} declares {} bind groups where {group} is requested",
+                self.shader.label,
+                self.layout.groups.len(),
+            )
+        });
+        bind_group(
+            &self.device,
+            self.device.cache(),
+            layout,
+            group,
+            entries,
+            self.shader.label,
+        )
     }
 
-    fn compile(&self) {
-        self.slot.device.native().compile_graphics(
-            &self.slot.native,
-            &self.slot.program,
-            self.slot.device.artifact_cache(),
-        );
+    pub(crate) fn native(&self) -> &wgpu::RenderPipeline {
+        &self.native
+    }
+
+    pub(crate) fn device(&self) -> &Device {
+        &self.device
+    }
+
+    pub(crate) fn depth(&self) -> bool {
+        self.depth
+    }
+
+    pub(crate) fn group_layout(&self, group: u32) -> ResourceId {
+        self.layout.groups[group as usize].id
+    }
+
+    pub(crate) fn group_count(&self) -> u32 {
+        self.layout.groups.len() as u32
     }
 }
 
-impl Owner {
-    pub(crate) fn same(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Compute(left), Self::Compute(right)) => Arc::ptr_eq(left, right),
-            (Self::Graphics(left), Self::Graphics(right)) => Arc::ptr_eq(left, right),
-            _ => false,
+impl ComputePipeline {
+    pub fn new(device: &Device, shader: &'static ComputeShader) -> Self {
+        crate::shader::group_count(shader.bindings, shader.label, true);
+        assert!(
+            shader.workgroup <= device.limits().max_compute_workgroup_size_x
+                && shader.workgroup <= device.limits().max_compute_invocations_per_workgroup,
+            "the kernel {} dispatches {} invocations the device cannot run",
+            shader.label,
+            shader.workgroup,
+        );
+        let layout = Arc::new(pipeline_layout(
+            device,
+            shader.bindings,
+            shader.label,
+            false,
+        ));
+        let module = device
+            .cache()
+            .shader(device.native(), shader.label, shader.source);
+        let native = device
+            .native()
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(shader.label),
+                layout: Some(&layout.native),
+                module: &module,
+                entry_point: Some(shader.entry),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        Self {
+            device: device.clone(),
+            native,
+            layout,
+            shader,
         }
     }
-}
 
-pub(crate) fn group_specs(bindings: &[BindingSpec], group: u32, label: &str) -> Vec<BindingSpec> {
-    let groups = bindings
-        .iter()
-        .map(|binding| binding.group)
-        .max()
-        .map_or(0, |group| group + 1);
-    assert!(
-        group < groups,
-        "{label} declares {groups} bind groups where {group} is requested"
-    );
-    let mut specs = bindings
-        .iter()
-        .filter(|binding| binding.group == group)
-        .copied()
-        .collect::<Vec<_>>();
-    specs.sort_unstable_by_key(|spec| spec.binding);
-    for (index, spec) in specs.iter().enumerate() {
-        assert_eq!(
-            spec.binding as usize, index,
-            "{label} numbers its bindings {} where its group holds {index}",
-            spec.binding,
-        );
+    pub fn label(&self) -> &'static str {
+        self.shader.label
     }
-    specs
+
+    pub fn bind_group(&self, group: u32, entries: &[Binding<'_>]) -> BindGroup {
+        let layout = self.layout.groups.get(group as usize).unwrap_or_else(|| {
+            panic!(
+                "the kernel {} declares {} bind groups where {group} is requested",
+                self.shader.label,
+                self.layout.groups.len(),
+            )
+        });
+        bind_group(
+            &self.device,
+            self.device.cache(),
+            layout,
+            group,
+            entries,
+            self.shader.label,
+        )
+    }
+
+    pub(crate) fn native(&self) -> &wgpu::ComputePipeline {
+        &self.native
+    }
+
+    pub(crate) fn device(&self) -> &Device {
+        &self.device
+    }
+
+    pub(crate) fn group_layout(&self, group: u32) -> ResourceId {
+        self.layout.groups[group as usize].id
+    }
+
+    pub(crate) fn group_count(&self) -> u32 {
+        self.layout.groups.len() as u32
+    }
 }
 
-fn bounded(
-    device: &Device,
-    specs: &[BindingSpec],
-    entries: &[Binding<'_>],
-    label: &str,
-) -> Vec<BoundResource> {
-    assert_eq!(
-        entries.len(),
-        specs.len(),
-        "{label} must bind exactly the resources of its group"
-    );
-    entries
-        .iter()
-        .zip(specs)
-        .map(|(entry, spec)| {
-            assert_eq!(
-                entry.index, spec.binding,
-                "a binding of {label} occupies the wrong slot"
-            );
-            match (spec.kind, entry.resource) {
-                (
-                    BindingKind::ReadOnlyStorage
-                    | BindingKind::ReadWriteStorage
-                    | BindingKind::TableStorage,
-                    Resource::Buffer(binding),
-                ) => {
-                    assert!(
-                        binding.buffer.device().same(device),
-                        "a bind group cannot reference a different device"
-                    );
-                    assert!(
-                        binding.buffer.usage().contains(BufferUsages::STORAGE),
-                        "a storage binding requires shader storage"
-                    );
-                    assert!(
-                        binding
-                            .offset
-                            .is_multiple_of(device.limits().min_storage_buffer_offset_alignment),
-                        "a storage binding of {label} is misaligned"
-                    );
-                    assert!(
-                        binding.size <= device.limits().max_storage_buffer_binding_size,
-                        "a storage binding of {label} exceeds the device's maximum range"
-                    );
-                    assert!(
-                        binding.offset + binding.size <= binding.buffer.size(),
-                        "a storage binding of {label} outruns its buffer"
-                    );
-                    BoundResource::Buffer(BoundBuffer {
-                        buffer: binding.buffer.clone(),
-                        offset: binding.offset,
-                        #[cfg(vulkan_backend)]
-                        size: binding.size,
-                        #[cfg(vulkan_backend)]
-                        writable: spec.kind.writable(),
-                    })
-                }
-                (BindingKind::SampledImage, Resource::Texture(texture)) => {
-                    assert!(
-                        texture.device().same(device),
-                        "a bind group cannot reference a different device"
-                    );
-                    assert!(
-                        texture.usages().contains(TextureUsages::SAMPLED),
-                        "a sampled image binding requires a sampled texture"
-                    );
-                    assert!(
-                        !texture.format().is_depth(),
-                        "a sampled image binding requires a colour texture"
-                    );
-                    BoundResource::Texture(texture.clone())
-                }
-                (BindingKind::DepthImage, Resource::Texture(texture)) => {
-                    assert!(
-                        texture.device().same(device),
-                        "a bind group cannot reference a different device"
-                    );
-                    assert!(
-                        texture.usages().contains(TextureUsages::SAMPLED),
-                        "a depth image binding requires a sampled texture"
-                    );
-                    assert!(
-                        texture.format().is_depth(),
-                        "a depth image binding requires a depth texture"
-                    );
-                    BoundResource::Texture(texture.clone())
-                }
-                (BindingKind::SampledDepth, Resource::Texture(texture)) => {
-                    assert!(
-                        texture.device().same(device),
-                        "a bind group cannot reference a different device"
-                    );
-                    assert!(
-                        texture.usages().contains(TextureUsages::SAMPLED),
-                        "a sampled depth binding requires a sampled texture"
-                    );
-                    assert!(
-                        texture.format().is_depth(),
-                        "a sampled depth binding requires a depth texture"
-                    );
-                    BoundResource::Texture(texture.clone())
-                }
-                (BindingKind::Sampler, Resource::Sampler(sampler)) => {
-                    assert!(
-                        sampler.device().same(device),
-                        "a bind group cannot reference a different device"
-                    );
-                    assert!(
-                        sampler.desc().compare.is_none(),
-                        "a plain sampler binding requires a sampler that compares no depth"
-                    );
-                    BoundResource::Sampler(sampler.clone())
-                }
-                (BindingKind::ComparisonSampler, Resource::Sampler(sampler)) => {
-                    assert!(
-                        sampler.device().same(device),
-                        "a bind group cannot reference a different device"
-                    );
-                    assert!(
-                        sampler.desc().compare.is_some(),
-                        "a comparison sampler binding requires a sampler that compares depth"
-                    );
-                    BoundResource::Sampler(sampler.clone())
-                }
-                (BindingKind::SampledImageTable, Resource::TextureTable(table)) => {
-                    assert!(
-                        table.device().same(device),
-                        "a bind group cannot reference a different device"
-                    );
-                    assert_eq!(
-                        table.capacity(),
-                        spec.count,
-                        "the texture table of {label} holds a different number of images"
-                    );
-                    BoundResource::TextureTable(table.clone())
-                }
-                (BindingKind::SamplerTable, Resource::SamplerTable(table)) => {
-                    assert!(
-                        table.device().same(device),
-                        "a bind group cannot reference a different device"
-                    );
-                    assert_eq!(
-                        table.capacity(),
-                        spec.count,
-                        "the sampler table of {label} holds a different number of samplers"
-                    );
-                    BoundResource::SamplerTable(table.clone())
-                }
-                (kind, _) => panic!(
-                    "{label} binds the wrong resource where a {} belongs",
-                    match kind {
-                        BindingKind::SampledImage => "sampled image",
-                        BindingKind::DepthImage => "depth image",
-                        BindingKind::SampledDepth => "sampled depth image",
-                        BindingKind::Sampler => "sampler",
-                        BindingKind::ComparisonSampler => "comparison sampler",
-                        BindingKind::SampledImageTable => "sampled image table",
-                        BindingKind::SamplerTable => "sampler table",
-                        _ => "storage buffer",
-                    }
-                ),
-            }
-        })
-        .collect()
+fn blend(state: BlendState) -> wgpu::BlendState {
+    match state {
+        BlendState::Opaque => wgpu::BlendState::REPLACE,
+        BlendState::Premultiplied => wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        },
+        BlendState::Preserve => wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        },
+    }
 }

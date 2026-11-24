@@ -260,11 +260,11 @@ impl Commit {
         let sampler = library.sampler(
             renderer,
             SamplerDesc {
-                min_filter: dome_render::Filter::Linear,
-                mag_filter: dome_render::Filter::Linear,
-                mip_filter: dome_render::Filter::Linear,
-                address_u: dome_render::AddressMode::Repeat,
-                address_v: dome_render::AddressMode::ClampToEdge,
+                min_filter: dome_render::FilterMode::Linear,
+                mag_filter: dome_render::FilterMode::Linear,
+                mipmap_filter: dome_render::FilterMode::Linear,
+                address_mode_u: dome_render::AddressMode::Repeat,
+                address_mode_v: dome_render::AddressMode::ClampToEdge,
                 compare: None,
             },
         );
@@ -361,7 +361,7 @@ impl Library {
             item.mips.height,
             levels.len() as u32,
             TextureFormat::Rgba8UnormSrgb,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         renderer.write_texture(&texture, &levels);
         self.textures.insert(
@@ -502,7 +502,7 @@ fn empty_texture(renderer: &Renderer, label: &str) -> Texture {
         1,
         1,
         TextureFormat::Rgba16Float,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
     renderer.write_texture(&texture, &[EMPTY_TEXEL]);
     texture

@@ -1,7 +1,7 @@
 use dome_ecs::World;
 use dome_gpu::{
-    AddressMode, Backend, BufferUsages, Filter, GpuBuffer, GpuContext, GpuRequest, Sampler,
-    SamplerDesc, Submission, Texture, TextureFormat, TextureUsages,
+    AddressMode, BufferUsages, FilterMode, Gpu, GpuBuffer, GpuRequest, Sampler, SamplerDesc,
+    Submission, Texture, TextureFormat, TextureUsages,
 };
 use dome_math::{Mat4, Quat, Transform, Vec2, Vec3, Vec4};
 use dome_render::environment::Panorama;
@@ -97,17 +97,12 @@ const SIDE: u32 = 64;
 
 #[test]
 fn a_gpu_driven_frame_culls_orders_textures_and_shadows_instances() {
-    for backend in dome_gpu::PREFERENCE {
-        paint(*backend);
-    }
+    paint();
 }
 
-fn paint(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device renders a frame: {error}"));
+fn paint() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device renders a frame: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -125,9 +120,9 @@ fn paint(backend: Backend) {
         2,
         1,
         TextureFormat::Rgba8UnormSrgb,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    albedo.write(context.queue(), &PALETTE);
+    albedo.write(&context.queue(), &PALETTE);
     let second_albedo = Texture::new(
         device,
         "second albedo",
@@ -135,17 +130,17 @@ fn paint(backend: Backend) {
         2,
         1,
         TextureFormat::Rgba8UnormSrgb,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    second_albedo.write(context.queue(), &SECOND);
+    second_albedo.write(&context.queue(), &SECOND);
     let palette = Sampler::new(
         device,
         SamplerDesc {
-            min_filter: Filter::Nearest,
-            mag_filter: Filter::Nearest,
-            mip_filter: Filter::Nearest,
-            address_u: AddressMode::ClampToEdge,
-            address_v: AddressMode::ClampToEdge,
+            min_filter: FilterMode::Nearest,
+            mag_filter: FilterMode::Nearest,
+            mipmap_filter: FilterMode::Nearest,
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
             compare: None,
         },
     );
@@ -217,16 +212,15 @@ fn paint(backend: Backend) {
     assert_eq!(
         renderer.pick(Vec2::new(16.0, 8.0)),
         Some(near),
-        "{backend:?} picks the half in front of the full quad"
+        "picks the half in front of the full quad"
     );
     assert_eq!(
         renderer.pick(Vec2::new(16.0, 56.0)),
         Some(covered),
-        "{backend:?} picks the full quad where the half does not cover it"
+        "picks the full quad where the half does not cover it"
     );
     let pixels = read(&context, &target);
     assert_blue(
-        backend,
         &pixels,
         SIDE,
         16,
@@ -234,7 +228,6 @@ fn paint(backend: Backend) {
         "the near half samples the blue half of its own material",
     );
     assert_yellow(
-        backend,
         &pixels,
         SIDE,
         48,
@@ -242,7 +235,6 @@ fn paint(backend: Backend) {
         "the near half samples the yellow half of its own material",
     );
     assert_red(
-        backend,
         &pixels,
         SIDE,
         16,
@@ -250,7 +242,6 @@ fn paint(backend: Backend) {
         "the full quad samples the left texels below the near half",
     );
     assert_green(
-        backend,
         &pixels,
         SIDE,
         48,
@@ -259,7 +250,7 @@ fn paint(backend: Backend) {
     );
     assert!(
         pixels.iter().all(|pixel| *pixel != [0, 0, 0, 255]),
-        "{backend:?} draws the instance of the culled mesh"
+        "draws the instance of the culled mesh"
     );
 
     renderer.render(&mut world, Target::Texture(&target), CLEAR, Some(near));
@@ -269,7 +260,7 @@ fn paint(backend: Backend) {
             let pixel = pixels[(y * SIDE + 16) as usize];
             pixel[2] > 150 && pixel[1] > 60 && pixel[0] < 180
         }),
-        "{backend:?} outlines the highlighted instance along the silhouette it covers",
+        "outlines the highlighted instance along the silhouette it covers",
     );
     renderer.render(&mut world, Target::Texture(&target), CLEAR, Some(culled));
     let pixels = read(&context, &target);
@@ -278,7 +269,7 @@ fn paint(backend: Backend) {
             let pixel = pixels[(y * SIDE + 16) as usize];
             !(pixel[2] > 150 && pixel[1] > 60 && pixel[0] < 180)
         }),
-        "{backend:?} outlines no instance the view culls",
+        "outlines no instance the view culls",
     );
 
     world.insert(near, Transform::from_translation(Vec3::new(0.0, 0.0, -0.5)));
@@ -286,25 +277,17 @@ fn paint(backend: Backend) {
     assert_eq!(
         renderer.pick(Vec2::new(16.0, 8.0)),
         Some(covered),
-        "{backend:?} picks the full quad in front of the half behind it"
+        "picks the full quad in front of the half behind it"
     );
     let pixels = read(&context, &target);
     assert_red(
-        backend,
         &pixels,
         SIDE,
         16,
         8,
         "the depth test hides the half behind the full quad",
     );
-    assert_green(
-        backend,
-        &pixels,
-        SIDE,
-        48,
-        56,
-        "the full quad keeps the bottom",
-    );
+    assert_green(&pixels, SIDE, 48, 56, "the full quad keeps the bottom");
 
     world.despawn(near);
     world.insert(
@@ -338,11 +321,11 @@ fn paint(backend: Backend) {
     let lit = pixels[(48 * SIDE + 48) as usize];
     assert!(
         shaded.iter().take(3).all(|channel| *channel < 32),
-        "{backend:?} paints the occluded texels {shaded:?}",
+        "paints the occluded texels {shaded:?}",
     );
     assert!(
         lit.iter().take(3).any(|channel| *channel > 200),
-        "{backend:?} lights the texels the occluder misses {lit:?}",
+        "lights the texels the occluder misses {lit:?}",
     );
 
     let mut far = World::new();
@@ -416,7 +399,7 @@ fn paint(backend: Backend) {
     }
     assert!(
         dark && lit,
-        "{backend:?} paints a far cascade shadow where dark {dark} and lit {lit} belong",
+        "paints a far cascade shadow where dark {dark} and lit {lit} belong",
     );
 
     let mut occluded = World::new();
@@ -472,31 +455,23 @@ fn paint(backend: Backend) {
     );
     renderer.render(&mut occluded, Target::Texture(&target), CLEAR, None);
     let visible = renderer.visible_instances();
-    assert_eq!(
-        visible, 1,
-        "{backend:?} culls the instance the occluder hides",
-    );
+    assert_eq!(visible, 1, "culls the instance the occluder hides");
     let pixels = read(&context, &target);
     let center = pixels[(SIDE as usize / 2) * SIDE as usize + SIDE as usize / 2];
     assert!(
         center.iter().take(3).any(|channel| *channel > 0),
-        "{backend:?} paints the occluder {center:?}",
+        "paints the occluder {center:?}",
     );
 }
 
 #[test]
 fn a_clustered_frame_assigns_point_lights_to_the_tiles_they_reach() {
-    for backend in dome_gpu::PREFERENCE {
-        points(*backend);
-    }
+    points();
 }
 
-fn points(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device lights a clustered frame: {error}"));
+fn points() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device lights a clustered frame: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -514,17 +489,17 @@ fn points(backend: Backend) {
         1,
         1,
         TextureFormat::Rgba8UnormSrgb,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    albedo.write(context.queue(), &[255, 255, 255, 255]);
+    albedo.write(&context.queue(), &[255, 255, 255, 255]);
     let sampler = Sampler::new(
         device,
         SamplerDesc {
-            min_filter: Filter::Nearest,
-            mag_filter: Filter::Nearest,
-            mip_filter: Filter::Nearest,
-            address_u: AddressMode::ClampToEdge,
-            address_v: AddressMode::ClampToEdge,
+            min_filter: FilterMode::Nearest,
+            mag_filter: FilterMode::Nearest,
+            mipmap_filter: FilterMode::Nearest,
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
             compare: None,
         },
     );
@@ -582,7 +557,6 @@ fn points(backend: Backend) {
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     let pixels = read(&context, &target);
     assert_red(
-        backend,
         &pixels,
         256,
         52,
@@ -592,10 +566,9 @@ fn points(backend: Backend) {
     let shadowed = pixels[(64 * 256 + 64) as usize];
     assert!(
         shadowed.iter().take(3).all(|channel| *channel < 32),
-        "{backend:?} paints the wall behind the point light occluder {shadowed:?}",
+        "paints the wall behind the point light occluder {shadowed:?}",
     );
     assert_blue(
-        backend,
         &pixels,
         256,
         192,
@@ -605,11 +578,11 @@ fn points(backend: Backend) {
     let center = pixels[(64 * 256 + 128) as usize];
     assert!(
         center.iter().take(3).all(|channel| *channel < 32),
-        "{backend:?} paints the unlit center {center:?}",
+        "paints the unlit center {center:?}",
     );
 }
 
-fn read(context: &GpuContext, target: &Texture) -> Vec<[u8; 4]> {
+fn read(context: &Gpu, target: &Texture) -> Vec<[u8; 4]> {
     let device = context.device();
     let readback = GpuBuffer::new(
         device,
@@ -619,8 +592,9 @@ fn read(context: &GpuContext, target: &Texture) -> Vec<[u8; 4]> {
     );
     let mut submission = Submission::new(device, "frame readback");
     submission.copy_texture(target, &readback, 0);
-    let index = submission.submit(context.queue());
-    let bytes = readback.read(context.queue(), index, target.readback_bytes());
+    let queue = context.queue();
+    let index = submission.submit(&queue);
+    let bytes = readback.read(&queue, index, target.readback_bytes());
     target
         .rows(&bytes)
         .flat_map(|row| row.as_chunks::<4>().0)
@@ -628,51 +602,46 @@ fn read(context: &GpuContext, target: &Texture) -> Vec<[u8; 4]> {
         .collect()
 }
 
-fn assert_red(backend: Backend, pixels: &[[u8; 4]], width: u32, x: u32, y: u32, reason: &str) {
+fn assert_red(pixels: &[[u8; 4]], width: u32, x: u32, y: u32, reason: &str) {
     let held = pixels[(y * width + x) as usize];
     assert!(
         held[0] > 32 && held[0] > held[1] + 16 && held[0] > held[2] + 16,
-        "{backend:?} paints ({x}, {y}) {held:?} where red belongs: {reason}",
+        "paints ({x}, {y}) {held:?} where red belongs: {reason}",
     );
 }
 
-fn assert_green(backend: Backend, pixels: &[[u8; 4]], width: u32, x: u32, y: u32, reason: &str) {
+fn assert_green(pixels: &[[u8; 4]], width: u32, x: u32, y: u32, reason: &str) {
     let held = pixels[(y * width + x) as usize];
     assert!(
         held[1] > 32 && held[1] > held[0] + 16 && held[1] > held[2] + 16,
-        "{backend:?} paints ({x}, {y}) {held:?} where green belongs: {reason}",
+        "paints ({x}, {y}) {held:?} where green belongs: {reason}",
     );
 }
 
-fn assert_blue(backend: Backend, pixels: &[[u8; 4]], width: u32, x: u32, y: u32, reason: &str) {
+fn assert_blue(pixels: &[[u8; 4]], width: u32, x: u32, y: u32, reason: &str) {
     let held = pixels[(y * width + x) as usize];
     assert!(
         held[2] > 32 && held[2] > held[0] + 16 && held[2] > held[1] + 16,
-        "{backend:?} paints ({x}, {y}) {held:?} where blue belongs: {reason}",
+        "paints ({x}, {y}) {held:?} where blue belongs: {reason}",
     );
 }
 
-fn assert_yellow(backend: Backend, pixels: &[[u8; 4]], width: u32, x: u32, y: u32, reason: &str) {
+fn assert_yellow(pixels: &[[u8; 4]], width: u32, x: u32, y: u32, reason: &str) {
     let held = pixels[(y * width + x) as usize];
     assert!(
         held[0] > 32 && held[1] > 32 && held[0] > held[2] + 16 && held[1] > held[2] + 16,
-        "{backend:?} paints ({x}, {y}) {held:?} where yellow belongs: {reason}",
+        "paints ({x}, {y}) {held:?} where yellow belongs: {reason}",
     );
 }
 
 #[test]
 fn a_transparent_frame_blends_its_layers_masks_cutouts_and_orders_crossing_fragments() {
-    for backend in dome_gpu::PREFERENCE {
-        blend(*backend);
-    }
+    blend();
 }
 
-fn blend(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device blends a frame: {error}"));
+fn blend() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device blends a frame: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -690,9 +659,9 @@ fn blend(backend: Backend) {
         1,
         1,
         TextureFormat::Rgba8UnormSrgb,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    white.write(context.queue(), &[255, 255, 255, 255]);
+    white.write(&context.queue(), &[255, 255, 255, 255]);
     let masked = Texture::new(
         device,
         "transparent masked",
@@ -700,39 +669,25 @@ fn blend(backend: Backend) {
         2,
         1,
         TextureFormat::Rgba8UnormSrgb,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    masked.write(context.queue(), &MASKED);
+    masked.write(&context.queue(), &MASKED);
     let sampler = Sampler::new(
         device,
         SamplerDesc {
-            min_filter: Filter::Nearest,
-            mag_filter: Filter::Nearest,
-            mip_filter: Filter::Nearest,
-            address_u: AddressMode::ClampToEdge,
-            address_v: AddressMode::ClampToEdge,
+            min_filter: FilterMode::Nearest,
+            mag_filter: FilterMode::Nearest,
+            mipmap_filter: FilterMode::Nearest,
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
             compare: None,
         },
     );
-    layers(
-        backend,
-        &context,
-        &target,
-        white.clone(),
-        masked,
-        sampler.clone(),
-    );
-    crossing(backend, &context, &target, white, sampler);
+    layers(&context, &target, white.clone(), masked, sampler.clone());
+    crossing(&context, &target, white, sampler);
 }
 
-fn layers(
-    backend: Backend,
-    context: &GpuContext,
-    target: &Texture,
-    white: Texture,
-    masked: Texture,
-    sampler: Sampler,
-) {
+fn layers(context: &Gpu, target: &Texture, white: Texture, masked: Texture, sampler: Sampler) {
     let mut renderer = Renderer::new(context, TextureFormat::Rgba8Unorm);
     let opaque = renderer.material(
         MaterialDesc::new(RED).base_color_image(MaterialImage::new(white.clone(), sampler.clone())),
@@ -827,7 +782,7 @@ fn layers(
     let center = pixels[(SIDE as usize / 2) * SIDE as usize + SIDE as usize / 2];
     assert!(
         center[2] > 32 && center[2] > center[1] + 16 && center[2] > center[0] + 16,
-        "{backend:?} blends the nearer transparent quad over the farther one {center:?}",
+        "blends the nearer transparent quad over the farther one {center:?}",
     );
 
     world.despawn(behind);
@@ -846,7 +801,6 @@ fn layers(
     renderer.render(&mut world, Target::Texture(target), CLEAR, None);
     let pixels = read(context, target);
     assert_red(
-        backend,
         &pixels,
         SIDE,
         24,
@@ -854,7 +808,6 @@ fn layers(
         "the masked quad discards its transparent half",
     );
     assert_green(
-        backend,
         &pixels,
         SIDE,
         40,
@@ -898,12 +851,12 @@ fn layers(
     let center = pixels[(SIDE as usize / 2) * SIDE as usize + SIDE as usize / 2];
     assert!(
         center[0] > 32 && center[1] > 32 && center[2] > 32 && center[0] > center[1] + 64,
-        "{backend:?} keeps the layer nearest the eye over the four it replaces {center:?}",
+        "keeps the layer nearest the eye over the four it replaces {center:?}",
     );
     assert_eq!(
         renderer.dropped_transparent_fragments(),
         SIDE * SIDE,
-        "{backend:?} counts the layer every covered pixel loses beyond its four",
+        "counts the layer every covered pixel loses beyond its four",
     );
 
     for veil in veils {
@@ -928,22 +881,16 @@ fn layers(
     let center = pixels[(SIDE as usize / 2) * SIDE as usize + SIDE as usize / 2];
     assert!(
         center[0] > center[1] + 32,
-        "{backend:?} composites one layer over the stale layers of the last frame {center:?}",
+        "composites one layer over the stale layers of the last frame {center:?}",
     );
     assert_eq!(
         renderer.dropped_transparent_fragments(),
         0,
-        "{backend:?} drops nothing for a layer inside its capacity",
+        "drops nothing for a layer inside its capacity",
     );
 }
 
-fn crossing(
-    backend: Backend,
-    context: &GpuContext,
-    target: &Texture,
-    white: Texture,
-    sampler: Sampler,
-) {
+fn crossing(context: &Gpu, target: &Texture, white: Texture, sampler: Sampler) {
     let mut renderer = Renderer::new(context, TextureFormat::Rgba8Unorm);
     let red = renderer.material(
         MaterialDesc::new(RED)
@@ -1025,27 +972,22 @@ fn crossing(
     let right = pixels[(SIDE as usize / 2) * SIDE as usize + 44];
     assert!(
         left[0] > left[2] + 16,
-        "{backend:?} blends the nearer red fragment over the blue one at {left:?}",
+        "blends the nearer red fragment over the blue one at {left:?}",
     );
     assert!(
         right[2] > right[0] + 16,
-        "{backend:?} blends the nearer blue fragment over the red one at {right:?}",
+        "blends the nearer blue fragment over the red one at {right:?}",
     );
 }
 
 #[test]
 fn a_linear_frame_resolves_its_highlights_into_a_glow() {
-    for backend in dome_gpu::PREFERENCE {
-        glow(*backend);
-    }
+    glow();
 }
 
-fn glow(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device resolves a linear frame: {error}"));
+fn glow() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device resolves a linear frame: {error}"));
     let device = context.device();
     let side = 256;
     let target = Texture::new(
@@ -1064,17 +1006,17 @@ fn glow(backend: Backend) {
         1,
         1,
         TextureFormat::Rgba8UnormSrgb,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    albedo.write(context.queue(), &[255, 255, 255, 255]);
+    albedo.write(&context.queue(), &[255, 255, 255, 255]);
     let sampler = Sampler::new(
         device,
         SamplerDesc {
-            min_filter: Filter::Nearest,
-            mag_filter: Filter::Nearest,
-            mip_filter: Filter::Nearest,
-            address_u: AddressMode::ClampToEdge,
-            address_v: AddressMode::ClampToEdge,
+            min_filter: FilterMode::Nearest,
+            mag_filter: FilterMode::Nearest,
+            mipmap_filter: FilterMode::Nearest,
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
             compare: None,
         },
     );
@@ -1131,27 +1073,22 @@ fn glow(backend: Backend) {
     let far = pixels[((side / 2) * side + side / 16) as usize];
     assert!(
         core.iter().take(3).all(|channel| *channel > 240),
-        "{backend:?} resolves the high dynamic range core to {core:?}",
+        "resolves the high dynamic range core to {core:?}",
     );
     assert!(
         near[0] > far[0] + 8,
-        "{backend:?} glows at {near:?} beyond the background {far:?}",
+        "glows at {near:?} beyond the background {far:?}",
     );
 }
 
 #[test]
 fn a_lit_frame_samples_every_material_map() {
-    for backend in dome_gpu::PREFERENCE {
-        maps(*backend);
-    }
+    maps();
 }
 
-fn maps(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device samples a map: {error}"));
+fn maps() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device samples a map: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -1169,9 +1106,9 @@ fn maps(backend: Backend) {
         1,
         1,
         TextureFormat::Rgba8UnormSrgb,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    albedo.write(context.queue(), &[255, 255, 255, 255]);
+    albedo.write(&context.queue(), &[255, 255, 255, 255]);
     let properties = Texture::new(
         device,
         "material properties",
@@ -1179,9 +1116,9 @@ fn maps(backend: Backend) {
         1,
         1,
         TextureFormat::Rgba8Unorm,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    properties.write(context.queue(), &[255, 0, 0, 255]);
+    properties.write(&context.queue(), &[255, 0, 0, 255]);
     let normal = Texture::new(
         device,
         "material normal",
@@ -1189,9 +1126,9 @@ fn maps(backend: Backend) {
         1,
         1,
         TextureFormat::Rgba8Unorm,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    normal.write(context.queue(), &[128, 128, 255, 255]);
+    normal.write(&context.queue(), &[128, 128, 255, 255]);
     let glow = Texture::new(
         device,
         "material glow",
@@ -1199,17 +1136,17 @@ fn maps(backend: Backend) {
         1,
         1,
         TextureFormat::Rgba8UnormSrgb,
-        TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    glow.write(context.queue(), &[255, 0, 0, 255]);
+    glow.write(&context.queue(), &[255, 0, 0, 255]);
     let sampler = Sampler::new(
         device,
         SamplerDesc {
-            min_filter: Filter::Nearest,
-            mag_filter: Filter::Nearest,
-            mip_filter: Filter::Nearest,
-            address_u: AddressMode::ClampToEdge,
-            address_v: AddressMode::ClampToEdge,
+            min_filter: FilterMode::Nearest,
+            mag_filter: FilterMode::Nearest,
+            mipmap_filter: FilterMode::Nearest,
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
             compare: None,
         },
     );
@@ -1249,7 +1186,6 @@ fn maps(backend: Backend) {
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     let pixels = read(&context, &target);
     assert_red(
-        backend,
         &pixels,
         32,
         16,
@@ -1260,19 +1196,14 @@ fn maps(backend: Backend) {
 
 #[test]
 fn a_gpu_driven_frame_skins_its_meshes_and_picks_the_deformed_surface() {
-    for backend in dome_gpu::PREFERENCE {
-        skinned(*backend);
-    }
+    skinned();
 }
 
-fn skinned(backend: Backend) {
+fn skinned() {
     const SKIN: [SkinVertexRecord; 6] =
         [SkinVertexRecord::new([0, 0, 0, 0], [1.0, 0.0, 0.0, 0.0]); 6];
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device skins a frame: {error}"));
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device skins a frame: {error}"));
     let target = Texture::new(
         context.device(),
         "skinned frame",
@@ -1327,33 +1258,28 @@ fn skinned(backend: Backend) {
     assert_eq!(
         renderer.pick(Vec2::new(24.0, 32.0)),
         Some(entity),
-        "{backend:?} picks the joint of the skinned quad",
+        "picks the joint of the skinned quad",
     );
     assert_eq!(
         renderer.pick(Vec2::new(8.0, 32.0)),
         None,
-        "{backend:?} picks no rest surface beside the skinned quad",
+        "picks no rest surface beside the skinned quad",
     );
     let pixels = read(&context, &target);
     assert!(
         pixels[(32 * SIDE + 24) as usize][0] > 16,
-        "{backend:?} paints the skinned quad",
+        "paints the skinned quad",
     );
 }
 
 #[test]
 fn a_debug_line_frame_draws_colored_segments() {
-    for backend in dome_gpu::PREFERENCE {
-        line(*backend);
-    }
+    line();
 }
 
-fn line(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device draws a line: {error}"));
+fn line() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device draws a line: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -1401,7 +1327,6 @@ fn line(backend: Backend) {
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     let pixels = read(&context, &target);
     assert_red(
-        backend,
         &pixels,
         SIDE,
         20,
@@ -1409,7 +1334,6 @@ fn line(backend: Backend) {
         "the horizontal line spans the left of the frame",
     );
     assert_green(
-        backend,
         &pixels,
         SIDE,
         36,
@@ -1432,7 +1356,6 @@ fn line(backend: Backend) {
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     let pixels = read(&context, &target);
     assert_green(
-        backend,
         &pixels,
         SIDE,
         36,
@@ -1443,17 +1366,12 @@ fn line(backend: Backend) {
 
 #[test]
 fn an_environment_lights_its_scene_and_paints_its_sky() {
-    for backend in dome_gpu::PREFERENCE {
-        ambient(*backend);
-    }
+    ambient();
 }
 
-fn ambient(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device renders a frame: {error}"));
+fn ambient() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device renders a frame: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -1477,11 +1395,11 @@ fn ambient(backend: Backend) {
     let panorama = Panorama::new(8, 4, &rgb);
     let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
     let sampler = renderer.sampler(RenderSamplerDesc {
-        min_filter: Filter::Linear,
-        mag_filter: Filter::Linear,
-        mip_filter: Filter::Linear,
-        address_u: AddressMode::Repeat,
-        address_v: AddressMode::ClampToEdge,
+        min_filter: FilterMode::Linear,
+        mag_filter: FilterMode::Linear,
+        mipmap_filter: FilterMode::Linear,
+        address_mode_u: AddressMode::Repeat,
+        address_mode_v: AddressMode::ClampToEdge,
         compare: None,
     });
     let panorama_texture = panorama.texture(&renderer, "ambient panorama");
@@ -1512,10 +1430,10 @@ fn ambient(backend: Backend) {
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     let pixels = read(&context, &target);
     let sky = pixels[(SIDE as usize / 2) * SIDE as usize + SIDE as usize / 2];
-    println!("{backend:?} sky {sky:?}");
+    println!("sky {sky:?}");
     assert!(
         i32::from(sky[2]) > 200 && i32::from(sky[2]) > i32::from(sky[0]) + 60,
-        "{backend:?} paints the blue side of its environment as its sky at {sky:?}",
+        "paints the blue side of its environment as its sky at {sky:?}",
     );
 
     let turned = Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI));
@@ -1523,10 +1441,10 @@ fn ambient(backend: Backend) {
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     let pixels = read(&context, &target);
     let sky = pixels[(SIDE as usize / 2) * SIDE as usize + SIDE as usize / 2];
-    println!("{backend:?} turned sky {sky:?}");
+    println!("turned sky {sky:?}");
     assert!(
         i32::from(sky[0]) > 200 && i32::from(sky[0]) > i32::from(sky[2]) + 40,
-        "{backend:?} turns the red side of its environment into its sky at {sky:?}",
+        "turns the red side of its environment into its sky at {sky:?}",
     );
     world.insert(sky_entity, Transform::IDENTITY);
 
@@ -1559,16 +1477,16 @@ fn ambient(backend: Backend) {
         renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
         let pixels = read(&context, &target);
         let center = pixels[(SIDE as usize / 2) * SIDE as usize + SIDE as usize / 2];
-        println!("{backend:?} {title} {center:?}");
+        println!("{title} {center:?}");
         if title == "rough metal" {
             assert!(
                 i32::from(center[0]) > 100 && i32::from(center[2]) > 100,
-                "{backend:?} lights the {title} surface from its environment at {center:?}",
+                "lights the {title} surface from its environment at {center:?}",
             );
         } else {
             assert!(
                 i32::from(center[0]) > 100 && i32::from(center[0]) > i32::from(center[2]) + 30,
-                "{backend:?} lights the {title} surface from its red environment at {center:?}",
+                "lights the {title} surface from its red environment at {center:?}",
             );
         }
     }
@@ -1585,16 +1503,16 @@ fn ambient(backend: Backend) {
         renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
         let pixels = read(&context, &target);
         let center = pixels[(SIDE as usize / 2) * SIDE as usize + SIDE as usize / 2];
-        println!("{backend:?} turned {title} {center:?}");
+        println!("turned {title} {center:?}");
         if title == "rough metal" {
             assert!(
                 i32::from(center[0]) > 100 && i32::from(center[2]) > 100,
-                "{backend:?} lights the turned {title} surface from its environment at {center:?}",
+                "lights the turned {title} surface from its environment at {center:?}",
             );
         } else {
             assert!(
                 i32::from(center[2]) > 100 && i32::from(center[2]) > i32::from(center[0]) + 30,
-                "{backend:?} lights the turned {title} surface from its blue environment at {center:?}",
+                "lights the turned {title} surface from its blue environment at {center:?}",
             );
         }
     }
@@ -1651,30 +1569,25 @@ fn ambient(backend: Backend) {
     );
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     let far = read(&context, &target)[(SIDE as usize / 2) * SIDE as usize + SIDE as usize / 2];
-    println!("{backend:?} plain {plain:?} near {near:?} far {far:?}");
+    println!("plain {plain:?} near {near:?} far {far:?}");
     assert!(
         i32::from(near[2]) > i32::from(plain[2]) + 10,
-        "{backend:?} fades a surface into the sky it stands under: {plain:?} became {near:?}",
+        "fades a surface into the sky it stands under: {plain:?} became {near:?}",
     );
     assert!(
         i32::from(far[2]) > i32::from(near[2]) + 15 && i32::from(far[0]) < i32::from(near[0]),
-        "{backend:?} fades a distant surface further than a near one: {near:?} against {far:?}",
+        "fades a distant surface further than a near one: {near:?} against {far:?}",
     );
 }
 
 #[test]
 fn a_local_environment_lights_the_box_it_bounds() {
-    for backend in dome_gpu::PREFERENCE {
-        local(*backend);
-    }
+    local();
 }
 
-fn local(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device renders a frame: {error}"));
+fn local() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device renders a frame: {error}"));
     let device = context.device();
     let target = Texture::new(
         device,
@@ -1762,7 +1675,6 @@ fn local(backend: Backend) {
     let pixels = read(&context, &target);
 
     assert_blue(
-        backend,
         &pixels,
         SIDE,
         26,
@@ -1770,7 +1682,6 @@ fn local(backend: Backend) {
         "the surface inside the local environment samples its radiance",
     );
     assert_red(
-        backend,
         &pixels,
         SIDE,
         38,
@@ -1782,11 +1693,11 @@ fn local(backend: Backend) {
 fn environment(renderer: &mut Renderer, radiance: Vec3) -> Environment {
     let panorama = Panorama::new(2, 1, &radiance.to_array().repeat(2));
     let sampler = renderer.sampler(RenderSamplerDesc {
-        min_filter: Filter::Linear,
-        mag_filter: Filter::Linear,
-        mip_filter: Filter::Linear,
-        address_u: AddressMode::Repeat,
-        address_v: AddressMode::ClampToEdge,
+        min_filter: FilterMode::Linear,
+        mag_filter: FilterMode::Linear,
+        mipmap_filter: FilterMode::Linear,
+        address_mode_u: AddressMode::Repeat,
+        address_mode_v: AddressMode::ClampToEdge,
         compare: None,
     });
     let texture = panorama.texture(renderer, "local panorama");
@@ -1803,17 +1714,12 @@ fn environment(renderer: &mut Renderer, radiance: Vec3) -> Environment {
 
 #[test]
 fn a_temporal_frame_accumulates_subpixel_coverage_and_rejects_the_history_of_a_moved_instance() {
-    for backend in dome_gpu::PREFERENCE {
-        temporal(*backend);
-    }
+    temporal();
 }
 
-fn temporal(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device renders a frame: {error}"));
+fn temporal() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device renders a frame: {error}"));
     let target = Texture::new(
         context.device(),
         "temporal frame",
@@ -1823,11 +1729,11 @@ fn temporal(backend: Backend) {
         TextureFormat::Rgba8Unorm,
         TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
     );
-    accumulation(backend, &context, &target);
-    movement(backend, &context, &target);
+    accumulation(&context, &target);
+    movement(&context, &target);
 }
 
-fn accumulation(backend: Backend, context: &GpuContext, target: &Texture) {
+fn accumulation(context: &Gpu, target: &Texture) {
     let mut renderer = Renderer::new(context, TextureFormat::Rgba8Unorm);
     let quad = renderer.mesh(&QUAD);
     let material = renderer.material(MaterialDesc::new(WHITE).emissive(WHITE));
@@ -1871,7 +1777,7 @@ fn accumulation(backend: Backend, context: &GpuContext, target: &Texture) {
     let held = pixels[(SIDE * 32 + 32) as usize];
     assert!(
         held[0] > 200,
-        "{backend:?} paints the quad {held:?} where its emission belongs",
+        "paints the quad {held:?} where its emission belongs",
     );
     let covered = pixels
         .iter()
@@ -1879,11 +1785,11 @@ fn accumulation(backend: Backend, context: &GpuContext, target: &Texture) {
         .count();
     assert!(
         covered > 4,
-        "{backend:?} leaves {covered} pixels of fractional edge coverage where a temporal frame accumulates its jitter",
+        "leaves {covered} pixels of fractional edge coverage where a temporal frame accumulates its jitter",
     );
 }
 
-fn movement(backend: Backend, context: &GpuContext, target: &Texture) {
+fn movement(context: &Gpu, target: &Texture) {
     let mut renderer = Renderer::new(context, TextureFormat::Rgba8Unorm);
     let quad = renderer.mesh(&QUAD);
     let material = renderer.material(MaterialDesc::new(WHITE).emissive(WHITE));
@@ -1939,11 +1845,11 @@ fn movement(backend: Backend, context: &GpuContext, target: &Texture) {
     let held = pixels[(SIDE * 32 + 37) as usize];
     assert!(
         held[0] > 200,
-        "{backend:?} paints (37, 32) {held:?} where the moved instance stands",
+        "paints (37, 32) {held:?} where the moved instance stands",
     );
     let left = pixels[(SIDE * 32 + 27) as usize];
     assert!(
         left[0] < 40,
-        "{backend:?} leaves {left:?} where the instance no longer stands: a temporal frame rejects the history of a disoccluded surface",
+        "leaves {left:?} where the instance no longer stands: a temporal frame rejects the history of a disoccluded surface",
     );
 }

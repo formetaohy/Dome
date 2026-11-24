@@ -1,8 +1,8 @@
 use dome_gpu::{
-    AddressMode, Device, Filter, Queue, ResourceId, Sampler, SamplerDesc, SamplerTable, Submission,
-    Texture, TextureFormat, TextureRegion, TextureTable, TextureUsages,
+    AddressMode, Device, FilterMode, Queue, ResourceId, Sampler, SamplerDesc, SamplerTable,
+    Submission, Texture, TextureFormat, TextureRegion, TextureTable, TextureUsages,
 };
-use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
+use dome_gpu::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use dome_text::Text;
 use std::collections::{HashMap, HashSet};
 
@@ -11,20 +11,20 @@ const WHITE: [u8; 4] = [255, 255, 255, 255];
 pub(crate) const LINEAR_SAMPLER: u32 = 0;
 
 pub(crate) const LINEAR: SamplerDesc = SamplerDesc {
-    min_filter: Filter::Linear,
-    mag_filter: Filter::Linear,
-    mip_filter: Filter::Linear,
-    address_u: AddressMode::ClampToEdge,
-    address_v: AddressMode::ClampToEdge,
+    min_filter: FilterMode::Linear,
+    mag_filter: FilterMode::Linear,
+    mipmap_filter: FilterMode::Linear,
+    address_mode_u: AddressMode::ClampToEdge,
+    address_mode_v: AddressMode::ClampToEdge,
     compare: None,
 };
 
 pub(crate) const NEAREST: SamplerDesc = SamplerDesc {
-    min_filter: Filter::Nearest,
-    mag_filter: Filter::Nearest,
-    mip_filter: Filter::Nearest,
-    address_u: AddressMode::ClampToEdge,
-    address_v: AddressMode::ClampToEdge,
+    min_filter: FilterMode::Nearest,
+    mag_filter: FilterMode::Nearest,
+    mipmap_filter: FilterMode::Nearest,
+    address_mode_u: AddressMode::ClampToEdge,
+    address_mode_v: AddressMode::ClampToEdge,
     compare: None,
 };
 
@@ -57,7 +57,7 @@ impl Textures {
             1,
             1,
             TextureFormat::Rgba8Unorm,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         white.write(queue, &WHITE);
         let mut table = TextureTable::new(device, TEXTURE_TABLE_CAPACITY, &white);
@@ -115,7 +115,7 @@ impl Textures {
                 size,
                 1,
                 TextureFormat::R8Unorm,
-                TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+                TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             );
             submission.write_texture_region(
                 &texture,

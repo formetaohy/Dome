@@ -1,8 +1,9 @@
 use crate::abi::{BloomRecord, BloomUpRecord, TonemapRecord};
 use crate::program;
 use dome_gpu::{
-    AddressMode, Binding, BufferUsages, Device, Draw, Filter, GpuBuffer, GraphicsPipeline, Pass,
-    PipelineState, Queue, Sampler, SamplerDesc, Submission, Texture, TextureFormat, TextureUsages,
+    AddressMode, Binding, BufferUsages, Device, Draw, FilterMode, GpuBuffer, GraphicsPipeline,
+    Pass, PipelineState, Queue, Sampler, SamplerDesc, Submission, Texture, TextureFormat,
+    TextureUsages,
 };
 use std::mem::size_of;
 
@@ -92,15 +93,15 @@ impl Post {
             filter: Sampler::new(
                 device,
                 SamplerDesc {
-                    min_filter: Filter::Linear,
-                    mag_filter: Filter::Linear,
-                    mip_filter: Filter::Nearest,
-                    address_u: AddressMode::ClampToEdge,
-                    address_v: AddressMode::ClampToEdge,
+                    min_filter: FilterMode::Linear,
+                    mag_filter: FilterMode::Linear,
+                    mipmap_filter: FilterMode::Nearest,
+                    address_mode_u: AddressMode::ClampToEdge,
+                    address_mode_v: AddressMode::ClampToEdge,
                     compare: None,
                 },
             ),
-            vertical: crate::frame::vertical(device),
+            vertical: crate::frame::vertical(),
             screen: None,
         }
     }
@@ -113,7 +114,7 @@ impl Post {
         {
             return;
         }
-        let usage = TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED;
+        let usage = TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING;
         let hdr = Texture::new(device, "dome hdr", width, height, 1, HDR_FORMAT, usage);
         let lit = Texture::new(device, "dome lit", width, height, 1, HDR_FORMAT, usage);
         let dimensions = dimensions_of(width, height);
@@ -147,7 +148,7 @@ impl Post {
             .collect::<Vec<_>>();
         let mut layout = Layout {
             bytes: Vec::new(),
-            alignment: device.limits().min_storage_buffer_offset_alignment.max(4),
+            alignment: device.binding_alignment().max(4),
         };
         let extract = layout.push(bytemuck::bytes_of(&BloomRecord {
             source_width: width as f32,
@@ -341,14 +342,14 @@ fn dimensions_of(width: u32, height: u32) -> Vec<(u32, u32)> {
 }
 
 const _: () = assert!(
-    BLOOM_BYTES == crate::abi::BLOOM.size as u64,
+    BLOOM_BYTES == size_of::<BloomRecord>() as u64,
     "the bloom record keeps the layout its shader reads",
 );
 const _: () = assert!(
-    BLOOM_UP_BYTES == crate::abi::BLOOM_UP.size as u64,
+    BLOOM_UP_BYTES == size_of::<BloomUpRecord>() as u64,
     "the bloom up record keeps the layout its shader reads",
 );
 const _: () = assert!(
-    TONEMAP_BYTES == crate::abi::TONEMAP.size as u64,
+    TONEMAP_BYTES == size_of::<TonemapRecord>() as u64,
     "the tonemap record keeps the layout its shader reads",
 );

@@ -1,5 +1,5 @@
 use dome_asset::Import;
-use dome_render::{AddressMode, Filter};
+use dome_render::{AddressMode, FilterMode};
 use dome_scene::{Scene, Target};
 use dome_schema::NodeComponents;
 use serde_json::json;
@@ -152,14 +152,17 @@ fn an_imported_model_expands_into_the_assets_and_nodes_it_holds() {
     );
     assert_eq!(scene.materials()[0].asset.normal_scale, 1.5);
     assert_eq!(scene.materials()[0].asset.occlusion_strength, 0.25);
-    assert_eq!(scene.images()[0].sampler.min_filter, Filter::Nearest,);
-    assert_eq!(scene.images()[0].sampler.mag_filter, Filter::Linear);
-    assert_eq!(scene.images()[0].sampler.mip_filter, Filter::Nearest);
+    assert_eq!(scene.images()[0].sampler.min_filter, FilterMode::Nearest,);
+    assert_eq!(scene.images()[0].sampler.mag_filter, FilterMode::Linear);
+    assert_eq!(scene.images()[0].sampler.mipmap_filter, FilterMode::Nearest);
     assert_eq!(
-        scene.images()[0].sampler.address_u,
+        scene.images()[0].sampler.address_mode_u,
         AddressMode::ClampToEdge,
     );
-    assert_eq!(scene.images()[0].sampler.address_v, AddressMode::Repeat);
+    assert_eq!(
+        scene.images()[0].sampler.address_mode_v,
+        AddressMode::Repeat
+    );
     assert_eq!(
         scene.materials()[0].asset.base_color,
         dome_math::Vec3::splat(0.5),

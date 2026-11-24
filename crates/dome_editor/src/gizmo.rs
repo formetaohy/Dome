@@ -1,4 +1,3 @@
-use dome_gpu::ClipSpace;
 use dome_math::{Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};
 use dome_render::Camera;
 use dome_ui::{Color, Corners, Painter};
@@ -212,7 +211,7 @@ impl Target {
 
     fn clip(&self) -> Mat4 {
         let aspect = self.viewport.width() / self.viewport.height();
-        self.camera.view(self.view, aspect, ClipSpace::YUp).clip
+        self.camera.view(self.view, aspect).clip
     }
 
     fn project(&self, matrix: Mat4, point: Vec3) -> Option<Vec2> {

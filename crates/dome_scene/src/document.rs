@@ -249,15 +249,15 @@ fn image(entry: &ImageEntry, owner: Option<&Path>) -> Toml {
     ));
     fields.push((
         String::from("mip_filter"),
-        Toml::string(filter_name(entry.sampler.mip_filter)),
+        Toml::string(filter_name(entry.sampler.mipmap_filter)),
     ));
     fields.push((
         String::from("wrap_u"),
-        Toml::string(address_name(entry.sampler.address_u)),
+        Toml::string(address_name(entry.sampler.address_mode_u)),
     ));
     fields.push((
         String::from("wrap_v"),
-        Toml::string(address_name(entry.sampler.address_v)),
+        Toml::string(address_name(entry.sampler.address_mode_v)),
     ));
     mark_prefab(&mut fields, owner);
     Toml::object(fields)

@@ -1,11 +1,11 @@
+use crate::abi::Fvec4;
 use crate::abi::{ALPHA_BLEND, ALPHA_MASK, ALPHA_OPAQUE, MaterialRecord};
 use dome_gpu::{
-    AddressMode, Device, Filter, Queue, Sampler, SamplerDesc, SamplerTable, Texture, TextureFormat,
-    TextureTable, TextureUsages,
+    AddressMode, Device, FilterMode, Queue, Sampler, SamplerDesc, SamplerTable, Texture,
+    TextureFormat, TextureTable, TextureUsages,
 };
+use dome_gpu::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use dome_math::Vec3;
-use dome_shader::Fvec4;
-use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use std::ops::Range;
 
 const WHITE: [u8; 4] = [255, 255, 255, 255];
@@ -66,7 +66,7 @@ pub struct MaterialImage {
 impl MaterialImage {
     pub fn new(texture: Texture, sampler: Sampler) -> Self {
         assert!(
-            texture.usages().contains(TextureUsages::SAMPLED),
+            texture.usages().contains(TextureUsages::TEXTURE_BINDING),
             "a material image holds an unsampled texture",
         );
         Self { texture, sampler }
@@ -242,7 +242,7 @@ impl MaterialLibrary {
             1,
             1,
             TextureFormat::Rgba8UnormSrgb,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         white_srgb.write(queue, &WHITE);
         let white_linear = Texture::new(
@@ -252,7 +252,7 @@ impl MaterialLibrary {
             1,
             1,
             TextureFormat::Rgba8Unorm,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         white_linear.write(queue, &WHITE);
         let flat_normal = Texture::new(
@@ -262,17 +262,17 @@ impl MaterialLibrary {
             1,
             1,
             TextureFormat::Rgba8Unorm,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         flat_normal.write(queue, &FLAT_NORMAL);
         let clamp = Sampler::new(
             device,
             SamplerDesc {
-                min_filter: Filter::Nearest,
-                mag_filter: Filter::Nearest,
-                mip_filter: Filter::Nearest,
-                address_u: AddressMode::ClampToEdge,
-                address_v: AddressMode::ClampToEdge,
+                min_filter: FilterMode::Nearest,
+                mag_filter: FilterMode::Nearest,
+                mipmap_filter: FilterMode::Nearest,
+                address_mode_u: AddressMode::ClampToEdge,
+                address_mode_v: AddressMode::ClampToEdge,
                 compare: None,
             },
         );
@@ -622,14 +622,15 @@ fn vector(value: Vec3) -> Fvec4 {
 #[cfg(test)]
 mod tests {
     use super::{AlphaMode, MaterialDesc, MaterialLibrary};
-    use dome_gpu::{GpuContext, GpuRequest};
+    use dome_gpu::{Gpu, GpuRequest};
     use dome_math::Vec3;
 
     #[test]
     fn a_removed_material_hands_the_slot_it_held_back_to_its_successor() {
-        let context = GpuContext::open(&GpuRequest::default())
+        let context = Gpu::open(&GpuRequest::default())
             .unwrap_or_else(|error| panic!("no device reuses material slots: {error}"));
-        let mut library = MaterialLibrary::new(context.device(), context.queue());
+        let queue = context.queue();
+        let mut library = MaterialLibrary::new(context.device(), &queue);
         let first = library.add(MaterialDesc::new(Vec3::ONE));
         library.add(MaterialDesc::new(Vec3::ZERO).alpha_mode(AlphaMode::Blend));
         library.remove(first);

@@ -1,12 +1,12 @@
-use crate::abi::{MOTION, MotionRecord, TEMPORAL, TemporalRecord};
+use crate::abi::Fvec4;
+use crate::abi::{MotionRecord, TemporalRecord};
 use crate::program;
 use dome_gpu::{
-    AddressMode, Binding, BufferBinding, BufferUsages, Device, Draw, Filter, GpuBuffer,
+    AddressMode, Binding, BufferBinding, BufferUsages, Device, Draw, FilterMode, GpuBuffer,
     GraphicsPipeline, Pass, PipelineState, Queue, Sampler, SamplerDesc, Submission, Texture,
     TextureFormat, TextureUsages,
 };
 use dome_math::{Mat4, Vec2, Vec3};
-use dome_shader::Fvec4;
 use std::mem::size_of;
 
 const FULLSCREEN_VERTICES: u32 = 3;
@@ -80,22 +80,22 @@ impl Temporality {
             filter: Sampler::new(
                 device,
                 SamplerDesc {
-                    min_filter: Filter::Linear,
-                    mag_filter: Filter::Linear,
-                    mip_filter: Filter::Nearest,
-                    address_u: AddressMode::ClampToEdge,
-                    address_v: AddressMode::ClampToEdge,
+                    min_filter: FilterMode::Linear,
+                    mag_filter: FilterMode::Linear,
+                    mipmap_filter: FilterMode::Nearest,
+                    address_mode_u: AddressMode::ClampToEdge,
+                    address_mode_v: AddressMode::ClampToEdge,
                     compare: None,
                 },
             ),
             nearest: Sampler::new(
                 device,
                 SamplerDesc {
-                    min_filter: Filter::Nearest,
-                    mag_filter: Filter::Nearest,
-                    mip_filter: Filter::Nearest,
-                    address_u: AddressMode::ClampToEdge,
-                    address_v: AddressMode::ClampToEdge,
+                    min_filter: FilterMode::Nearest,
+                    mag_filter: FilterMode::Nearest,
+                    mipmap_filter: FilterMode::Nearest,
+                    address_mode_u: AddressMode::ClampToEdge,
+                    address_mode_v: AddressMode::ClampToEdge,
                     compare: None,
                 },
             ),
@@ -131,7 +131,7 @@ impl Temporality {
         {
             return;
         }
-        let usage = TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED;
+        let usage = TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING;
         let history = [
             Texture::new(device, "dome history", width, height, 1, FORMAT, usage),
             Texture::new(device, "dome history", width, height, 1, FORMAT, usage),
@@ -321,10 +321,10 @@ fn direction(value: Vec3) -> Fvec4 {
 }
 
 const _: () = assert!(
-    MOTION_BYTES == MOTION.size as u64,
+    MOTION_BYTES == size_of::<MotionRecord>() as u64,
     "the motion record keeps the layout its shader reads",
 );
 const _: () = assert!(
-    TEMPORAL_BYTES == TEMPORAL.size as u64,
+    TEMPORAL_BYTES == size_of::<TemporalRecord>() as u64,
     "the temporal record keeps the layout its shader reads",
 );

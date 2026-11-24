@@ -1,5 +1,5 @@
 use crate::reference::ModelId;
-use dome_render::{AddressMode, Filter, SamplerDesc};
+use dome_render::{AddressMode, FilterMode, SamplerDesc};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -56,26 +56,26 @@ impl ImageEntry {
 
 pub fn material_sampler() -> SamplerDesc {
     SamplerDesc {
-        min_filter: Filter::Linear,
-        mag_filter: Filter::Linear,
-        mip_filter: Filter::Linear,
-        address_u: AddressMode::Repeat,
-        address_v: AddressMode::Repeat,
+        min_filter: FilterMode::Linear,
+        mag_filter: FilterMode::Linear,
+        mipmap_filter: FilterMode::Linear,
+        address_mode_u: AddressMode::Repeat,
+        address_mode_v: AddressMode::Repeat,
         compare: None,
     }
 }
 
-pub fn filter_name(filter: Filter) -> &'static str {
+pub fn filter_name(filter: FilterMode) -> &'static str {
     match filter {
-        Filter::Linear => "linear",
-        Filter::Nearest => "nearest",
+        FilterMode::Linear => "linear",
+        FilterMode::Nearest => "nearest",
     }
 }
 
-pub fn filter_of(name: &str) -> Option<Filter> {
+pub fn filter_of(name: &str) -> Option<FilterMode> {
     match name {
-        "linear" => Some(Filter::Linear),
-        "nearest" => Some(Filter::Nearest),
+        "linear" => Some(FilterMode::Linear),
+        "nearest" => Some(FilterMode::Nearest),
         _ => None,
     }
 }
@@ -85,6 +85,7 @@ pub fn address_name(address: AddressMode) -> &'static str {
         AddressMode::Repeat => "repeat",
         AddressMode::MirrorRepeat => "mirror",
         AddressMode::ClampToEdge => "clamp",
+        AddressMode::ClampToBorder => panic!("a scene sampler holds no border clamp"),
     }
 }
 

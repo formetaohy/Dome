@@ -1,8 +1,8 @@
 use crate::environment::{BRDF_SIZE, Environment};
 use crate::program;
 use dome_gpu::{
-    AddressMode, BindGroup, Binding, Device, Filter, GraphicsPipeline, Queue, ResourceId, Sampler,
-    SamplerDesc, SamplerTable, Texture, TextureFormat, TextureTable, TextureUsages,
+    AddressMode, BindGroup, Binding, Device, FilterMode, GraphicsPipeline, Queue, ResourceId,
+    Sampler, SamplerDesc, SamplerTable, Texture, TextureFormat, TextureTable, TextureUsages,
 };
 use half::f16;
 
@@ -25,7 +25,7 @@ impl Shading {
             BRDF_SIZE,
             1,
             TextureFormat::Rgba16Float,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         let codes = crate::environment::brdf(BRDF_SIZE)
             .iter()
@@ -36,11 +36,11 @@ impl Shading {
         let brdf_sampler = Sampler::new(
             device,
             SamplerDesc {
-                min_filter: Filter::Linear,
-                mag_filter: Filter::Linear,
-                mip_filter: Filter::Nearest,
-                address_u: AddressMode::ClampToEdge,
-                address_v: AddressMode::ClampToEdge,
+                min_filter: FilterMode::Linear,
+                mag_filter: FilterMode::Linear,
+                mipmap_filter: FilterMode::Nearest,
+                address_mode_u: AddressMode::ClampToEdge,
+                address_mode_v: AddressMode::ClampToEdge,
                 compare: None,
             },
         );
@@ -51,18 +51,18 @@ impl Shading {
             1,
             1,
             TextureFormat::Rgba16Float,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         let clear = [0u16, 0u16, 0u16, f16::from_f32(1.0).to_bits()];
         fallback.write(queue, bytemuck::cast_slice(&clear));
         let sampler = Sampler::new(
             device,
             SamplerDesc {
-                min_filter: Filter::Linear,
-                mag_filter: Filter::Linear,
-                mip_filter: Filter::Linear,
-                address_u: AddressMode::Repeat,
-                address_v: AddressMode::ClampToEdge,
+                min_filter: FilterMode::Linear,
+                mag_filter: FilterMode::Linear,
+                mipmap_filter: FilterMode::Linear,
+                address_mode_u: AddressMode::Repeat,
+                address_mode_v: AddressMode::ClampToEdge,
                 compare: None,
             },
         );

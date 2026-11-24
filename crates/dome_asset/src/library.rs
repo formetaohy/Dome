@@ -346,7 +346,7 @@ impl Library {
             mips.height,
             levels.len() as u32,
             format,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         renderer.write_texture(&texture, &held);
         self.textures.insert(key, texture.clone());

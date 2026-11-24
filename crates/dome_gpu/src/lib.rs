@@ -1,48 +1,27 @@
-mod backend;
+mod binding;
 mod buffer;
 mod cache;
-mod capability;
+mod command;
 mod context;
-mod gate;
-mod graphics;
-mod group;
-mod host;
 mod identity;
-mod library;
-mod native;
 mod pipeline;
-mod readback;
 mod sampler;
-mod submission;
+mod shader;
 mod surface;
 mod table;
 mod texture;
 
-pub use backend::{Backend, PREFERENCE};
-pub use buffer::{BufferBinding, BufferRange, GpuBuffer};
-pub use cache::{ArtifactCache, DEFAULT_ARTIFACT_BYTES};
-pub use capability::{
-    AdapterId, AdapterInfo, AdapterPolicy, BufferUsages, Capability, ClipSpace, CooperativeMatrix,
-    DeviceType, Limits, PowerPreference, TextureUsages,
-};
-pub use context::{Device, GpuContext, GpuRequest, GpuUnavailable, LimitsPolicy, Queue};
-pub use gate::QueueLock;
-pub use graphics::{
-    BlendState, Count, DepthLoad, DepthOps, DepthState, Draw, Pass, PipelineState, Scissor,
-    Viewport,
-};
-#[cfg(vulkan_backend)]
-pub use host::VulkanHost;
-pub use host::{HostAdvance, HostDevice, HostIdentity};
+pub use binding::{BindGroup, BindGroupLayout, Binding, Resource};
+pub use buffer::{BufferBinding, BufferRange, BufferUsages, GpuBuffer};
+pub use command::{Count, DepthLoad, DepthOps, Draw, Pass, Scissor, Submission, Viewport};
+pub use context::{Device, Gpu, GpuRequest, GpuUnavailable, Queue};
 pub use identity::ResourceId;
-pub use library::WARM_PROGRAMS;
-pub use native::STAGING_BYTES;
-pub(crate) use native::{NativeSampler, NativeTexture};
-pub use pipeline::{BindGroup, Binding, GraphicsPipeline, PipelineHandle};
-pub use raw_window_handle;
-pub use readback::{READBACK_TIMEOUT, Readback, ReadbackLease};
-pub use sampler::{AddressMode, CompareOp, Filter, Sampler, SamplerDesc};
-pub use submission::{Submission, SubmissionIndex};
+pub use pipeline::{ComputePipeline, GraphicsPipeline, PipelineState};
+pub use sampler::{AddressMode, CompareFunction, FilterMode, Sampler, SamplerDesc};
+pub use shader::{BindingKind, BindingSpec, ComputeShader, GraphicsShader};
 pub use surface::{Surface, SurfaceFrame, WindowHandle};
-pub use table::{SamplerTable, TextureTable};
-pub use texture::{Texture, TextureFormat, TextureRegion};
+pub use table::{SAMPLER_TABLE_CAPACITY, SamplerTable, TEXTURE_TABLE_CAPACITY, TextureTable};
+pub use texture::{Texture, TextureFormat, TextureFormatExt, TextureRegion, TextureUsages};
+pub use wgpu::SubmissionIndex;
+
+pub const READBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);

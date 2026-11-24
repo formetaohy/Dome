@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use dome_animation::{Comparison, Parameter};
 use dome_asset::{Import, Watch};
-use dome_gpu::{GpuContext, GpuRequest, Submission, WindowHandle};
+use dome_gpu::{Gpu, GpuRequest, Submission, WindowHandle};
 use dome_math::{Quat, Rect, Transform, Vec2, Vec3};
 use dome_project::Project;
 use dome_scene::{Atmosphere, Delta, Node, ReferenceKind, Scene, Shape, Target, Value};
@@ -169,14 +169,14 @@ impl Editor {
             )),
             ..Default::default()
         };
-        let context = GpuContext::open(&request)
+        let context = Gpu::open(&request)
             .unwrap_or_else(|error| panic!("the editor opens its render device: {error}"));
         let (width, height) = window.size();
         assert!(
             width > 0 && height > 0,
             "a window of {width} by {height} presents no surface"
         );
-        let surface = context.device().surface(width, height);
+        let surface = context.surface(width, height);
         let mut preview = Preview::new(&context, &self.scene, Arc::clone(&self.registry));
         preview.set_debug(self.debug);
         self.session = Some(Session::new(context, surface, preview, &self.scene));
@@ -1104,7 +1104,8 @@ impl Editor {
                 texture_height,
                 1,
                 dome_gpu::TextureFormat::Rgba8Unorm,
-                dome_gpu::TextureUsages::RENDER_ATTACHMENT | dome_gpu::TextureUsages::SAMPLED,
+                dome_gpu::TextureUsages::RENDER_ATTACHMENT
+                    | dome_gpu::TextureUsages::TEXTURE_BINDING,
             ));
         }
         let scene = self
@@ -1128,7 +1129,7 @@ impl Editor {
         let mut submission = Submission::new(context.device(), "dome editor");
         ui.render(&mut submission, frame.texture(), Some(scene));
         submission.present(frame);
-        submission.submit(context.queue());
+        submission.submit(&context.queue());
         let wake = ui.finish();
         let caret = ui.edit_caret();
         let editing = ui.editing();

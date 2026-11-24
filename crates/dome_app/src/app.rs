@@ -2,9 +2,7 @@ use crate::time::Time;
 use dome_asset::{Library, Watch};
 use dome_audio::Audio;
 use dome_ecs::{Entity, Schedule, System, World, propagate};
-use dome_gpu::{
-    GpuContext, GpuRequest, Surface, Texture, TextureFormat, TextureUsages, WindowHandle,
-};
+use dome_gpu::{Gpu, GpuRequest, Surface, Texture, TextureFormat, TextureUsages, WindowHandle};
 use dome_math::{Transform, Vec3};
 use dome_render::{Camera, Lines, Renderer, Target};
 use dome_scene::{Changed, Scene};
@@ -95,11 +93,11 @@ pub struct App {
 
 enum Presentation {
     Window(Box<Surface>),
-    Offscreen(Texture),
+    Offscreen(Box<Texture>),
 }
 
 struct Session {
-    context: GpuContext,
+    context: Gpu,
     presentation: Presentation,
     renderer: Renderer,
     shot: Option<Texture>,
@@ -293,14 +291,14 @@ impl Session {
             )),
             ..request.clone()
         };
-        let context = GpuContext::open(&request)
+        let context = Gpu::open(&request)
             .unwrap_or_else(|error| panic!("the engine opens its render device: {error}"));
         let (width, height) = window.size();
         assert!(
             width > 0 && height > 0,
             "a window of {width} by {height} presents no surface"
         );
-        let surface = context.device().surface(width, height);
+        let surface = context.surface(width, height);
         let format = surface.format();
         let renderer = Renderer::new(&context, format);
         Self {
@@ -324,7 +322,7 @@ impl Session {
             request.surface.is_none(),
             "a headless session opens no window surface"
         );
-        let context = GpuContext::open(request)
+        let context = Gpu::open(request)
             .unwrap_or_else(|error| panic!("the engine opens its render device: {error}"));
         let format = TextureFormat::Rgba8Unorm;
         let target = Texture::new(
@@ -339,7 +337,7 @@ impl Session {
         let renderer = Renderer::new(&context, format);
         Self {
             context,
-            presentation: Presentation::Offscreen(target),
+            presentation: Presentation::Offscreen(Box::new(target)),
             renderer,
             shot: None,
             width,
@@ -406,7 +404,7 @@ impl Session {
         self.width = surface.width();
         self.height = surface.height();
         self.renderer
-            .render(world, Target::Surface(surface), clear, None);
+            .render(world, Target::Surface(Box::new(surface)), clear, None);
     }
 
     fn draw_headless(
@@ -425,14 +423,14 @@ impl Session {
                 .expect("a captured frame holds its target");
             self.renderer
                 .render(world, Target::Texture(shot), clear, None);
-            let rgba = shot.read_rgba(self.context.queue());
+            let rgba = shot.read_rgba(&self.context.queue());
             Some(dome_image::encode(width, height, &rgba))
         } else {
             None
         };
         if let Presentation::Offscreen(texture) = &self.presentation {
             self.renderer
-                .render(world, Target::Texture(texture), clear, None);
+                .render(world, Target::Texture(texture.as_ref()), clear, None);
         }
         png
     }

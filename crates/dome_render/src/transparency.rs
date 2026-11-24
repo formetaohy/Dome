@@ -1,7 +1,7 @@
 use crate::abi::{TRANSPARENT_LAYERS, TransparentSetupRecord};
 use crate::program;
 use dome_gpu::{
-    AddressMode, Binding, BufferBinding, BufferUsages, Device, Draw, Filter, GpuBuffer,
+    AddressMode, Binding, BufferBinding, BufferUsages, Device, Draw, FilterMode, GpuBuffer,
     GraphicsPipeline, Pass, PipelineState, Queue, Sampler, SamplerDesc, Submission, Texture,
     TextureFormat,
 };
@@ -41,11 +41,11 @@ impl Transparency {
             sampler: Sampler::new(
                 device,
                 SamplerDesc {
-                    min_filter: Filter::Nearest,
-                    mag_filter: Filter::Nearest,
-                    mip_filter: Filter::Nearest,
-                    address_u: AddressMode::ClampToEdge,
-                    address_v: AddressMode::ClampToEdge,
+                    min_filter: FilterMode::Nearest,
+                    mag_filter: FilterMode::Nearest,
+                    mipmap_filter: FilterMode::Nearest,
+                    address_mode_u: AddressMode::ClampToEdge,
+                    address_mode_v: AddressMode::ClampToEdge,
                     compare: None,
                 },
             ),

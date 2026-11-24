@@ -5,9 +5,8 @@ use crate::program;
 use crate::view::View;
 use dome_ecs::Entity;
 use dome_gpu::{
-    Binding, BufferBinding, BufferUsages, ClipSpace, DepthOps, Device, Draw, GpuBuffer,
-    GraphicsPipeline, Pass, PipelineState, Queue, Submission, Texture, TextureFormat,
-    TextureUsages,
+    Binding, BufferBinding, BufferUsages, DepthOps, Device, Draw, GpuBuffer, GraphicsPipeline,
+    Pass, PipelineState, Queue, Submission, Texture, TextureFormat, TextureUsages,
 };
 use dome_math::{Mat4, Vec2, Vec3, Vec4};
 use std::mem::size_of;
@@ -88,7 +87,6 @@ impl Picker {
         &mut self,
         device: &Device,
         queue: &Queue,
-        clip_space: ClipSpace,
         frame: &PickFrame,
         resources: &PickResources<'_>,
         point: Vec2,
@@ -107,7 +105,7 @@ impl Picker {
             "a pick names {} instances where its channels hold {ID_LIMIT}",
             frame.entities.len(),
         );
-        let clip = zoomed(frame.clip, frame.width, frame.height, point, clip_space);
+        let clip = zoomed(frame.clip, frame.width, frame.height, point);
         let record = record_of_view(
             &View::of(clip),
             frame.entities.len() as u32,
@@ -177,14 +175,11 @@ impl Picker {
     }
 }
 
-fn zoomed(clip: Mat4, width: u32, height: u32, point: Vec2, clip_space: ClipSpace) -> Mat4 {
+fn zoomed(clip: Mat4, width: u32, height: u32, point: Vec2) -> Mat4 {
     let width = width as f32;
     let height = height as f32;
     let ndc_x = (point.x + 0.5) / width * 2.0 - 1.0;
-    let ndc_y = match clip_space {
-        ClipSpace::YUp => 1.0 - (point.y + 0.5) / height * 2.0,
-        ClipSpace::YDown => (point.y + 0.5) / height * 2.0 - 1.0,
-    };
+    let ndc_y = 1.0 - (point.y + 0.5) / height * 2.0;
     let column = |held: Vec4| {
         Vec4::new(
             (held.x - held.w * ndc_x) * width,

@@ -22,6 +22,7 @@ pub(crate) struct Shared<'a> {
     pub(crate) light: BufferBinding<'a>,
     pub(crate) cascades: BufferBinding<'a>,
     pub(crate) lighting: BufferBinding<'a>,
+    pub(crate) point_light: BufferBinding<'a>,
     pub(crate) probes: BufferBinding<'a>,
     pub(crate) keys: BufferBinding<'a>,
     pub(crate) colors: BufferBinding<'a>,
@@ -85,6 +86,7 @@ impl SlotGroups {
                 Binding::buffer(program::DRAW_PROBES, shared.probes),
                 Binding::buffer(program::DRAW_VERTICES, slot.vertices),
                 Binding::buffer(program::DRAW_LIGHTS, shared.lighting),
+                Binding::buffer(program::DRAW_POINT_LIGHTS, shared.point_light),
             ],
         );
         let motion_pipeline = if blended {

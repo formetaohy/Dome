@@ -1,8 +1,8 @@
-use crate::abi::{SKIN_VERTEX, SkinVertexRecord, VERTEX_FLOATS, Vertex};
+use crate::abi::{Fvec4, Uvec4};
+use crate::abi::{SkinVertexRecord, VERTEX_FLOATS, Vertex};
 use crate::span;
 use dome_gpu::{BufferUsages, Device, GpuBuffer, Queue};
 use dome_math::{Aabb, Vec3};
-use dome_shader::{Fvec4, Uvec4};
 use std::mem::size_of;
 
 const VERTEX_BYTES: u64 = VERTEX_FLOATS as u64 * 4;
@@ -359,12 +359,12 @@ impl MeshLibrary {
     }
 
     fn stride(device: &Device) -> u32 {
-        let alignment = device.limits().min_storage_buffer_offset_alignment.max(4);
+        let alignment = device.binding_alignment().max(4);
         span::blocks(alignment, VERTEX_BYTES)
     }
 
     fn skin_stride(device: &Device) -> u32 {
-        let alignment = device.limits().min_storage_buffer_offset_alignment.max(4);
+        let alignment = device.binding_alignment().max(4);
         span::blocks(alignment, SKIN_BYTES)
     }
 
@@ -426,14 +426,14 @@ fn empty_skin() -> SkinVertexRecord {
 }
 
 const _: () = assert!(
-    SKIN_BYTES == SKIN_VERTEX.size as u64,
+    SKIN_BYTES == size_of::<SkinVertexRecord>() as u64,
     "the skin vertex record keeps the layout its shader reads",
 );
 
 #[cfg(test)]
 mod tests {
     use super::{MeshLibrary, Vertex};
-    use dome_gpu::{GpuContext, GpuRequest};
+    use dome_gpu::{Gpu, GpuRequest};
 
     fn vertices(count: usize) -> Vec<Vertex> {
         vec![
@@ -448,14 +448,15 @@ mod tests {
 
     #[test]
     fn a_removed_mesh_hands_the_slots_it_held_back_to_its_successor() {
-        let context = GpuContext::open(&GpuRequest::default())
+        let context = Gpu::open(&GpuRequest::default())
             .unwrap_or_else(|error| panic!("no device reuses mesh slots: {error}"));
+        let queue = context.queue();
         let mut library = MeshLibrary::new(context.device());
-        let first = library.add(context.queue(), &vertices(6));
-        library.add(context.queue(), &vertices(6));
+        let first = library.add(&queue, &vertices(6));
+        library.add(&queue, &vertices(6));
         let held = library.buffer().size();
         library.remove(first);
-        let again = library.add(context.queue(), &vertices(6));
+        let again = library.add(&queue, &vertices(6));
         assert_eq!(
             again.index(),
             first.index(),

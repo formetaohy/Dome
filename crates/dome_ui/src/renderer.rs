@@ -4,7 +4,7 @@ use crate::paint::{Instance, LayerBuffer};
 use crate::shader;
 use crate::texture::Textures;
 use dome_gpu::{
-    BindGroup, Binding, BufferUsages, ClipSpace, Device, Draw, GpuBuffer, GraphicsPipeline, Pass,
+    BindGroup, Binding, BufferUsages, Device, Draw, GpuBuffer, GraphicsPipeline, Pass,
     PipelineState, Queue, Submission, Texture, TextureFormat, TextureUsages,
 };
 use std::mem::size_of;
@@ -88,10 +88,7 @@ impl Renderer {
             !format.is_srgb(),
             "a user interface paints display space bytes into a linear target"
         );
-        let vertical = match device.clip_space() {
-            ClipSpace::YUp => -0.5,
-            ClipSpace::YDown => 0.5,
-        };
+        let vertical = -0.5;
         let fallback = Texture::new(
             device,
             "dome ui fallback",
@@ -99,7 +96,7 @@ impl Renderer {
             1,
             1,
             TextureFormat::Rgba8Unorm,
-            TextureUsages::SAMPLED | TextureUsages::COPY_DST,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         fallback.write(queue, &FALLBACK);
         Self {

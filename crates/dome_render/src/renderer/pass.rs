@@ -48,11 +48,7 @@ impl Renderer {
             u64::from(CASCADE_COUNT) * u64::from(slots) * DRAW_BYTES,
         );
         let argument_bytes = arguments.len() as u64 * WORD_BYTES;
-        let alignment = self
-            .device
-            .limits()
-            .min_storage_buffer_offset_alignment
-            .max(WORD_BYTES);
+        let alignment = self.device.binding_alignment().max(WORD_BYTES);
         let span = argument_bytes.next_multiple_of(alignment);
         self.shadow_span = span;
         self.shadow_arguments

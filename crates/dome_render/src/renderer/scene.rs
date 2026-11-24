@@ -109,11 +109,7 @@ impl Renderer {
             slot.bounds = Some(bounds);
         }
         palettes.commit(&self.device, &self.queue);
-        let alignment = self
-            .device
-            .limits()
-            .min_storage_buffer_offset_alignment
-            .max(WORD_BYTES);
+        let alignment = self.device.binding_alignment().max(WORD_BYTES);
         let blocks = span::blocks(alignment, DRAW_BYTES);
         let mut counted = HashMap::new();
         for (_, _, instance, blended) in &gathered {

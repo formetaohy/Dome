@@ -1,7 +1,7 @@
 use crate::program;
 use dome_gpu::{
-    BindGroup, Binding, BufferBinding, BufferUsages, Device, Draw, GpuBuffer, GraphicsPipeline,
-    Pass, PipelineHandle, Queue, Sampler, Submission, Texture, TextureFormat, TextureUsages,
+    BindGroup, Binding, BufferBinding, BufferUsages, ComputePipeline, Device, Draw, GpuBuffer,
+    GraphicsPipeline, Pass, Queue, Sampler, Submission, Texture, TextureFormat, TextureUsages,
 };
 use std::mem::size_of;
 
@@ -47,7 +47,7 @@ impl Hzb {
             dimensions[0].1,
             dimensions.len() as u32,
             TextureFormat::R32Float,
-            TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         );
         let levels = (0..dimensions.len() as u32)
             .map(|level| texture.level(level))
@@ -138,7 +138,7 @@ impl Hzb {
 
     pub(crate) fn cull(
         &self,
-        pipeline: &PipelineHandle,
+        pipeline: &ComputePipeline,
         sampler: &Sampler,
         view: BufferBinding<'_>,
         instances: BufferBinding<'_>,

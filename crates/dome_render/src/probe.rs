@@ -1,12 +1,12 @@
-use crate::abi::{PROBE, ProbeRecord};
+use crate::abi::ProbeRecord;
 use crate::environment::Environment;
 use crate::growing::Growing;
 use dome_gpu::{
     BufferBinding, BufferUsages, Device, Queue, ResourceId, Sampler, SamplerTable, Texture,
     TextureTable,
 };
+use dome_gpu::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use dome_math::{Mat4, Transform, Vec3};
-use dome_shader::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use std::mem::size_of;
 
 const PROBE_BYTES: u64 = size_of::<ProbeRecord>() as u64;
@@ -133,8 +133,8 @@ fn record(
     }
 }
 
-fn vector(value: Vec3, w: f32) -> dome_shader::Fvec4 {
-    dome_shader::Fvec4 {
+fn vector(value: Vec3, w: f32) -> crate::abi::Fvec4 {
+    crate::abi::Fvec4 {
         x: value.x,
         y: value.y,
         z: value.z,
@@ -142,9 +142,9 @@ fn vector(value: Vec3, w: f32) -> dome_shader::Fvec4 {
     }
 }
 
-fn column(matrix: Mat4, index: usize) -> dome_shader::Fvec4 {
+fn column(matrix: Mat4, index: usize) -> crate::abi::Fvec4 {
     let held = matrix.col(index);
-    dome_shader::Fvec4 {
+    crate::abi::Fvec4 {
         x: held.x,
         y: held.y,
         z: held.z,
@@ -153,6 +153,6 @@ fn column(matrix: Mat4, index: usize) -> dome_shader::Fvec4 {
 }
 
 const _: () = assert!(
-    PROBE_BYTES == PROBE.size as u64,
+    PROBE_BYTES == size_of::<ProbeRecord>() as u64,
     "the probe record keeps the layout its shader reads",
 );

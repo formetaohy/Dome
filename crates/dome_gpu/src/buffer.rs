@@ -1,21 +1,14 @@
-use crate::capability::BufferUsages;
-use crate::context::{Device, Queue};
+use crate::context::Device;
 use crate::identity::ResourceId;
-use crate::native::NativeBuffer;
-use crate::submission::{SubmissionIndex, Write};
-use std::sync::Arc;
-
-struct BufferState {
-    native: NativeBuffer,
-    device: Device,
-    size: u64,
-    usage: BufferUsages,
-    identity: ResourceId,
-}
+pub use wgpu::BufferUsages;
 
 #[derive(Clone)]
 pub struct GpuBuffer {
-    inner: Arc<BufferState>,
+    device: Device,
+    native: wgpu::Buffer,
+    size: u64,
+    usage: BufferUsages,
+    identity: ResourceId,
 }
 
 #[derive(Clone, Copy)]
@@ -45,70 +38,58 @@ impl BufferBinding<'_> {
 impl GpuBuffer {
     pub fn new(device: &Device, label: &str, size: u64, usage: BufferUsages) -> Self {
         assert!(size > 0, "a buffer of {label} must hold bytes");
+        assert!(!usage.is_empty(), "a buffer must have a purpose");
         assert!(
             size <= device.limits().max_buffer_size,
             "a buffer of {size} bytes exceeds the device limit of {}",
-            device.limits().max_buffer_size
+            device.limits().max_buffer_size,
         );
-        assert!(!usage.is_empty(), "a buffer must have a purpose");
-        assert!(
-            !usage.contains(BufferUsages::MAP_READ)
-                || (usage.contains(BufferUsages::COPY_DST)
-                    && !usage.contains(BufferUsages::STORAGE)),
-            "a host readback must accept copies and cannot be shader storage",
-        );
-        assert!(
-            !usage.contains(BufferUsages::MAP_READ) || !usage.contains(BufferUsages::MAP_WRITE),
-            "a buffer answers the host one way",
-        );
-        assert!(
-            !usage.contains(BufferUsages::MAP_WRITE)
-                || (usage.contains(BufferUsages::COPY_SRC)
-                    && !usage.contains(BufferUsages::STORAGE)),
-            "a host write must feed copies and cannot be shader storage",
-        );
+        let native = device.native().create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage,
+            mapped_at_creation: false,
+        });
         Self {
-            inner: Arc::new(BufferState {
-                native: device.native().create_buffer(label, size, usage),
-                device: device.clone(),
-                size,
-                usage,
-                identity: ResourceId::next(),
-            }),
+            device: device.clone(),
+            native,
+            size,
+            usage,
+            identity: ResourceId::next(),
         }
     }
 
     pub fn identity(&self) -> ResourceId {
-        self.inner.identity
+        self.identity
     }
 
     pub fn size(&self) -> u64 {
-        self.inner.size
+        self.size
     }
 
     pub fn usage(&self) -> BufferUsages {
-        self.inner.usage
+        self.usage
     }
 
     pub(crate) fn device(&self) -> &Device {
-        &self.inner.device
+        &self.device
     }
 
-    pub(crate) fn native(&self) -> &NativeBuffer {
-        &self.inner.native
+    pub(crate) fn native(&self) -> &wgpu::Buffer {
+        &self.native
     }
 
-    pub fn write(&self, queue: &Queue, bytes: &[u8]) {
+    pub fn write(&self, queue: &crate::Queue, bytes: &[u8]) {
         self.write_at(queue, 0, bytes);
     }
 
-    pub fn write_at(&self, queue: &Queue, offset: u64, bytes: &[u8]) {
+    pub fn write_at(&self, queue: &crate::Queue, offset: u64, bytes: &[u8]) {
         assert!(
-            self.device().same(queue.device()),
+            self.device.same(queue.device()),
             "a queue cannot write another device's buffer"
         );
         assert!(
-            self.usage().contains(BufferUsages::COPY_DST),
+            self.usage.contains(BufferUsages::COPY_DST),
             "the buffer does not accept host writes"
         );
         assert!(
@@ -118,70 +99,19 @@ impl GpuBuffer {
         assert!(
             offset
                 .checked_add(bytes.len() as u64)
-                .is_some_and(|end| end <= self.size()),
+                .is_some_and(|end| end <= self.size),
             "writing {} bytes at {offset} exceeds a buffer of {} bytes",
             bytes.len(),
-            self.size(),
+            self.size,
         );
         if !bytes.is_empty() {
-            queue.write(Write {
-                buffer: self.native().clone(),
-                offset,
-                bytes: bytes.to_vec(),
-            });
+            queue.native().write_buffer(&self.native, offset, bytes);
         }
-    }
-
-    pub fn write_host_at(&self, offset: u64, bytes: &[u8]) {
-        assert!(
-            self.usage().contains(BufferUsages::MAP_WRITE),
-            "the buffer is not host writable"
-        );
-        assert!(
-            offset.is_multiple_of(4) && bytes.len().is_multiple_of(4),
-            "a host write must cover whole words",
-        );
-        assert!(
-            offset
-                .checked_add(bytes.len() as u64)
-                .is_some_and(|end| end <= self.size()),
-            "writing {} bytes at {offset} exceeds a buffer of {} bytes",
-            bytes.len(),
-            self.size(),
-        );
-        if !bytes.is_empty() {
-            self.device()
-                .native()
-                .write_host(self.native(), offset, bytes);
-        }
-    }
-
-    pub fn read_host(&self, offset: u64, bytes: u64) -> Vec<u8> {
-        assert!(
-            self.usage().contains(BufferUsages::MAP_WRITE),
-            "the buffer is not host readable"
-        );
-        assert!(
-            offset.is_multiple_of(4)
-                && bytes.is_multiple_of(4)
-                && offset
-                    .checked_add(bytes)
-                    .is_some_and(|end| end <= self.size()),
-            "reading {bytes} bytes at {offset} exceeds a buffer of {} bytes",
-            self.size(),
-        );
-        self.device()
-            .native()
-            .read_host(self.native(), offset, bytes)
     }
 
     pub fn binding(&self, offset: u64, size: u64) -> BufferBinding<'_> {
         assert!(offset.is_multiple_of(4) && size > 0 && size.is_multiple_of(4));
-        assert!(
-            offset
-                .checked_add(size)
-                .is_some_and(|end| end <= self.size())
-        );
+        assert!(offset.checked_add(size).is_some_and(|end| end <= self.size));
         BufferBinding {
             buffer: self,
             offset,
@@ -189,17 +119,22 @@ impl GpuBuffer {
         }
     }
 
-    pub fn read(&self, queue: &Queue, submission: SubmissionIndex, bytes: u64) -> Vec<u8> {
+    pub fn read(
+        &self,
+        queue: &crate::Queue,
+        submission: wgpu::SubmissionIndex,
+        bytes: u64,
+    ) -> Vec<u8> {
         assert!(
-            self.device().same(queue.device()),
+            self.device.same(queue.device()),
             "a queue cannot read another device's buffer"
         );
         assert!(
-            self.usage().contains(BufferUsages::MAP_READ),
+            self.usage.contains(BufferUsages::MAP_READ),
             "the buffer is not host readable"
         );
         assert!(
-            bytes > 0 && bytes <= self.size(),
+            bytes > 0 && bytes <= self.size,
             "reading {bytes} bytes exceeds the readback buffer"
         );
         queue.read(self, submission, bytes)

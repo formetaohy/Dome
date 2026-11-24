@@ -3,7 +3,7 @@ use crate::frame::record_of_view;
 use crate::growing::Growing;
 use crate::view::View;
 use dome_gpu::{
-    AddressMode, BufferBinding, BufferUsages, ClipSpace, CompareOp, Device, Filter, GpuBuffer,
+    AddressMode, BufferBinding, BufferUsages, CompareFunction, Device, FilterMode, GpuBuffer,
     Queue, Sampler, SamplerDesc, Texture, TextureFormat, TextureUsages, Viewport,
 };
 use dome_math::{Mat4, Vec3};
@@ -29,7 +29,6 @@ const FACES: [(Vec3, Vec3); POINT_SHADOW_FACES as usize] = [
 ];
 
 pub(crate) struct PointShadowFrame<'a> {
-    pub(crate) clip_space: ClipSpace,
     pub(crate) lights: &'a [PointLightRecord],
     pub(crate) instances: u32,
     pub(crate) slots: u32,
@@ -57,12 +56,12 @@ impl PointShadows {
             sampler: Sampler::new(
                 device,
                 SamplerDesc {
-                    min_filter: Filter::Nearest,
-                    mag_filter: Filter::Nearest,
-                    mip_filter: Filter::Nearest,
-                    address_u: AddressMode::ClampToEdge,
-                    address_v: AddressMode::ClampToEdge,
-                    compare: Some(CompareOp::LessOrEqual),
+                    min_filter: FilterMode::Nearest,
+                    mag_filter: FilterMode::Nearest,
+                    mipmap_filter: FilterMode::Nearest,
+                    address_mode_u: AddressMode::ClampToEdge,
+                    address_mode_v: AddressMode::ClampToEdge,
+                    compare: Some(CompareFunction::LessEqual),
                 },
             ),
             views: GpuBuffer::new(
@@ -102,7 +101,6 @@ impl PointShadows {
 
     pub(crate) fn prepare(&mut self, device: &Device, queue: &Queue, frame: &PointShadowFrame<'_>) {
         let PointShadowFrame {
-            clip_space,
             lights,
             instances,
             slots,
@@ -127,7 +125,7 @@ impl PointShadows {
         let rows = self.rows;
         self.slots = slots;
         self.batches = (arguments.len() / 4) as u32;
-        let alignment = device.limits().min_storage_buffer_offset_alignment.max(4);
+        let alignment = device.binding_alignment().max(4);
         self.drawn_span = (u64::from(slots) * DRAW_BYTES).next_multiple_of(alignment);
         self.argument_span = (arguments.len() as u64 * WORD_BYTES).next_multiple_of(alignment);
         let cells = u64::from(rows) * u64::from(POINT_SHADOW_FACES);
@@ -141,12 +139,7 @@ impl PointShadows {
                 "a point light of range {far} shadows no depth",
             );
             let eye = Vec3::new(light.position.x, light.position.y, light.position.z);
-            let projection = match clip_space {
-                ClipSpace::YUp => Mat4::perspective(WIDE, 1.0, POINT_SHADOW_NEAR, far),
-                ClipSpace::YDown => {
-                    Mat4::perspective(WIDE, 1.0, POINT_SHADOW_NEAR, far).flip_clip_y()
-                }
-            };
+            let projection = Mat4::perspective(WIDE, 1.0, POINT_SHADOW_NEAR, far);
             for (forward, up) in FACES {
                 let clip = projection * Mat4::look_at(eye, eye + forward, up);
                 views.push(record_of_view(
@@ -246,7 +239,7 @@ fn atlas(device: &Device, rows: u32) -> Texture {
         height,
         1,
         TextureFormat::Depth32Float,
-        TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED,
+        TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
     )
 }
 

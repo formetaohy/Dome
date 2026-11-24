@@ -17,9 +17,9 @@ pub(crate) fn sampler(sampler: Sampler) -> SamplerDesc {
     SamplerDesc {
         min_filter: filter(sampler.min_filter),
         mag_filter: filter(sampler.mag_filter),
-        mip_filter: filter(sampler.mip_filter),
-        address_u: wrap(sampler.wrap_u),
-        address_v: wrap(sampler.wrap_v),
+        mipmap_filter: filter(sampler.mip_filter),
+        address_mode_u: wrap(sampler.wrap_u),
+        address_mode_v: wrap(sampler.wrap_v),
         compare: None,
     }
 }
@@ -32,10 +32,10 @@ pub(crate) fn alpha_mode(mode: AlphaMode) -> dome_render::AlphaMode {
     }
 }
 
-fn filter(filter: Filter) -> dome_render::Filter {
+fn filter(filter: Filter) -> dome_render::FilterMode {
     match filter {
-        Filter::Nearest => dome_render::Filter::Nearest,
-        Filter::Linear => dome_render::Filter::Linear,
+        Filter::Nearest => dome_render::FilterMode::Nearest,
+        Filter::Linear => dome_render::FilterMode::Linear,
     }
 }
 

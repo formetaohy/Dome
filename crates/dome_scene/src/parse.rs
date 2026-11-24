@@ -242,9 +242,9 @@ fn image(value: Toml, what: &str) -> ImageEntry {
     let sampler = SamplerDesc {
         min_filter,
         mag_filter,
-        mip_filter,
-        address_u: wrap_u,
-        address_v: wrap_v,
+        mipmap_filter: mip_filter,
+        address_mode_u: wrap_u,
+        address_mode_v: wrap_v,
         compare: None,
     };
     let entry = match (path, model, index) {
@@ -483,7 +483,7 @@ fn color(value: Toml, what: &str) -> Vec3 {
     color
 }
 
-fn filter(value: Toml, what: &str) -> dome_render::Filter {
+fn filter(value: Toml, what: &str) -> dome_render::FilterMode {
     let name = value.string_value(what);
     filter_of(&name).unwrap_or_else(|| panic!("{what} holds the filter {name}"))
 }

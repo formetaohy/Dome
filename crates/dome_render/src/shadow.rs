@@ -1,7 +1,6 @@
 use crate::abi::{SHADOW_ATLAS, SHADOW_ATLAS_COLUMNS, SHADOW_CASCADES, SHADOW_SIDE};
 use crate::camera::Camera;
 use crate::light::DirectionalLight;
-use dome_gpu::ClipSpace;
 use dome_math::{Mat4, Transform, Vec2, Vec3};
 
 const SPLIT_LAMBDA: f32 = 0.75;
@@ -53,7 +52,6 @@ pub(crate) fn cascades(
     light: DirectionalLight,
     travel: &Travel,
     spheres: &[(Vec3, f32)],
-    clip_space: ClipSpace,
 ) -> [Cascade; SHADOW_CASCADES as usize] {
     assert!(
         light.shadow_distance.is_finite() && light.shadow_distance > camera.near,
@@ -95,7 +93,6 @@ pub(crate) fn cascades(
             radius,
             travel,
             spheres,
-            clip_space,
             Atlas {
                 origin: Vec2::new(column as f32 * scale, row as f32 * scale),
                 scale,
@@ -110,7 +107,6 @@ pub(crate) fn probe(
     radius: f32,
     travel: &Travel,
     spheres: &[(Vec3, f32)],
-    clip_space: ClipSpace,
     split: f32,
 ) -> Cascade {
     assert!(
@@ -122,7 +118,6 @@ pub(crate) fn probe(
         radius,
         travel,
         spheres,
-        clip_space,
         Atlas {
             origin: Vec2::ZERO,
             scale: 1.0,
@@ -142,7 +137,6 @@ fn fitted(
     radius: f32,
     travel: &Travel,
     spheres: &[(Vec3, f32)],
-    clip_space: ClipSpace,
     atlas: Atlas,
     split: f32,
 ) -> Cascade {
@@ -186,10 +180,6 @@ fn fitted(
     let view = Mat4::look_at(eye, eye + travel.travel, travel.up);
     let projection = Mat4::orthographic(-extent, extent, -extent, extent, 0.0, span);
     let clip = projection * view;
-    let clip = match clip_space {
-        ClipSpace::YUp => clip,
-        ClipSpace::YDown => clip.flip_clip_y(),
-    };
     Cascade {
         clip,
         split,

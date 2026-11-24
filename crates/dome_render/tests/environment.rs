@@ -1,4 +1,4 @@
-use dome_gpu::{AddressMode, Backend, Filter, GpuContext, GpuRequest, Queue, Texture};
+use dome_gpu::{AddressMode, FilterMode, Gpu, GpuRequest, Queue, Texture};
 use dome_math::Vec3;
 use dome_render::environment::{LEVELS, Panorama, SPECULAR_WIDTH};
 use dome_render::{Renderer, SamplerDesc, TextureFormat};
@@ -10,24 +10,19 @@ const HEIGHT: u32 = 16;
 
 #[test]
 fn a_baked_environment_lights_a_uniform_sky_evenly_and_holds_its_hemispheres_apart() {
-    for backend in dome_gpu::PREFERENCE {
-        baked(*backend);
-    }
+    baked();
 }
 
-fn baked(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device bakes an environment: {error}"));
+fn baked() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device bakes an environment: {error}"));
     let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
     let sampler = renderer.sampler(SamplerDesc {
-        min_filter: Filter::Linear,
-        mag_filter: Filter::Linear,
-        mip_filter: Filter::Linear,
-        address_u: AddressMode::Repeat,
-        address_v: AddressMode::ClampToEdge,
+        min_filter: FilterMode::Linear,
+        mag_filter: FilterMode::Linear,
+        mipmap_filter: FilterMode::Linear,
+        address_mode_u: AddressMode::Repeat,
+        address_mode_v: AddressMode::ClampToEdge,
         compare: None,
     });
     let uniform = Panorama::new(WIDTH, HEIGHT, &vec![1.0; (WIDTH * HEIGHT * 3) as usize]);
@@ -51,7 +46,7 @@ fn baked(backend: Backend) {
     for coefficient in &irradiance[1..] {
         assert!(
             coefficient.length() < 0.1,
-            "{backend:?} bakes the uniform lobe {coefficient:?}",
+            "bakes the uniform lobe {coefficient:?}",
         );
     }
 
@@ -72,34 +67,29 @@ fn baked(backend: Backend) {
     let held = renderer.wait_baked(request);
     assert!(
         held.irradiance[1].x > 0.0 && held.irradiance[1].z < 0.0,
-        "{backend:?} bakes a red northern and a blue southern hemisphere into {:?}",
+        "bakes a red northern and a blue southern hemisphere into {:?}",
         held.irradiance[1],
     );
 }
 
 #[test]
 fn an_atmosphere_paints_a_blue_day_and_a_red_sunset() {
-    for backend in dome_gpu::PREFERENCE {
-        painted(*backend);
-    }
+    painted();
 }
 
-fn painted(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device paints an atmosphere: {error}"));
+fn painted() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device paints an atmosphere: {error}"));
     let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
     let queue = context.queue();
     let day = dome_render::environment::Atmosphere::default();
     let held = renderer.atmosphere(&day);
-    let radiance = texels(&held.radiance, queue);
-    let background = texels(&held.background, queue);
+    let radiance = texels(&held.radiance, &queue);
+    let background = texels(&held.background, &queue);
     let zenith = sample(&radiance, 512, 16);
     assert!(
         zenith.z > zenith.y && zenith.y > zenith.x && zenith.z > 0.0,
-        "{backend:?} paints a blue day zenith {zenith:?}",
+        "paints a blue day zenith {zenith:?}",
     );
     let mut lit = 0.0f32;
     let mut disk = 0.0f32;
@@ -111,11 +101,11 @@ fn painted(backend: Backend) {
     }
     assert!(
         lit < 10.0,
-        "{backend:?} keeps the sun disk out of the indirect sky: {lit}",
+        "keeps the sun disk out of the indirect sky: {lit}",
     );
     assert!(
         disk > 1000.0,
-        "{backend:?} paints the sun disk into the visible sky: {disk}",
+        "paints the sun disk into the visible sky: {disk}",
     );
 
     let sunset = dome_render::environment::Atmosphere {
@@ -123,23 +113,23 @@ fn painted(backend: Backend) {
         ..dome_render::environment::Atmosphere::default()
     };
     let held = renderer.atmosphere(&sunset);
-    let radiance = texels(&held.radiance, queue);
+    let radiance = texels(&held.radiance, &queue);
     let horizon = sample(&radiance, 512, 496);
     let zenith = sample(&radiance, 512, 16);
     assert!(
         horizon.x > horizon.z * 4.0,
-        "{backend:?} reddens the horizon of a setting sun {horizon:?}",
+        "reddens the horizon of a setting sun {horizon:?}",
     );
     assert!(
         zenith.z > zenith.x * 1.5,
-        "{backend:?} leaves the zenith of a setting sun blue {zenith:?}",
+        "leaves the zenith of a setting sun blue {zenith:?}",
     );
     assert!(
         radiance
             .texels
             .iter()
             .all(|held| held.x.is_finite() && held.y.is_finite() && held.z.is_finite()),
-        "{backend:?} paints a finite atmosphere",
+        "paints a finite atmosphere",
     );
 }
 

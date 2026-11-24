@@ -9,7 +9,6 @@ pub(super) struct ChannelFrame<'a> {
     pub(super) total: u32,
     pub(super) depth_batches: u32,
     pub(super) points: &'a [PointLightRecord],
-    pub(super) cluster_offset_bytes: u64,
     pub(super) cluster_bytes: u64,
     pub(super) cluster_x: u32,
     pub(super) cluster_y: u32,
@@ -39,7 +38,6 @@ impl Renderer {
             total,
             depth_batches,
             points,
-            cluster_offset_bytes,
             cluster_bytes,
             cluster_x,
             cluster_y,
@@ -51,7 +49,7 @@ impl Renderer {
         } = frame;
         let scene_depth = &depth;
         let point_light_count = points.len() as u32;
-        submission.clear(self.lighting.buffer(), cluster_offset_bytes, cluster_bytes);
+        submission.clear(self.lighting.buffer(), 0, cluster_bytes);
         if point_light_count > 0 {
             let group = self.light_clusters.bind_group(
                 0,
@@ -59,15 +57,13 @@ impl Renderer {
                     Binding::buffer(program::CLUSTER_VIEW, self.views.binding(0, VIEW_BYTES)),
                     Binding::buffer(
                         program::CLUSTER_POINTS,
-                        self.lighting
+                        self.point_light
                             .buffer()
                             .binding(0, u64::from(point_light_count) * POINT_LIGHT_BYTES),
                     ),
                     Binding::buffer(
                         program::CLUSTER_GRID,
-                        self.lighting
-                            .buffer()
-                            .binding(cluster_offset_bytes, cluster_bytes),
+                        self.lighting.buffer().binding(0, cluster_bytes),
                     ),
                 ],
             );
@@ -95,7 +91,6 @@ impl Renderer {
             &self.device,
             &self.queue,
             &PointShadowFrame {
-                clip_space: self.device.clip_space(),
                 lights: points,
                 instances: total,
                 slots,
@@ -221,6 +216,10 @@ impl Renderer {
                 .cascades
                 .binding(0, u64::from(CASCADE_COUNT) * CASCADE_BYTES),
             lighting: self.lighting.buffer().binding(0, self.lighting_capacity),
+            point_light: self
+                .point_light
+                .buffer()
+                .binding(0, self.point_light.buffer().size()),
             probes: self.probes.record(probe_count),
             keys: self.transparency.keys(),
             colors: self.transparency.colors(),

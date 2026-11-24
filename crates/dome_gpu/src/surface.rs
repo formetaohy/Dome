@@ -1,8 +1,14 @@
-use crate::capability::TextureUsages;
 use crate::context::Device;
-use crate::native::NativeSurface;
-use crate::texture::{Texture, TextureFormat};
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+use crate::texture::{Texture, TextureFormat, TextureUsages};
+use core::ffi::{c_ulong, c_void};
+use raw_window_handle::{
+    AndroidDisplayHandle, AndroidNdkWindowHandle, AppKitDisplayHandle, AppKitWindowHandle,
+    RawDisplayHandle, RawWindowHandle, UiKitDisplayHandle, UiKitWindowHandle, WaylandDisplayHandle,
+    WaylandWindowHandle, Win32WindowHandle, WindowsDisplayHandle, XlibDisplayHandle,
+    XlibWindowHandle,
+};
+use std::num::NonZeroIsize;
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -50,11 +56,78 @@ impl WindowHandle {
             ),
         }
     }
+
+    pub(crate) fn raw(self) -> (RawWindowHandle, RawDisplayHandle) {
+        match self {
+            Self::Windows { window, instance } => {
+                let mut handle = Win32WindowHandle::new(
+                    NonZeroIsize::new(window as isize).expect("a window handle names a window"),
+                );
+                handle.hinstance = NonZeroIsize::new(instance as isize);
+                (
+                    RawWindowHandle::Win32(handle),
+                    RawDisplayHandle::Windows(WindowsDisplayHandle::new()),
+                )
+            }
+            Self::AppKit { view } => (
+                RawWindowHandle::AppKit(AppKitWindowHandle::new(
+                    NonNull::new(view as *mut c_void).expect("a view handle names a view"),
+                )),
+                RawDisplayHandle::AppKit(AppKitDisplayHandle::new()),
+            ),
+            Self::UiKit { view } => (
+                RawWindowHandle::UiKit(UiKitWindowHandle::new(
+                    NonNull::new(view as *mut c_void).expect("a view handle names a view"),
+                )),
+                RawDisplayHandle::UiKit(UiKitDisplayHandle::new()),
+            ),
+            Self::Xlib { display, window } => (
+                RawWindowHandle::Xlib(XlibWindowHandle::new(window as c_ulong)),
+                RawDisplayHandle::Xlib(XlibDisplayHandle::new(
+                    Some(
+                        NonNull::new(display as *mut c_void)
+                            .expect("an Xlib handle names its display"),
+                    ),
+                    0,
+                )),
+            ),
+            Self::Wayland { display, surface } => (
+                RawWindowHandle::Wayland(WaylandWindowHandle::new(
+                    NonNull::new(surface as *mut c_void)
+                        .expect("a Wayland handle names its surface"),
+                )),
+                RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
+                    NonNull::new(display as *mut c_void)
+                        .expect("a Wayland handle names its display"),
+                )),
+            ),
+            Self::Android { window } => (
+                RawWindowHandle::AndroidNdk(AndroidNdkWindowHandle::new(
+                    NonNull::new(window as *mut c_void)
+                        .expect("an Android handle names its native window"),
+                )),
+                RawDisplayHandle::Android(AndroidDisplayHandle::new()),
+            ),
+        }
+    }
+}
+
+pub(crate) fn create(instance: &wgpu::Instance, handle: WindowHandle) -> wgpu::Surface<'static> {
+    let (window, display) = handle.raw();
+    unsafe {
+        instance
+            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: Some(display),
+                raw_window_handle: window,
+            })
+            .unwrap_or_else(|error| panic!("a window opens its present surface: {error}"))
+    }
 }
 
 pub struct Surface {
     device: Device,
-    native: NativeSurface,
+    native: wgpu::Surface<'static>,
+    window: WindowHandle,
     width: u32,
     height: u32,
     format: TextureFormat,
@@ -63,7 +136,7 @@ pub struct Surface {
 
 pub struct SurfaceFrame {
     pub(crate) texture: Texture,
-    pub(crate) native: Option<crate::native::NativePresent>,
+    pub(crate) surface: Option<wgpu::SurfaceTexture>,
     pub(crate) token: PresentToken,
 }
 
@@ -87,20 +160,30 @@ impl PresentToken {
 }
 
 impl Surface {
-    pub(crate) fn new(device: &Device, width: u32, height: u32) -> Self {
+    pub(crate) fn new(
+        device: &Device,
+        native: wgpu::Surface<'static>,
+        window: WindowHandle,
+        width: u32,
+        height: u32,
+    ) -> Self {
         assert!(
             width > 0 && height > 0,
             "a surface spans {width} by {height} texels"
         );
-        let native = device.native().create_surface(width, height);
-        Self {
-            device: device.clone(),
-            width: native.width(),
-            height: native.height(),
-            format: native.format(),
+        let format = select_format(&native, device.adapter());
+        let device = device.clone();
+        let surface = Self {
+            device,
             native,
+            window,
+            width,
+            height,
+            format,
             generation: Arc::new(AtomicU64::new(0)),
-        }
+        };
+        surface.configure();
+        surface
     }
 
     pub fn width(&self) -> u32 {
@@ -115,31 +198,67 @@ impl Surface {
         self.format
     }
 
+    fn configure(&self) {
+        self.native
+            .configure(self.device.native(), &self.configuration());
+    }
+
+    fn configuration(&self) -> wgpu::SurfaceConfiguration {
+        wgpu::SurfaceConfiguration {
+            usage: TextureUsages::RENDER_ATTACHMENT,
+            format: self.format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            width: self.width,
+            height: self.height,
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: Vec::new(),
+        }
+    }
+
     pub fn acquire(&mut self) -> Option<SurfaceFrame> {
-        if self.native.outdated() {
-            self.rebuild();
+        let mut attempts = 0;
+        loop {
+            match self.native.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(frame)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                    let width = self.width;
+                    let height = self.height;
+                    let format = self.format;
+                    let token = PresentToken::of(&self.generation);
+                    let texture = Texture::of(
+                        &self.device,
+                        frame.texture.clone(),
+                        width,
+                        height,
+                        format,
+                        TextureUsages::RENDER_ATTACHMENT,
+                    );
+                    return Some(SurfaceFrame {
+                        texture,
+                        surface: Some(frame),
+                        token,
+                    });
+                }
+                wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                    return None;
+                }
+                wgpu::CurrentSurfaceTexture::Outdated => {
+                    attempts += 1;
+                    assert!(attempts < 2, "a surface stays outdated after reconfiguring");
+                    self.configure();
+                }
+                wgpu::CurrentSurfaceTexture::Lost => {
+                    attempts += 1;
+                    assert!(attempts < 2, "a surface stays lost after recreating it");
+                    self.rebuild();
+                }
+                wgpu::CurrentSurfaceTexture::Validation => {
+                    panic!("a surface acquisition fails validation")
+                }
+            }
         }
-        let mut frame = self.native.acquire();
-        if frame.is_none() && self.native.outdated() {
-            self.rebuild();
-            frame = self.native.acquire();
-        }
-        let frame = frame?;
-        self.width = frame.width;
-        self.height = frame.height;
-        let texture = Texture::of(
-            &self.device,
-            frame.texture,
-            frame.width,
-            frame.height,
-            frame.format,
-            TextureUsages::RENDER_ATTACHMENT,
-        );
-        Some(SurfaceFrame {
-            texture,
-            native: Some(frame.present),
-            token: PresentToken::of(&self.generation),
-        })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -147,37 +266,33 @@ impl Surface {
             width > 0 && height > 0,
             "a surface spans {width} by {height} texels"
         );
-        self.native.resize(width, height);
-        self.generation.fetch_add(1, Ordering::AcqRel);
         self.width = width;
         self.height = height;
-        self.format = self.native.format();
+        self.configure();
+        self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
     fn rebuild(&mut self) {
-        let width = self.native.width();
-        let height = self.native.height();
-        self.native.resize(width, height);
+        self.native = create(crate::context::instance(), self.window);
+        self.format = select_format(&self.native, self.device.adapter());
+        self.configure();
         self.generation.fetch_add(1, Ordering::AcqRel);
-        self.width = self.native.width();
-        self.height = self.native.height();
-        self.format = self.native.format();
     }
 }
 
-impl Drop for SurfaceFrame {
-    fn drop(&mut self) {
-        assert!(
-            self.native.is_none(),
-            "a surface frame presents before it is dropped"
-        );
+fn select_format(surface: &wgpu::Surface<'_>, adapter: &wgpu::Adapter) -> TextureFormat {
+    let capabilities = surface.get_capabilities(adapter);
+    for preferred in [TextureFormat::Bgra8Unorm, TextureFormat::Rgba8Unorm] {
+        if capabilities.formats.contains(&preferred) {
+            return preferred;
+        }
     }
-}
-
-impl Drop for Surface {
-    fn drop(&mut self) {
-        self.generation.fetch_add(1, Ordering::AcqRel);
-    }
+    capabilities
+        .formats
+        .iter()
+        .copied()
+        .find(|format| !format.is_srgb())
+        .unwrap_or_else(|| panic!("a swapchain presents eight bit linear colour"))
 }
 
 impl SurfaceFrame {
@@ -195,5 +310,24 @@ impl SurfaceFrame {
 
     pub fn format(&self) -> TextureFormat {
         self.texture.format()
+    }
+
+    pub(crate) fn device(&self) -> &Device {
+        self.texture.device()
+    }
+}
+
+impl Drop for SurfaceFrame {
+    fn drop(&mut self) {
+        assert!(
+            self.surface.is_none(),
+            "a surface frame presents before it is dropped"
+        );
+    }
+}
+
+impl Drop for Surface {
+    fn drop(&mut self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
     }
 }

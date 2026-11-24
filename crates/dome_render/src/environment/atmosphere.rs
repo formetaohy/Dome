@@ -1,13 +1,13 @@
+use crate::abi::Fvec4;
 use crate::abi::{ATMOSPHERE_RECORDS, AtmosphereRecord};
 use crate::frame::vertical;
 use crate::program;
 use dome_gpu::{
-    AddressMode, BindGroup, Binding, BufferUsages, Device, Draw, Filter, GpuBuffer, GpuContext,
+    AddressMode, BindGroup, Binding, BufferUsages, Device, Draw, FilterMode, Gpu, GpuBuffer,
     GraphicsPipeline, Pass, PipelineState, Queue, Sampler, SamplerDesc, Submission, Texture,
     TextureFormat, TextureUsages,
 };
 use dome_math::Vec3;
-use dome_shader::Fvec4;
 use std::mem::size_of;
 
 pub const MODEL_VERSION: u32 = 2;
@@ -195,10 +195,10 @@ pub(crate) struct AtmosphereBaker {
 }
 
 impl AtmosphereBaker {
-    pub(crate) fn new(context: &GpuContext) -> Self {
+    pub(crate) fn new(context: &Gpu) -> Self {
         let device = context.device().clone();
         let queue = Queue::of(&device);
-        let lut = TextureUsages::SAMPLED | TextureUsages::RENDER_ATTACHMENT;
+        let lut = TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT;
         let transmittance = Texture::new(
             &device,
             "dome atmosphere transmittance",
@@ -220,11 +220,11 @@ impl AtmosphereBaker {
         let sampler = Sampler::new(
             &device,
             SamplerDesc {
-                min_filter: Filter::Linear,
-                mag_filter: Filter::Linear,
-                mip_filter: Filter::Nearest,
-                address_u: AddressMode::ClampToEdge,
-                address_v: AddressMode::ClampToEdge,
+                min_filter: FilterMode::Linear,
+                mag_filter: FilterMode::Linear,
+                mipmap_filter: FilterMode::Nearest,
+                address_mode_u: AddressMode::ClampToEdge,
+                address_mode_v: AddressMode::ClampToEdge,
                 compare: None,
             },
         );
@@ -246,10 +246,7 @@ impl AtmosphereBaker {
             TextureFormat::Rgba16Float,
             PipelineState::SCREEN,
         );
-        let setup_span = crate::span::padded(
-            device.limits().min_storage_buffer_offset_alignment,
-            RECORD_BYTES,
-        );
+        let setup_span = crate::span::padded(device.binding_alignment(), RECORD_BYTES);
         let setup = GpuBuffer::new(
             &device,
             "dome atmosphere setup",
@@ -300,7 +297,7 @@ impl AtmosphereBaker {
     }
 
     pub(crate) fn bake(&self, atmosphere: &Atmosphere) -> AtmospherePanorama {
-        let vertical = vertical(&self.device);
+        let vertical = vertical();
         let records = [
             atmosphere.record(vertical, false),
             atmosphere.record(vertical, false),
@@ -321,7 +318,9 @@ impl AtmosphereBaker {
                 PANORAMA_HEIGHT,
                 1,
                 TextureFormat::Rgba16Float,
-                TextureUsages::SAMPLED | TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+                TextureUsages::TEXTURE_BINDING
+                    | TextureUsages::RENDER_ATTACHMENT
+                    | TextureUsages::COPY_SRC,
             )
         };
         let radiance = panorama();

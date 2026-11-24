@@ -47,7 +47,6 @@ impl Renderer {
             radius,
             travel,
             inputs.spheres,
-            self.device.clip_space(),
             radius,
         );
         self.captures.prepare(&CaptureFrame {
@@ -55,7 +54,6 @@ impl Renderer {
             queue: self.queue.clone(),
             eye: probe.transform.translation,
             basis: probe.transform.rotation.normalize(),
-            clip_space: self.device.clip_space(),
             rotation,
             intensity,
             shadow,
@@ -204,6 +202,7 @@ impl Renderer {
             Vec::with_capacity(crate::capture::FACES as usize * inputs.opaque as usize);
         if inputs.opaque > 0 {
             let lights = self.captures.lighting();
+            let point_lights = self.captures.point_lights();
             for face in 0..crate::capture::FACES {
                 for (index, batch) in inputs
                     .batches
@@ -247,6 +246,7 @@ impl Renderer {
                                 ),
                             ),
                             Binding::buffer(program::DRAW_LIGHTS, lights),
+                            Binding::buffer(program::DRAW_POINT_LIGHTS, point_lights),
                         ],
                     );
                     batches.push([shade, tables.clone(), capture_shade.clone()]);

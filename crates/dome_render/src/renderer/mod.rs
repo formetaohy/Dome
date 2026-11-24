@@ -10,12 +10,12 @@ use channel::ChannelFrame;
 use record::{FrameRecord, FrameShared};
 use scene::Collection;
 
+use crate::abi::Fvec4;
 use crate::abi::{
-    ARGUMENT_WORDS, CascadeRecord, DebugLineRecord, DrawRecord, InstanceRecord, JOINT, JointRecord,
-    LIGHT, LIGHT_CAPACITY, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE, LightRecord, MATERIAL,
-    MaterialRecord, NO_HIGHLIGHT, POINT_LIGHT, PointLightRecord, SHADOW_ATLAS,
-    SHADOW_ATLAS_COLUMNS, SHADOW_CASCADES, SHADOW_SIDE, SkinVertexRecord, SkyRecord, VERTEX_FLOATS,
-    ViewRecord, WORKGROUP,
+    ARGUMENT_WORDS, CascadeRecord, DebugLineRecord, DrawRecord, InstanceRecord, JointRecord,
+    LIGHT_CAPACITY, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE, LightRecord, MaterialRecord,
+    NO_HIGHLIGHT, PointLightRecord, SHADOW_ATLAS, SHADOW_ATLAS_COLUMNS, SHADOW_CASCADES,
+    SHADOW_SIDE, SkinVertexRecord, SkyRecord, VERTEX_FLOATS, ViewRecord, WORKGROUP,
 };
 use crate::batch::{Pipelines, Shared, Slot, SlotGroups, table};
 use crate::capture::{Capture, CaptureFrame, CaptureProbe, Captures, Probe};
@@ -52,13 +52,12 @@ use crate::transparency::Transparency;
 use crate::view::View;
 use dome_ecs::{Entity, World};
 use dome_gpu::{
-    AddressMode, BindGroup, Binding, BufferUsages, CompareOp, DepthOps, Device, Draw, Filter,
-    GpuBuffer, GpuContext, GraphicsPipeline, Pass, PipelineHandle, PipelineState, Queue,
+    AddressMode, BindGroup, Binding, BufferUsages, CompareFunction, ComputePipeline, DepthOps,
+    Device, Draw, FilterMode, Gpu, GpuBuffer, GraphicsPipeline, Pass, PipelineState, Queue,
     ResourceId, Sampler, SamplerDesc, Submission, SurfaceFrame, Texture, TextureFormat,
     TextureUsages, Viewport,
 };
 use dome_math::{Mat4, Transform, Vec2, Vec3};
-use dome_shader::Fvec4;
 use std::collections::HashMap;
 use std::mem::size_of;
 
@@ -93,14 +92,14 @@ struct CaptureInputs<'a> {
 }
 pub enum Target<'a> {
     Texture(&'a Texture),
-    Surface(SurfaceFrame),
+    Surface(Box<SurfaceFrame>),
 }
 
 pub struct Renderer {
     device: Device,
     queue: Queue,
-    cull: PipelineHandle,
-    light_clusters: PipelineHandle,
+    cull: ComputePipeline,
+    light_clusters: ComputePipeline,
     draw: GraphicsPipeline,
     capture_draw: GraphicsPipeline,
     transparent_draw: GraphicsPipeline,
@@ -145,6 +144,7 @@ pub struct Renderer {
     shadow_drawn: Growing,
     shadow_arguments: Growing,
     shadow_span: u64,
+    point_light: Growing,
     lighting: Growing,
     lighting_capacity: u64,
     palettes: Palettes,
@@ -161,7 +161,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(context: &GpuContext, format: TextureFormat) -> Self {
+    pub fn new(context: &Gpu, format: TextureFormat) -> Self {
         assert!(
             matches!(
                 format,
@@ -179,34 +179,30 @@ impl Renderer {
             SHADOW_ATLAS,
             1,
             TextureFormat::Depth32Float,
-            TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         );
         let shadow_sampler = Sampler::new(
             &device,
             SamplerDesc {
-                min_filter: Filter::Nearest,
-                mag_filter: Filter::Nearest,
-                mip_filter: Filter::Nearest,
-                address_u: AddressMode::ClampToEdge,
-                address_v: AddressMode::ClampToEdge,
-                compare: Some(CompareOp::LessOrEqual),
+                min_filter: FilterMode::Nearest,
+                mag_filter: FilterMode::Nearest,
+                mipmap_filter: FilterMode::Nearest,
+                address_mode_u: AddressMode::ClampToEdge,
+                address_mode_v: AddressMode::ClampToEdge,
+                compare: Some(CompareFunction::LessEqual),
             },
-        );
-        assert!(
-            device.capability().bindless,
-            "the renderer needs a device whose shaders index resource tables"
         );
         let limits = device.limits();
         assert!(
-            dome_shader::TEXTURE_TABLE_CAPACITY <= limits.max_sampled_images_per_shader_stage,
+            dome_gpu::TEXTURE_TABLE_CAPACITY <= limits.max_sampled_textures_per_shader_stage,
             "the renderer material table of {} images outruns the device limit of {}",
-            dome_shader::TEXTURE_TABLE_CAPACITY,
-            limits.max_sampled_images_per_shader_stage,
+            dome_gpu::TEXTURE_TABLE_CAPACITY,
+            limits.max_sampled_textures_per_shader_stage,
         );
         assert!(
-            dome_shader::SAMPLER_TABLE_CAPACITY <= limits.max_samplers_per_shader_stage,
+            dome_gpu::SAMPLER_TABLE_CAPACITY <= limits.max_samplers_per_shader_stage,
             "the renderer material table of {} samplers outruns the device limit of {}",
-            dome_shader::SAMPLER_TABLE_CAPACITY,
+            dome_gpu::SAMPLER_TABLE_CAPACITY,
             limits.max_samplers_per_shader_stage,
         );
         let draw = GraphicsPipeline::new_depth(
@@ -264,11 +260,11 @@ impl Renderer {
         let hzb_sampler = Sampler::new(
             &device,
             SamplerDesc {
-                min_filter: Filter::Nearest,
-                mag_filter: Filter::Nearest,
-                mip_filter: Filter::Nearest,
-                address_u: AddressMode::ClampToEdge,
-                address_v: AddressMode::ClampToEdge,
+                min_filter: FilterMode::Nearest,
+                mag_filter: FilterMode::Nearest,
+                mipmap_filter: FilterMode::Nearest,
+                address_mode_u: AddressMode::ClampToEdge,
+                address_mode_v: AddressMode::ClampToEdge,
                 compare: None,
             },
         );
@@ -297,8 +293,8 @@ impl Renderer {
         let shade = shading.group(&draw, shadows, point, probe_tables);
         let transparent_shade = shading.group(&transparent_draw, shadows, point, probe_tables);
         let sky_shade = shading.sky(&sky);
-        let cull = context.declare(program::culling());
-        let light_clusters = context.declare(program::clustering());
+        let cull = ComputePipeline::new(&device, program::culling());
+        let light_clusters = ComputePipeline::new(&device, program::clustering());
         let post = Post::new(&device, format);
         let meshes = MeshLibrary::new(&device);
         let materials = MaterialLibrary::new(&device, &queue);
@@ -335,6 +331,7 @@ impl Renderer {
             "dome shadow arguments",
             storage | BufferUsages::INDIRECT,
         );
+        let point_light = Growing::new(&device, "dome point lights", storage);
         let lighting = Growing::new(&device, "dome lighting", storage);
         let picker = Picker::new(&device);
         Self {
@@ -383,6 +380,7 @@ impl Renderer {
             shadow_drawn,
             shadow_arguments,
             shadow_span: 0,
+            point_light,
             lighting,
             lighting_capacity: 0,
             palettes: Palettes::new(),
@@ -551,7 +549,7 @@ impl Renderer {
             height,
             1,
             TextureFormat::Depth32Float,
-            TextureUsages::RENDER_ATTACHMENT | TextureUsages::SAMPLED,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         );
         self.scene_depth = Some(depth.clone());
         depth
@@ -590,7 +588,7 @@ impl Renderer {
     ) {
         let (texture, frame) = match target {
             Target::Texture(texture) => (texture.clone(), None),
-            Target::Surface(frame) => (frame.texture().clone(), Some(frame)),
+            Target::Surface(frame) => (frame.texture().clone(), Some(*frame)),
         };
         self.flush_materials();
         self.settle_captures();
@@ -655,7 +653,7 @@ impl Renderer {
         self.refresh_ambient(environment);
         let width = texture.width();
         let height = texture.height();
-        let vertical = crate::frame::vertical(&self.device);
+        let vertical = crate::frame::vertical();
         self.temporality
             .prepare(&self.device, &self.queue, width, height);
         let jitter = self.temporality.jitter();
@@ -664,14 +662,7 @@ impl Renderer {
         let (light, light_transform) = light_of(world);
         let eye = transform.translation;
         let forward = transform.rotation.rotate_vec3(-Vec3::Z).normalize();
-        let view = camera.view_jittered(
-            transform,
-            aspect,
-            self.device.clip_space(),
-            jitter,
-            width,
-            height,
-        );
+        let view = camera.view_jittered(transform, aspect, jitter, width, height);
         let pose = Pose {
             clip: view.clip,
             eye,
@@ -714,7 +705,6 @@ impl Renderer {
             line_groups,
             line_vertices,
             sky,
-            cluster_offset_bytes,
             cluster_bytes,
             cluster_x,
             cluster_y,
@@ -812,7 +802,6 @@ impl Renderer {
                 total: collection.total,
                 depth_batches: collection.depth_batches,
                 points: &point_light_records,
-                cluster_offset_bytes,
                 cluster_bytes,
                 cluster_x,
                 cluster_y,
@@ -881,21 +870,14 @@ impl Renderer {
 
     pub fn pick(&mut self, point: Vec2) -> Option<Entity> {
         let frame = self.pick_frame.as_ref()?;
-        let clip_space = self.device.clip_space();
         let resources = PickResources {
             drawn: self.main_drawn.buffer(),
             arguments: self.main_arguments.buffer(),
             meshes: &self.meshes,
             palette: self.palettes.binding(),
         };
-        self.picker.pick(
-            &self.device,
-            &self.queue,
-            clip_space,
-            frame,
-            &resources,
-            point,
-        )
+        self.picker
+            .pick(&self.device, &self.queue, frame, &resources, point)
     }
 
     pub fn visible_instances(&self) -> u32 {
@@ -941,7 +923,7 @@ impl Renderer {
 }
 
 const _: () = assert!(
-    JOINT_BYTES == JOINT.size as u64,
+    JOINT_BYTES == size_of::<JointRecord>() as u64,
     "the joint record keeps the layout its shader reads",
 );
 const _: () = assert!(
@@ -949,7 +931,7 @@ const _: () = assert!(
     "the light record keeps the layout its shader reads",
 );
 const _: () = assert!(
-    LIGHT.size as u64 == LIGHT_BYTES,
+    size_of::<LightRecord>() as u64 == LIGHT_BYTES,
     "the light layout spans its record",
 );
 const _: () = assert!(
@@ -957,7 +939,7 @@ const _: () = assert!(
     "the cascade record keeps the layout its shader reads",
 );
 const _: () = assert!(
-    crate::abi::CASCADE.size as u64 == CASCADE_BYTES,
+    size_of::<CascadeRecord>() as u64 == CASCADE_BYTES,
     "the cascade layout spans its record",
 );
 const _: () = assert!(
@@ -965,7 +947,7 @@ const _: () = assert!(
     "the material record keeps the layout its shader reads",
 );
 const _: () = assert!(
-    MATERIAL.size as u64 == MATERIAL_BYTES,
+    size_of::<MaterialRecord>() as u64 == MATERIAL_BYTES,
     "the material layout spans its record",
 );
 const _: () = assert!(
@@ -973,7 +955,7 @@ const _: () = assert!(
     "the point light record keeps the layout its shader reads",
 );
 const _: () = assert!(
-    POINT_LIGHT.size as u64 == POINT_LIGHT_BYTES,
+    size_of::<PointLightRecord>() as u64 == POINT_LIGHT_BYTES,
     "the point light layout spans its record",
 );
 const _: () = assert!(

@@ -21,15 +21,10 @@ pub(crate) use post::{
 };
 
 use crate::abi::{
-    AtlasRecord, AtmosphereRecord, BakeLevelRecord, BloomRecord, BloomUpRecord, CascadeRecord,
-    DebugLineRecord, DrawRecord, IRRADIANCE_PARTIALS, InstanceRecord, IrradianceRecord,
-    IrradianceSetupRecord, JointRecord, LIGHT_CAPACITY, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE,
-    LightRecord, MaterialRecord, MotionRecord, ProbeRecord, SHADOW_CASCADES, SkinVertexRecord,
-    SkyRecord, TemporalRecord, TonemapRecord, TransparentSetupRecord, VERTEX_FLOATS, ViewRecord,
-    WORKGROUP,
+    IRRADIANCE_PARTIALS, LIGHT_CAPACITY, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE, SHADOW_CASCADES,
+    VERTEX_FLOATS, WORKGROUP,
 };
-use dome_shader::AtomicU32;
-use dome_shader::{ComputeProgram, Fvec2, Fvec4, GraphicsProgram, Read, ReadWrite, Uvec3};
+use dome_gpu::{BindingSpec, ComputeShader, GraphicsShader};
 
 pub(crate) const CULL_VIEW: u32 = 0;
 pub(crate) const CULL_INSTANCES: u32 = 1;
@@ -62,6 +57,7 @@ pub(crate) const DRAW_SETTINGS: u32 = 10;
 pub(crate) const DRAW_PROBES: u32 = 11;
 pub(crate) const DRAW_VERTICES: u32 = 12;
 pub(crate) const DRAW_LIGHTS: u32 = 13;
+pub(crate) const DRAW_POINT_LIGHTS: u32 = 14;
 
 pub(crate) const PICK_VIEW: u32 = 0;
 pub(crate) const PICK_PALETTE: u32 = 1;
@@ -197,65 +193,68 @@ const _: () = assert!(
 );
 
 #[cfg(test)]
-mod regression {
-    use dome_shader::shader::{AtomicOp, Instruction, Module, Type, TypeId};
-
-    fn pointee(module: &Module, pointer: dome_shader::shader::ValueId) -> TypeId {
-        match module.ty(module.value_ty(pointer)) {
-            Type::Pointer { base, .. } => *base,
-            other => panic!("a shader address is {other:?}"),
-        }
-    }
-
-    fn atomic(module: &Module) -> (usize, usize) {
-        fn walk(module: &Module, block: &[Instruction], adds: &mut usize, stores: &mut usize) {
-            for instruction in block {
-                match instruction {
-                    Instruction::Store { pointer, .. } => assert!(
-                        !matches!(module.ty(pointee(module, *pointer)), Type::Atomic(_)),
-                        "a plain shader store writes an atomic cell",
-                    ),
-                    Instruction::Atomic { op, .. } => {
-                        assert!(
-                            matches!(op, AtomicOp::Add),
-                            "a shader counter operation is an addition",
-                        );
-                        *adds += 1;
-                    }
-                    Instruction::AtomicStore { .. } => *stores += 1,
-                    Instruction::If { accept, reject, .. } => {
-                        walk(module, accept, adds, stores);
-                        walk(module, reject, adds, stores);
-                    }
-                    Instruction::Switch { cases, default, .. } => {
-                        for (_, body) in cases {
-                            walk(module, body, adds, stores);
-                        }
-                        walk(module, default, adds, stores);
-                    }
-                    Instruction::Loop { body, continuing } => {
-                        walk(module, body, adds, stores);
-                        walk(module, continuing, adds, stores);
-                    }
-                    Instruction::Block(body) => walk(module, body, adds, stores),
-                    _ => {}
-                }
-            }
-        }
-
-        let mut adds = 0;
-        let mut stores = 0;
-        for function in module.functions() {
-            walk(module, &function.body, &mut adds, &mut stores);
-        }
-        (adds, stores)
-    }
+mod abi_layout {
+    use crate::abi::{
+        AtlasRecord, AtmosphereRecord, BakeLevelRecord, BloomRecord, BloomUpRecord, CascadeRecord,
+        DebugLineRecord, DrawRecord, InstanceRecord, IrradianceRecord, IrradianceSetupRecord,
+        JointRecord, LightRecord, MaterialRecord, MotionRecord, PointLightRecord, ProbeRecord,
+        SkinVertexRecord, SkyRecord, TemporalRecord, TonemapRecord, TransparentSetupRecord,
+        ViewRecord,
+    };
+    use std::mem::size_of;
 
     #[test]
-    fn the_culling_and_clustering_kernels_publish_through_atomics() {
-        let culling = super::culling();
-        assert_eq!(atomic(culling.module()), (1, 0));
-        let clustering = super::clustering();
-        assert_eq!(atomic(clustering.module()), (1, 1));
+    fn the_shader_records_match_their_rust_layout() {
+        let source = include_str!("program/wgsl/abi.wgsl");
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|error| panic!("the shader records parse: {error}"));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("the shader records validate: {error}"));
+        let expected = [
+            ("Atmosphere", size_of::<AtmosphereRecord>()),
+            ("Atlas", size_of::<AtlasRecord>()),
+            ("BakeLevel", size_of::<BakeLevelRecord>()),
+            ("Bloom", size_of::<BloomRecord>()),
+            ("BloomUp", size_of::<BloomUpRecord>()),
+            ("Cascade", size_of::<CascadeRecord>()),
+            ("DebugLine", size_of::<DebugLineRecord>()),
+            ("Draw", size_of::<DrawRecord>()),
+            ("Instance", size_of::<InstanceRecord>()),
+            ("Irradiance", size_of::<IrradianceRecord>()),
+            ("IrradianceSetup", size_of::<IrradianceSetupRecord>()),
+            ("Joint", size_of::<JointRecord>()),
+            ("Light", size_of::<LightRecord>()),
+            ("Material", size_of::<MaterialRecord>()),
+            ("Motion", size_of::<MotionRecord>()),
+            ("PointLight", size_of::<PointLightRecord>()),
+            ("Probe", size_of::<ProbeRecord>()),
+            ("SkinVertex", size_of::<SkinVertexRecord>()),
+            ("Sky", size_of::<SkyRecord>()),
+            ("Temporal", size_of::<TemporalRecord>()),
+            ("Tonemap", size_of::<TonemapRecord>()),
+            ("TransparentSetup", size_of::<TransparentSetupRecord>()),
+            ("View", size_of::<ViewRecord>()),
+        ];
+        for (name, bytes) in expected {
+            let span = module
+                .types
+                .iter()
+                .find_map(|(_, ty)| match &ty.inner {
+                    naga::TypeInner::Struct { span, .. } if ty.name.as_deref() == Some(name) => {
+                        Some(*span)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("the shader declares no {name} record"));
+            assert_eq!(
+                u64::from(span),
+                bytes as u64,
+                "the shader record {name} spans {span} bytes where its Rust layout spans {bytes}",
+            );
+        }
     }
 }

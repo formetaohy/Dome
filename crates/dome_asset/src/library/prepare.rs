@@ -8,7 +8,7 @@ use dome_image::Image;
 use dome_image::Radiance;
 use dome_math::Mat4;
 use dome_render::environment::Panorama;
-use dome_render::{AddressMode, Filter, SamplerDesc, SkinVertexRecord, Vertex};
+use dome_render::{AddressMode, FilterMode, SamplerDesc, SkinVertexRecord, Vertex};
 use dome_scene::AnimationEntry;
 use dome_scene::MaterialEntry;
 use dome_scene::Scene;
@@ -647,15 +647,15 @@ fn sampler_digest(digest: &mut DigestBuilder, sampler: SamplerDesc) {
     digest
         .number(filter_code(sampler.min_filter))
         .number(filter_code(sampler.mag_filter))
-        .number(filter_code(sampler.mip_filter))
-        .number(address_code(sampler.address_u))
-        .number(address_code(sampler.address_v));
+        .number(filter_code(sampler.mipmap_filter))
+        .number(address_code(sampler.address_mode_u))
+        .number(address_code(sampler.address_mode_v));
 }
 
-fn filter_code(filter: Filter) -> u64 {
+fn filter_code(filter: FilterMode) -> u64 {
     match filter {
-        Filter::Nearest => 0,
-        Filter::Linear => 1,
+        FilterMode::Nearest => 0,
+        FilterMode::Linear => 1,
     }
 }
 
@@ -664,6 +664,7 @@ fn address_code(mode: AddressMode) -> u64 {
         AddressMode::ClampToEdge => 0,
         AddressMode::Repeat => 1,
         AddressMode::MirrorRepeat => 2,
+        AddressMode::ClampToBorder => panic!("a material sampler holds no border clamp"),
     }
 }
 

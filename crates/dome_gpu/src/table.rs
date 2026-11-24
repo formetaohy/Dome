@@ -1,14 +1,14 @@
-use crate::capability::TextureUsages;
 use crate::context::Device;
 use crate::identity::ResourceId;
-use crate::native::{NativeSamplerTable, NativeTextureTable};
 use crate::sampler::{Sampler, SamplerDesc};
-use crate::texture::Texture;
+use crate::texture::{Texture, TextureUsages};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub const TEXTURE_TABLE_CAPACITY: u32 = 1024;
+pub const SAMPLER_TABLE_CAPACITY: u32 = 64;
+
 struct TextureTableState {
-    native: NativeTextureTable,
     generation: AtomicU64,
     identity: ResourceId,
 }
@@ -17,6 +17,7 @@ pub struct TextureTable {
     device: Device,
     capacity: u32,
     entries: Vec<Texture>,
+    fallback: Texture,
     occupied: Vec<bool>,
     free: Vec<u32>,
     grown: u32,
@@ -30,6 +31,7 @@ impl Clone for TextureTable {
             device: self.device.clone(),
             capacity: self.capacity,
             entries: self.entries.clone(),
+            fallback: self.fallback.clone(),
             occupied: self.occupied.clone(),
             free: self.free.clone(),
             grown: self.grown,
@@ -47,20 +49,19 @@ impl TextureTable {
             "a texture table fills from another device"
         );
         assert!(
-            fallback.usages().contains(TextureUsages::SAMPLED),
+            fallback.usages().contains(TextureUsages::TEXTURE_BINDING),
             "a texture table fills from an unsampled texture"
         );
-        let native = device.native().create_texture_table(capacity, fallback);
         Self {
             device: device.clone(),
             capacity,
             entries: vec![fallback.clone(); capacity as usize],
+            fallback: fallback.clone(),
             occupied: vec![false; capacity as usize],
             free: Vec::new(),
             grown: 0,
             filled: 0,
             state: Arc::new(TextureTableState {
-                native,
                 generation: AtomicU64::new(1),
                 identity: ResourceId::next(),
             }),
@@ -75,6 +76,7 @@ impl TextureTable {
         self.free.clear();
         self.grown = 0;
         self.filled = 0;
+        self.fallback = fallback.clone();
     }
 
     pub fn add(&mut self, texture: &Texture) -> u32 {
@@ -146,20 +148,23 @@ impl TextureTable {
         &self.device
     }
 
-    pub(crate) fn entries(&self) -> impl Iterator<Item = &Texture> {
-        self.entries.iter()
-    }
-
-    pub(crate) fn native(&self) -> &NativeTextureTable {
-        &self.state.native
-    }
-
     pub(crate) fn identity(&self) -> ResourceId {
         self.state.identity
     }
 
     pub(crate) fn generation(&self) -> u64 {
         self.state.generation.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn views(&self) -> Vec<&wgpu::TextureView> {
+        let grown = self.grown.max(1) as usize;
+        if self.grown == 0 {
+            return vec![self.fallback.view()];
+        }
+        self.entries[..grown]
+            .iter()
+            .map(|texture| texture.view())
+            .collect()
     }
 
     fn occupied(&self, index: u32) -> bool {
@@ -180,19 +185,15 @@ impl TextureTable {
             "a texture table fills from another device"
         );
         assert!(
-            texture.usages().contains(TextureUsages::SAMPLED),
+            texture.usages().contains(TextureUsages::TEXTURE_BINDING),
             "a texture table holds sampled textures"
         );
         self.entries[index as usize] = texture.clone();
         self.state.generation.fetch_add(1, Ordering::Relaxed);
-        self.device
-            .native()
-            .fill_texture_table(&self.state.native, index, texture);
     }
 }
 
 struct SamplerTableState {
-    native: NativeSamplerTable,
     generation: AtomicU64,
     identity: ResourceId,
 }
@@ -201,6 +202,7 @@ pub struct SamplerTable {
     device: Device,
     capacity: u32,
     entries: Vec<Sampler>,
+    fallback: Sampler,
     occupied: Vec<bool>,
     free: Vec<u32>,
     grown: u32,
@@ -214,6 +216,7 @@ impl Clone for SamplerTable {
             device: self.device.clone(),
             capacity: self.capacity,
             entries: self.entries.clone(),
+            fallback: self.fallback.clone(),
             occupied: self.occupied.clone(),
             free: self.free.clone(),
             grown: self.grown,
@@ -230,17 +233,16 @@ impl SamplerTable {
             fallback.device().same(device),
             "a sampler table fills from another device"
         );
-        let native = device.native().create_sampler_table(capacity, fallback);
         Self {
             device: device.clone(),
             capacity,
             entries: vec![fallback.clone(); capacity as usize],
+            fallback: fallback.clone(),
             occupied: vec![false; capacity as usize],
             free: Vec::new(),
             grown: 0,
             filled: 0,
             state: Arc::new(SamplerTableState {
-                native,
                 generation: AtomicU64::new(1),
                 identity: ResourceId::next(),
             }),
@@ -255,6 +257,7 @@ impl SamplerTable {
         self.free.clear();
         self.grown = 0;
         self.filled = 0;
+        self.fallback = fallback.clone();
     }
 
     pub fn add(&mut self, sampler: &Sampler) -> u32 {
@@ -272,7 +275,7 @@ impl SamplerTable {
         };
         self.occupied[index as usize] = true;
         self.filled += 1;
-        self.fill(index, sampler);
+        self.set(index, sampler);
         index
     }
 
@@ -329,20 +332,23 @@ impl SamplerTable {
         &self.device
     }
 
-    pub(crate) fn entries(&self) -> impl Iterator<Item = &Sampler> {
-        self.entries.iter()
-    }
-
-    pub(crate) fn native(&self) -> &NativeSamplerTable {
-        &self.state.native
-    }
-
     pub(crate) fn identity(&self) -> ResourceId {
         self.state.identity
     }
 
     pub(crate) fn generation(&self) -> u64 {
         self.state.generation.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn samplers(&self) -> Vec<&wgpu::Sampler> {
+        let grown = self.grown.max(1) as usize;
+        if self.grown == 0 {
+            return vec![self.fallback.native()];
+        }
+        self.entries[..grown]
+            .iter()
+            .map(|sampler| sampler.native())
+            .collect()
     }
 
     fn occupied(&self, index: u32) -> bool {
@@ -364,8 +370,5 @@ impl SamplerTable {
         );
         self.entries[index as usize] = sampler.clone();
         self.state.generation.fetch_add(1, Ordering::Relaxed);
-        self.device
-            .native()
-            .fill_sampler_table(&self.state.native, index, sampler);
     }
 }

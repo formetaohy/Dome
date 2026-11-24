@@ -1,7 +1,6 @@
 use dome_ecs::World;
 use dome_gpu::{
-    Backend, BufferUsages, GpuBuffer, GpuContext, GpuRequest, Submission, Texture, TextureFormat,
-    TextureUsages,
+    BufferUsages, Gpu, GpuBuffer, GpuRequest, Submission, Texture, TextureFormat, TextureUsages,
 };
 use dome_render::{Renderer, Target};
 use dome_scene::Scene;
@@ -96,17 +95,12 @@ tint = [1.0, 1.0, 1.0]
 
 #[test]
 fn a_scene_instantiates_into_a_visible_world() {
-    for backend in dome_gpu::PREFERENCE {
-        paint(*backend);
-    }
+    paint();
 }
 
-fn paint(backend: Backend) {
-    let context = GpuContext::open(&GpuRequest {
-        backend: Some(backend),
-        ..Default::default()
-    })
-    .unwrap_or_else(|error| panic!("no {backend:?} device renders a scene: {error}"));
+fn paint() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device renders a scene: {error}"));
     let target = Texture::new(
         context.device(),
         "scene frame",
@@ -137,16 +131,17 @@ fn paint(backend: Backend) {
     assert_eq!(
         renderer.visible_instances(),
         1,
-        "{backend:?} draws the cube of the scene",
+        "draws the cube of the scene",
     );
     let pixels = read(&context, &target);
     assert!(
         pixels.iter().any(|pixel| pixel[0] > 32),
-        "{backend:?} paints no lit cube of the scene",
+        "paints no lit cube of the scene",
     );
 }
 
-fn read(context: &GpuContext, target: &Texture) -> Vec<[u8; 4]> {
+fn read(context: &Gpu, target: &Texture) -> Vec<[u8; 4]> {
+    let queue = context.queue();
     let readback = GpuBuffer::new(
         context.device(),
         "scene readback",
@@ -155,8 +150,8 @@ fn read(context: &GpuContext, target: &Texture) -> Vec<[u8; 4]> {
     );
     let mut submission = Submission::new(context.device(), "scene readback");
     submission.copy_texture(target, &readback, 0);
-    let index = submission.submit(context.queue());
-    let bytes = readback.read(context.queue(), index, target.readback_bytes());
+    let index = submission.submit(&queue);
+    let bytes = readback.read(&queue, index, target.readback_bytes());
     target
         .rows(&bytes)
         .flat_map(|row| row.as_chunks::<4>().0)

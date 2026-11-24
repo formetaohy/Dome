@@ -1,7 +1,7 @@
 use crate::action::Action;
 use crate::session::Session;
 use crate::stage::{self, State};
-use dome_gpu::{GpuContext, GpuRequest, Submission, WindowHandle};
+use dome_gpu::{Gpu, GpuRequest, Submission, WindowHandle};
 use dome_math::Vec2;
 use dome_project::{Catalog, Project};
 use dome_window::{Event, Flow, Handler, KeyCode, Window, WindowConfig, run as run_window};
@@ -69,14 +69,14 @@ impl Launcher {
             )),
             ..Default::default()
         };
-        let context = GpuContext::open(&request)
+        let context = Gpu::open(&request)
             .unwrap_or_else(|error| panic!("the launcher opens its render device: {error}"));
         let (width, height) = window.size();
         assert!(
             width > 0 && height > 0,
             "a window of {width} by {height} presents no surface"
         );
-        let surface = context.device().surface(width, height);
+        let surface = context.surface(width, height);
         self.session = Some(Session::new(context, surface));
         self.ime = false;
     }
@@ -237,7 +237,7 @@ impl Launcher {
         let mut submission = Submission::new(context.device(), "dome launcher");
         ui.render(&mut submission, frame.texture(), None);
         submission.present(frame);
-        submission.submit(context.queue());
+        submission.submit(&context.queue());
         let wake = ui.finish();
         let caret = ui.edit_caret();
         let editing = ui.editing();

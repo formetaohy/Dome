@@ -1,7 +1,6 @@
 use crate::abi::{
-    ARGUMENT_WORDS, AtlasRecord, CASCADE, CascadeRecord, DrawRecord, LIGHT_SLICES, LIGHT_STRIDE,
-    LIGHT_TILE, NO_HIGHLIGHT, PointLightRecord, SHADOW_CASCADES, SHADOW_SIDE, SkyRecord,
-    ViewRecord,
+    ARGUMENT_WORDS, AtlasRecord, CascadeRecord, DrawRecord, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE,
+    NO_HIGHLIGHT, PointLightRecord, SHADOW_CASCADES, SHADOW_SIDE, SkyRecord, ViewRecord,
 };
 use crate::camera::Camera;
 use crate::environment::{BakeRequest, Baked, Environment};
@@ -13,9 +12,8 @@ use crate::program;
 use crate::shadow::Cascade;
 use crate::view::View;
 use dome_ecs::{Entity, World};
-use dome_gpu::ClipSpace;
 use dome_gpu::{
-    AddressMode, BufferBinding, BufferUsages, CompareOp, Device, Filter, GpuBuffer, GpuContext,
+    AddressMode, BufferBinding, BufferUsages, CompareFunction, Device, FilterMode, Gpu, GpuBuffer,
     GraphicsPipeline, PipelineState, Queue, Sampler, SamplerDesc, Texture, TextureFormat,
     TextureUsages,
 };
@@ -99,7 +97,6 @@ pub(crate) struct CaptureFrame<'a> {
     pub(crate) queue: Queue,
     pub(crate) eye: Vec3,
     pub(crate) basis: Quat,
-    pub(crate) clip_space: ClipSpace,
     pub(crate) rotation: Mat4,
     pub(crate) intensity: f32,
     pub(crate) shadow: Cascade,
@@ -132,13 +129,13 @@ pub(crate) struct Captures {
     pub(crate) setup: GpuBuffer,
     pub(crate) drawn: Growing,
     pub(crate) arguments: Growing,
+    pub(crate) point_light: Growing,
     pub(crate) lighting: Growing,
     pub(crate) convert: GraphicsPipeline,
     pub(crate) sampler: Sampler,
     slots: u32,
     batches: u32,
     point_bytes: u64,
-    cluster_base: u32,
     sky_span: u64,
     cluster_span: u64,
     drawn_span: u64,
@@ -148,25 +145,19 @@ pub(crate) struct Captures {
 }
 
 impl Captures {
-    pub(crate) fn new(context: &GpuContext) -> Self {
+    pub(crate) fn new(context: &Gpu) -> Self {
         let device = context.device();
         let queue = Queue::of(device);
-        let attachment = TextureUsages::SAMPLED | TextureUsages::RENDER_ATTACHMENT;
-        let depth_attachment = TextureUsages::SAMPLED | TextureUsages::RENDER_ATTACHMENT;
+        let attachment = TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT;
+        let depth_attachment = TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT;
         let storage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
-        let sky_span = crate::span::padded(
-            device
-                .limits()
-                .min_storage_buffer_offset_alignment
-                .max(WORD_BYTES),
-            SKY_BYTES,
-        );
+        let sky_span = crate::span::padded(device.binding_alignment().max(WORD_BYTES), SKY_BYTES);
         let setup = GpuBuffer::new(device, "dome capture atlas", SETUP_BYTES, storage);
         setup.write(
             &queue,
             bytemuck::bytes_of(&AtlasRecord {
                 face: 1.0 / FACES as f32,
-                vertical: crate::frame::vertical(device),
+                vertical: crate::frame::vertical(),
                 texel: 0.5 / PROBE_RESOLUTION as f32,
                 pad0: 0.0,
             }),
@@ -202,12 +193,12 @@ impl Captures {
             shadow_sampler: Sampler::new(
                 device,
                 SamplerDesc {
-                    min_filter: Filter::Nearest,
-                    mag_filter: Filter::Nearest,
-                    mip_filter: Filter::Nearest,
-                    address_u: AddressMode::ClampToEdge,
-                    address_v: AddressMode::ClampToEdge,
-                    compare: Some(CompareOp::LessOrEqual),
+                    min_filter: FilterMode::Nearest,
+                    mag_filter: FilterMode::Nearest,
+                    mipmap_filter: FilterMode::Nearest,
+                    address_mode_u: AddressMode::ClampToEdge,
+                    address_mode_v: AddressMode::ClampToEdge,
+                    compare: Some(CompareFunction::LessEqual),
                 },
             ),
             views: GpuBuffer::new(
@@ -235,6 +226,7 @@ impl Captures {
                 "dome capture arguments",
                 storage | BufferUsages::INDIRECT,
             ),
+            point_light: Growing::new(device, "dome capture point lights", storage),
             lighting: Growing::new(device, "dome capture lighting", storage),
             convert: GraphicsPipeline::new(
                 device,
@@ -245,7 +237,6 @@ impl Captures {
             slots: 0,
             batches: 0,
             point_bytes: 0,
-            cluster_base: 0,
             sky_span,
             cluster_span: FACE_CLUSTER_BYTES,
             drawn_span: DRAW_BYTES,
@@ -253,11 +244,11 @@ impl Captures {
             sampler: Sampler::new(
                 device,
                 SamplerDesc {
-                    min_filter: Filter::Linear,
-                    mag_filter: Filter::Linear,
-                    mip_filter: Filter::Nearest,
-                    address_u: AddressMode::ClampToEdge,
-                    address_v: AddressMode::ClampToEdge,
+                    min_filter: FilterMode::Linear,
+                    mag_filter: FilterMode::Linear,
+                    mipmap_filter: FilterMode::Nearest,
+                    address_mode_u: AddressMode::ClampToEdge,
+                    address_mode_v: AddressMode::ClampToEdge,
                     compare: None,
                 },
             ),
@@ -313,7 +304,7 @@ impl Captures {
             PANORAMA_HEIGHT,
             1,
             TextureFormat::Rgba16Float,
-            TextureUsages::SAMPLED | TextureUsages::RENDER_ATTACHMENT,
+            TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
         )
     }
 
@@ -362,29 +353,25 @@ impl Captures {
     }
 
     pub(crate) fn point_lights(&self) -> BufferBinding<'_> {
-        self.lighting
+        self.point_light
             .buffer()
             .binding(0, self.point_bytes.max(POINT_LIGHT_BYTES))
     }
 
     pub(crate) fn clusters(&self, face: u32) -> BufferBinding<'_> {
-        self.lighting.buffer().binding(
-            u64::from(self.cluster_base) * WORD_BYTES + u64::from(face) * self.cluster_span,
-            FACE_CLUSTER_BYTES,
-        )
+        self.lighting
+            .buffer()
+            .binding(u64::from(face) * self.cluster_span, FACE_CLUSTER_BYTES)
     }
 
     pub(crate) fn cluster_region(&self) -> (u64, u64) {
-        (
-            u64::from(self.cluster_base) * WORD_BYTES,
-            u64::from(FACES) * self.cluster_span,
-        )
+        (0, u64::from(FACES) * self.cluster_span)
     }
 
     pub(crate) fn lighting(&self) -> BufferBinding<'_> {
-        let bytes =
-            u64::from(self.cluster_base) * WORD_BYTES + u64::from(FACES) * self.cluster_span;
-        self.lighting.buffer().binding(0, bytes)
+        self.lighting
+            .buffer()
+            .binding(0, u64::from(FACES) * self.cluster_span)
     }
 
     pub(crate) fn cluster_columns(&self) -> u32 {
@@ -396,26 +383,20 @@ impl Captures {
     }
 
     pub(crate) fn prepare(&mut self, frame: &CaptureFrame<'_>) {
-        let alignment = frame
-            .device
-            .limits()
-            .min_storage_buffer_offset_alignment
-            .max(WORD_BYTES);
+        let alignment = frame.device.binding_alignment().max(WORD_BYTES);
         self.sky_span = crate::span::padded(alignment, SKY_BYTES);
         self.cluster_span = crate::span::padded(alignment, FACE_CLUSTER_BYTES);
-        self.point_bytes = frame.points.len() as u64 * POINT_LIGHT_BYTES;
-        let cluster_bytes = self.point_bytes.next_multiple_of(alignment);
-        self.cluster_base = (cluster_bytes / WORD_BYTES) as u32;
+        self.point_bytes = (frame.points.len() as u64 * POINT_LIGHT_BYTES).max(POINT_LIGHT_BYTES);
         self.slots = frame.slots.max(1);
         self.batches = frame.batches.len() as u32;
         self.drawn_span = crate::span::padded(alignment, u64::from(self.slots) * DRAW_BYTES);
         self.argument_span =
             crate::span::padded(alignment, u64::from(self.batches) * ARGUMENT_BYTES);
-        let lighting_bytes = cluster_bytes + u64::from(FACES) * self.cluster_span;
+        self.point_light.fit(&frame.device, self.point_bytes);
         self.lighting
-            .fit(&frame.device, lighting_bytes.max(POINT_LIGHT_BYTES));
+            .fit(&frame.device, u64::from(FACES) * self.cluster_span);
         if !frame.points.is_empty() {
-            self.lighting
+            self.point_light
                 .buffer()
                 .write(&frame.queue, bytemuck::cast_slice(frame.points));
         }
@@ -433,13 +414,12 @@ impl Captures {
             let screen = Screen {
                 width: PROBE_RESOLUTION,
                 height: PROBE_RESOLUTION,
-                vertical: crate::frame::vertical(&frame.device),
+                vertical: crate::frame::vertical(),
                 hzb_levels: 0,
                 cluster_x: CLUSTER_COLUMNS,
                 cluster_y: CLUSTER_ROWS,
                 point_lights: frame.points.len() as u32,
-                cluster_offset: self.cluster_base
-                    + face as u32 * (self.cluster_span / WORD_BYTES) as u32,
+                cluster_offset: face as u32 * (self.cluster_span / WORD_BYTES) as u32,
                 highlight: NO_HIGHLIGHT,
             };
             records.push(record_of_main_view(
@@ -507,10 +487,7 @@ impl Captures {
 
 fn face_view(frame: &CaptureFrame<'_>, forward: Vec3, up: Vec3) -> View {
     let projection = Mat4::perspective(WIDE, 1.0, NEAR, FAR);
-    let projection = match frame.clip_space {
-        ClipSpace::YUp => projection,
-        ClipSpace::YDown => projection.flip_clip_y(),
-    };
+
     View::of(projection * Mat4::look_at(frame.eye, frame.eye + forward.normalize(), up.normalize()))
 }
 
@@ -533,6 +510,6 @@ fn sky_record(view: &View, frame: &CaptureFrame<'_>) -> SkyRecord {
 }
 
 const _: () = assert!(
-    CASCADE_BYTES == CASCADE.size as u64,
+    CASCADE_BYTES == size_of::<CascadeRecord>() as u64,
     "the capture cascade record keeps the layout its shader reads",
 );
