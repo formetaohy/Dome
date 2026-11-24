@@ -1,4 +1,4 @@
-use dome_scene::{Target, Value};
+use dome_scene::{Folder, Target, Value};
 
 use crate::gizmo::Mode;
 
@@ -40,6 +40,15 @@ pub enum PathKind {
     Image,
     Sound,
     Panorama,
+}
+
+impl PathKind {
+    pub fn folder(self) -> Folder {
+        match self {
+            Self::Model | Self::Image | Self::Sound | Self::Panorama => Folder::Asset,
+            Self::Prefab => Folder::Prefab,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

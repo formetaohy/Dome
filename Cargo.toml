@@ -45,8 +45,10 @@ dome_editor = { version = "0.1.0", path = "crates/dome_editor" }
 dome_gltf = { version = "0.1.0", path = "crates/dome_gltf" }
 dome_gpu = { version = "0.1.0", path = "crates/dome_gpu" }
 dome_image = { version = "0.1.0", path = "crates/dome_image" }
+dome_launcher = { version = "0.1.0", path = "crates/dome_launcher" }
 dome_math = { version = "0.1.0", path = "crates/dome_math" }
 dome_physics = { version = "0.1.0", path = "crates/dome_physics" }
+dome_project = { version = "0.1.0", path = "crates/dome_project" }
 dome_render = { version = "0.1.0", path = "crates/dome_render" }
 dome_scene = { version = "0.1.0", path = "crates/dome_scene" }
 dome_schema = { version = "0.1.0", path = "crates/dome_schema" }

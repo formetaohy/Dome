@@ -1,4 +1,4 @@
-use dome_app::{App, AppConfig, HeadlessConfig, Time};
+use dome_app::{App, AppConfig, HeadlessConfig, SceneConfig, Time};
 use dome_ecs::World;
 use dome_image::Image;
 use dome_schema::SceneNode;
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 const SCENE: &str = r#"format = "dome_scene"
 images = []
-environments = [{ id = "sky", path = "sky.hdr" }]
+environments = [{ id = "sky", path = "assets/sky.hdr" }]
 
 [[meshes]]
 id = "cube"
@@ -119,7 +119,7 @@ far = 100.0
 
 [[nodes]]
 id = "prop"
-prefab = "prop.toml"
+prefab = "prefabs/prop.toml"
 
 [nodes.transform]
 translation = [0.0, 0.0, 0.0]
@@ -176,10 +176,15 @@ fn a_headless_run_renders_its_scene() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("a headless test opens its directory");
     fs::write(&scene, SCENE).expect("a headless test writes its scene");
-    fs::write(root.join("sky.hdr"), radiance()).expect("a headless test writes its environment");
+    fs::create_dir_all(root.join("assets")).expect("a headless test opens its assets");
+    fs::write(root.join("assets/sky.hdr"), radiance())
+        .expect("a headless test writes its environment");
 
     let mut app = App::with_config(AppConfig {
-        scene: Some(scene),
+        scene: Some(SceneConfig {
+            path: scene,
+            root: root.clone(),
+        }),
         audio: false,
         ..Default::default()
     });
@@ -218,7 +223,10 @@ fn a_headless_run_steps_its_fixed_schedule() {
     fs::write(&scene, CAMERA_SCENE).expect("a headless test writes its scene");
 
     let mut app = App::with_config(AppConfig {
-        scene: Some(scene),
+        scene: Some(SceneConfig {
+            path: scene,
+            root: root.clone(),
+        }),
         audio: false,
         ..Default::default()
     });
@@ -260,14 +268,17 @@ fn a_headless_run_steps_its_fixed_schedule() {
 fn a_headless_run_follows_a_changed_prefab_and_keeps_the_last_good_scene() {
     let root = directory("watch");
     let scene = root.join("scene.toml");
-    let prefab = root.join("prop.toml");
+    let prefab = root.join("prefabs/prop.toml");
     let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a headless test opens its directory");
+    fs::create_dir_all(root.join("prefabs")).expect("a headless test opens its prefabs");
     fs::write(&scene, WATCH_SCENE).expect("a headless test writes its scene");
     fs::write(&prefab, WATCH_PREFAB).expect("a headless test writes its prefab");
 
     let mut app = App::with_config(AppConfig {
-        scene: Some(scene),
+        scene: Some(SceneConfig {
+            path: scene,
+            root: root.clone(),
+        }),
         audio: false,
         ..Default::default()
     });

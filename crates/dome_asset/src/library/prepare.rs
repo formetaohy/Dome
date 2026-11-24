@@ -101,7 +101,7 @@ impl Models<'_> {
             .scene
             .model(id)
             .ok_or_else(|| format!("the scene holds no model {id}"))?;
-        let path = self.scene.root().join(&entry.path);
+        let path = self.scene.asset(&entry.path);
         files.insert(path.clone());
         let file = sources.digest(&path)?;
         let external = sources.dependencies(&path);
@@ -117,11 +117,13 @@ impl Models<'_> {
             .digest(file);
         let dependencies = external.sources();
         for source in &dependencies.buffers {
+            asset_dependency(self.scene, id, "buffer", source)?;
             files.insert(source.clone());
             digest.digest(sources.digest(source)?);
         }
         if scope == Scope::Image {
             for source in &dependencies.images {
+                asset_dependency(self.scene, id, "image", source)?;
                 files.insert(source.clone());
                 digest.digest(sources.digest(source)?);
             }
@@ -149,10 +151,29 @@ impl Models<'_> {
             .scene
             .model(id)
             .ok_or_else(|| format!("the scene holds no model {id}"))?;
-        let path = self.scene.root().join(&entry.path);
+        let path = self.scene.asset(&entry.path);
         let (_, bytes) = sources.read(&path)?;
         catch_unwind(AssertUnwindSafe(|| Model::parse(&bytes, &path)))
             .map_err(|payload| panic_message(payload.as_ref()))
+    }
+}
+
+pub(super) fn asset_dependency(
+    scene: &Scene,
+    id: &str,
+    kind: &str,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let inside = path
+        .strip_prefix(scene.root())
+        .is_ok_and(|relative| dome_scene::Folder::Asset.holds(relative));
+    if inside {
+        Ok(())
+    } else {
+        Err(format!(
+            "the model {id} reads its {kind} {} outside the assets folder",
+            path.display(),
+        ))
     }
 }
 
@@ -225,7 +246,7 @@ pub(super) fn image_source(
 ) -> Result<Digest, String> {
     match &entry.source {
         ImageSource::Path(path) => {
-            let file = scene.root().join(path);
+            let file = scene.asset(path);
             files.insert(file.clone());
             sources.digest(&file)
         }
@@ -250,7 +271,7 @@ pub(super) fn image_data_of(
         .ok_or_else(|| format!("the scene holds no image {id}"))?;
     let bytes = match &entry.source {
         ImageSource::Path(path) => {
-            let file = scene.root().join(path);
+            let file = scene.asset(path);
             let (_, bytes) = sources.read(&file)?;
             let decoded = catch_unwind(AssertUnwindSafe(|| {
                 Image::decode(&bytes, &format!("the image {id}"))
@@ -403,7 +424,7 @@ pub(super) fn sound_data(
     entry: &SoundEntry,
     sources: &mut Sources,
 ) -> Result<dome_audio::Source, String> {
-    let file = scene.root().join(&entry.path);
+    let file = scene.asset(&entry.path);
     if entry.stream {
         return catch_unwind(AssertUnwindSafe(|| dome_audio::Source::stream(file)))
             .map_err(|payload| panic_message(payload.as_ref()))?;
@@ -423,7 +444,7 @@ pub(super) fn environment_data(
 ) -> Result<EnvironmentData, String> {
     match &entry.source {
         EnvironmentSource::Panorama(path) => {
-            let file = scene.root().join(path);
+            let file = scene.asset(path);
             let (_, bytes) = sources.read(&file)?;
             let radiance = catch_unwind(AssertUnwindSafe(|| {
                 Radiance::decode(&bytes, &format!("the environment {}", file.display()))

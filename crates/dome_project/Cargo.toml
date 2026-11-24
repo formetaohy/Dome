@@ -1,0 +1,17 @@
+[package]
+name = "dome_project"
+version.workspace = true
+edition.workspace = true
+description = "Game projects: the manifest, the fixed folder layout and the projects a launcher remembers"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_math = { workspace = true }
+dome_render = { workspace = true }
+dome_scene = { workspace = true }
+dome_schema = { workspace = true }
+dome_toml = { workspace = true }

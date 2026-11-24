@@ -255,7 +255,7 @@ pub(super) fn plan(job: Job) -> Prepared {
 
     let mut sounds = Vec::new();
     for entry in scene.sounds() {
-        let file = scene.root().join(&entry.path);
+        let file = scene.asset(&entry.path);
         files.insert(file.clone());
         let digest = prepare.sources.digest(&file);
         let fingerprint = sound_fingerprint(entry, digest.as_ref().ok().copied());
@@ -282,7 +282,7 @@ pub(super) fn plan(job: Job) -> Prepared {
     for entry in scene.environments() {
         let digest = match &entry.source {
             EnvironmentSource::Panorama(path) => {
-                let file = scene.root().join(path);
+                let file = scene.asset(path);
                 files.insert(file.clone());
                 prepare.sources.digest(&file)
             }
@@ -397,12 +397,12 @@ mod tests {
     const SCENE: &str = r#"format = "dome_scene"
 
 images = [
-    { id = "broken_image", path = "missing.png", min_filter = "linear", mag_filter = "linear", mip_filter = "linear", wrap_u = "repeat", wrap_v = "repeat" },
+    { id = "broken_image", path = "assets/missing.png", min_filter = "linear", mag_filter = "linear", mip_filter = "linear", wrap_u = "repeat", wrap_v = "repeat" },
 ]
 
 [[models]]
 id = "missing_model"
-path = "missing.gltf"
+path = "assets/missing.gltf"
 
 [[meshes]]
 id = "broken_mesh"

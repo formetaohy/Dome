@@ -4,7 +4,6 @@ use crate::component::{FieldKind, ReferenceKind};
 use crate::delta::{Asset, owned};
 use crate::edit::Edit;
 use crate::graph::GraphEntry;
-use crate::image::ImageSource;
 use crate::node::Node;
 use crate::nodes::Nodes;
 use crate::scene::Scene;
@@ -13,49 +12,39 @@ use crate::value::Value;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "dome_prefab";
 
 pub(crate) struct Loader {
-    top: PathBuf,
+    root: PathBuf,
     schema: Arc<dyn Schema>,
     stack: Vec<PathBuf>,
     cache: HashMap<PathBuf, Scene>,
 }
 
 impl Loader {
-    pub(crate) fn new(top: PathBuf, schema: Arc<dyn Schema>) -> Self {
+    pub(crate) fn new(root: PathBuf, schema: Arc<dyn Schema>) -> Self {
         Self {
-            top,
+            root,
             schema,
             stack: Vec::new(),
             cache: HashMap::new(),
         }
     }
 
-    pub(crate) fn document(&mut self, text: &str, root: PathBuf, what: &str) -> Scene {
-        let mut scene = crate::parse::document(text, root.clone(), what, Arc::clone(&self.schema));
-        self.expand(&mut scene, &root, what);
+    pub(crate) fn document(&mut self, text: &str, what: &str) -> Scene {
+        let mut scene =
+            crate::parse::document(text, self.root.clone(), what, Arc::clone(&self.schema));
+        self.expand(&mut scene, what);
         scene.validate(what);
         scene
     }
 
-    pub(crate) fn load(
-        &mut self,
-        from: &Path,
-        path: &Path,
-        what: &str,
-    ) -> Result<(Scene, PathBuf), String> {
-        if path.as_os_str().is_empty() || !path.is_relative() {
-            return Err(format!(
-                "the prefab path {} is no relative path",
-                path.display()
-            ));
-        }
-        let file = normalize(&from.join(path));
-        let key = relative(&self.top, &file);
+    pub(crate) fn load(&mut self, path: &Path, what: &str) -> Result<(Scene, PathBuf), String> {
+        let file = crate::folder::Folder::Prefab.resolve(&self.root, path);
+        let key = path.to_path_buf();
         assert!(
             !self.stack.iter().any(|held| held == &key),
             "{what} includes the prefab {} into itself",
@@ -66,9 +55,8 @@ impl Loader {
         }
         let text = fs::read_to_string(&file)
             .map_err(|error| format!("the prefab {} reads no text: {error}", key.display()))?;
-        let root = file.parent().map_or_else(PathBuf::new, Path::to_path_buf);
         self.stack.push(key.clone());
-        let scene = self.document(&text, root, &format!("the prefab {}", key.display()));
+        let scene = self.document(&text, &format!("the prefab {}", key.display()));
         self.stack.pop();
         if !scene.is_prefab() {
             return Err(format!(
@@ -80,14 +68,13 @@ impl Loader {
         Ok((scene, key))
     }
 
-    fn expand(&mut self, scene: &mut Scene, root: &Path, what: &str) {
+    fn expand(&mut self, scene: &mut Scene, what: &str) {
         let ids = scene
             .nodes
             .iter()
             .map(|node| node.id.clone())
             .collect::<HashSet<_>>();
         let mut materialization = Materialization {
-            root,
             what,
             ids,
             nodes: Vec::with_capacity(scene.nodes.len()),
@@ -99,12 +86,11 @@ impl Loader {
                 continue;
             };
             let (template, key) = self
-                .load(root, &path, what)
+                .load(&path, what)
                 .unwrap_or_else(|error| panic!("{what}: {error}"));
-            let from = root_of(root, &path);
             scene
                 .edit(|edit| {
-                    import(edit, &template, &key, &from, root, &node.id)?;
+                    import(edit, &template, &key, &node.id)?;
                     edit.set_instance(&node.id, Some(owners(&template, &key)));
                     for (nested, held) in template.instances.iter() {
                         edit.set_instance(&format!("{}_{nested}", node.id), Some(held.clone()));
@@ -112,7 +98,7 @@ impl Loader {
                     Ok(())
                 })
                 .unwrap_or_else(|error| panic!("{what}: {error}"));
-            let generated = instantiate(&node, &template, &mut materialization.ids, &from, root)
+            let generated = instantiate(&node, &template, &mut materialization.ids)
                 .unwrap_or_else(|error| panic!("{what}: {error}"));
             materialization.nodes.extend(generated);
             materialization.structure(self, scene, &node);
@@ -130,7 +116,6 @@ impl Loader {
 }
 
 struct Materialization<'a> {
-    root: &'a Path,
     what: &'a str,
     ids: HashSet<String>,
     nodes: Vec<Node>,
@@ -165,15 +150,13 @@ impl Materialization<'_> {
             return;
         };
         let (template, key) = loader
-            .load(self.root, &path, self.what)
+            .load(&path, self.what)
             .unwrap_or_else(|error| panic!("{}: {error}", self.what));
-        let from = root_of(self.root, &path);
         let keys = owners(&template, &key);
-        let root = self.root;
         let marker_id = marker.id.clone();
         scene
             .edit(|edit| {
-                import(edit, &template, &key, &from, root, &held.id)?;
+                import(edit, &template, &key, &held.id)?;
                 edit.set_instance(&held.id, Some(keys.clone()));
                 for (nested, held_keys) in template.instances.iter() {
                     edit.set_instance(&format!("{}_{nested}", held.id), Some(held_keys.clone()));
@@ -186,7 +169,7 @@ impl Materialization<'_> {
                 Ok(())
             })
             .unwrap_or_else(|error| panic!("{}: {error}", self.what));
-        let generated = instantiate(&held, &template, &mut self.ids, &from, self.root)
+        let generated = instantiate(&held, &template, &mut self.ids)
             .unwrap_or_else(|error| panic!("{}: {error}", self.what));
         self.nodes.extend(generated);
     }
@@ -321,8 +304,6 @@ pub(crate) fn instantiate(
     marker: &Node,
     template: &Scene,
     ids: &mut HashSet<String>,
-    from: &Path,
-    target: &Path,
 ) -> Result<Vec<Node>, String> {
     let prefix = format!("{}_", marker.id);
     let mut nodes = Vec::with_capacity(template.nodes.len());
@@ -343,9 +324,6 @@ pub(crate) fn instantiate(
             Some(owner) => format!("{prefix}{owner}"),
             None => marker.id.clone(),
         });
-        if let Some(prefab) = &mut held.prefab {
-            *prefab = rebase(from, target, prefab);
-        }
         for component in held.components.values_mut() {
             component.remap(&prefix);
         }
@@ -404,16 +382,10 @@ pub(crate) fn import(
     edit: &mut Edit<'_>,
     template: &Scene,
     key: &Path,
-    from: &Path,
-    target: &Path,
     scope: &str,
 ) -> Result<(), String> {
     let prefix = format!("{scope}_");
     for entry in template.images() {
-        let mut entry = entry.clone();
-        if let ImageSource::Path(path) = &mut entry.source {
-            *path = rebase(from, target, path);
-        }
         let source = String::from(entry.id());
         import_entry(
             edit,
@@ -424,12 +396,10 @@ pub(crate) fn import(
                 source: &source,
                 scope: None,
             },
-            entry,
+            entry.clone(),
         )?;
     }
     for entry in template.sounds() {
-        let mut entry = entry.clone();
-        entry.path = rebase(from, target, &entry.path);
         let source = String::from(entry.id());
         import_entry(
             edit,
@@ -440,14 +410,10 @@ pub(crate) fn import(
                 source: &source,
                 scope: None,
             },
-            entry,
+            entry.clone(),
         )?;
     }
     for entry in template.environments() {
-        let mut entry = entry.clone();
-        if let crate::environment::EnvironmentSource::Panorama(path) = &mut entry.source {
-            *path = rebase(from, target, path);
-        }
         let source = String::from(entry.id());
         import_entry(
             edit,
@@ -458,7 +424,7 @@ pub(crate) fn import(
                 source: &source,
                 scope: None,
             },
-            entry,
+            entry.clone(),
         )?;
     }
     for entry in template.meshes() {
@@ -490,8 +456,6 @@ pub(crate) fn import(
         )?;
     }
     for entry in template.models() {
-        let mut entry = entry.clone();
-        entry.path = rebase(from, target, &entry.path);
         let source = String::from(entry.id());
         import_entry(
             edit,
@@ -502,7 +466,7 @@ pub(crate) fn import(
                 source: &source,
                 scope: None,
             },
-            entry,
+            entry.clone(),
         )?;
     }
     for entry in template.skins() {
@@ -608,34 +572,6 @@ fn import_entry<A: Asset>(edit: &mut Edit<'_>, import: Import<'_>, entry: A) -> 
     Ok(())
 }
 
-pub(crate) fn root_of(base: &Path, path: &Path) -> PathBuf {
-    normalize(&base.join(path))
-        .parent()
-        .map_or_else(PathBuf::new, Path::to_path_buf)
-}
-
-fn rebase(from: &Path, to: &Path, path: &Path) -> PathBuf {
-    relative(to, from).join(path)
-}
-
-pub(crate) fn relative(base: &Path, path: &Path) -> PathBuf {
-    let base = normalize(base);
-    let path = normalize(path);
-    let common = base
-        .components()
-        .zip(path.components())
-        .take_while(|(left, right)| left == right)
-        .count();
-    let mut out = PathBuf::new();
-    for _ in common..base.components().count() {
-        out.push("..");
-    }
-    for part in path.components().skip(common) {
-        out.push(part.as_os_str());
-    }
-    out
-}
-
 pub(crate) fn describe(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(text) = payload.downcast_ref::<&str>() {
         return String::from(*text);
@@ -644,25 +580,4 @@ pub(crate) fn describe(payload: &(dyn std::any::Any + Send)) -> String {
         return text.clone();
     }
     String::from("an unknown panic")
-}
-
-pub(crate) fn normalize(path: &Path) -> PathBuf {
-    let mut parts = Vec::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => match parts.last() {
-                Some(Component::Normal(_)) => {
-                    parts.pop();
-                }
-                _ => parts.push(Component::ParentDir),
-            },
-            held => parts.push(held),
-        }
-    }
-    let mut out = PathBuf::new();
-    for part in parts {
-        out.push(part.as_os_str());
-    }
-    out
 }

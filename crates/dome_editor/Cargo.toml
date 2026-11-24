@@ -16,6 +16,7 @@ dome_ecs = { workspace = true }
 dome_gpu = { workspace = true }
 dome_math = { workspace = true }
 dome_physics = { workspace = true }
+dome_project = { workspace = true }
 dome_render = { workspace = true }
 dome_text = { workspace = true }
 dome_toml = { workspace = true }

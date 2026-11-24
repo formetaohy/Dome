@@ -593,11 +593,8 @@ impl Planner<'_> {
             .instance_prefab(marker)
             .expect("a prefab instance names its prefab");
         let loaded = catch_unwind(AssertUnwindSafe(|| {
-            Loader::new(self.scene.root.clone(), self.scene.schema_arc()).load(
-                &self.scene.root,
-                prefab,
-                "the instance",
-            )
+            Loader::new(self.scene.root.clone(), self.scene.schema_arc())
+                .load(prefab, "the instance")
         }))
         .map_err(|payload| {
             format!(

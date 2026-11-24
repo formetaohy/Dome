@@ -9,6 +9,7 @@ use dome_animation::{Comparison, Parameter};
 use dome_asset::{Import, Watch};
 use dome_gpu::{GpuContext, GpuRequest, Submission, WindowHandle};
 use dome_math::{Quat, Rect, Transform, Vec2, Vec3};
+use dome_project::Project;
 use dome_scene::{Atmosphere, Delta, Node, ReferenceKind, Scene, Shape, Target, Value};
 use dome_schema::Registry;
 use dome_ui::InputKey as Key;
@@ -30,16 +31,16 @@ const WATCH_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct EditorConfig {
     pub window: WindowConfig,
-    pub scene: PathBuf,
+    pub project: Project,
     pub registry: Arc<Registry>,
     pub debug: bool,
 }
 
-impl Default for EditorConfig {
-    fn default() -> Self {
+impl EditorConfig {
+    pub fn new(project: Project) -> Self {
         Self {
             window: WindowConfig::new("Dome", 1440, 900),
-            scene: PathBuf::from("scene.toml"),
+            project,
             registry: Arc::new(Registry::default()),
             debug: false,
         }
@@ -67,6 +68,7 @@ struct PropertyState {
 
 pub struct Editor {
     scene: Scene,
+    project: Project,
     registry: Arc<Registry>,
     path: PathBuf,
     selected: Option<Target>,
@@ -107,14 +109,9 @@ pub struct Editor {
 
 impl Editor {
     fn new(config: EditorConfig) -> Self {
-        let path = config.scene;
+        let path = config.project.entry();
         let registry = config.registry;
-        let exists = path.exists();
-        let scene = if exists {
-            Scene::load(&path, registry.clone())
-        } else {
-            crate::default::scene(&path, registry.clone())
-        };
+        let scene = Scene::load(&path, config.project.root(), registry.clone());
         let selected = scene
             .nodes()
             .iter()
@@ -124,10 +121,11 @@ impl Editor {
         let watch = Watch::new(&path, &scene);
         Self {
             scene,
+            project: config.project,
             registry,
             path,
             selected,
-            dirty: !exists,
+            dirty: false,
             conflict: false,
             titled_dirty: None,
             error: None,
@@ -195,11 +193,11 @@ impl Editor {
             .path
             .file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or("scene.toml");
+            .unwrap_or("main.scene.toml");
         if self.dirty {
-            window.set_title(&format!("Dome — {name} •"));
+            window.set_title(&format!("Dome — {} — {name} •", self.project.name()));
         } else {
-            window.set_title(&format!("Dome — {name}"));
+            window.set_title(&format!("Dome — {} — {name}", self.project.name()));
         }
     }
 
@@ -271,7 +269,9 @@ impl Editor {
         self.commit();
         self.finish_property();
         let registry = self.scene.schema_arc();
-        let loaded = catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry)));
+        let loaded = catch_unwind(AssertUnwindSafe(|| {
+            Scene::load(&self.path, self.project.root(), registry)
+        }));
         match loaded {
             Ok(scene) => {
                 self.scene = scene;
@@ -302,7 +302,9 @@ impl Editor {
             self.finish_drag();
             self.commit();
             self.finish_property();
-            match catch_unwind(AssertUnwindSafe(|| Scene::load(&self.path, registry))) {
+            match catch_unwind(AssertUnwindSafe(|| {
+                Scene::load(&self.path, self.project.root(), registry)
+            })) {
                 Ok(scene) => {
                     self.scene = scene;
                     self.drag = None;
@@ -455,15 +457,9 @@ impl Editor {
             return;
         }
         self.save();
-        let scene = self.path.canonicalize().unwrap_or_else(|error| {
-            panic!(
-                "the scene {} resolves no path: {error}",
-                self.path.display()
-            )
-        });
         let executable = std::env::current_exe().expect("the editor names its own executable");
         let mut process = Process::new(executable);
-        process.arg("--play").arg(&scene);
+        process.arg("--play").arg(self.project.root());
         if self.debug {
             process.arg("--debug");
         }
@@ -604,16 +600,17 @@ impl Editor {
             }
             return;
         }
+        let path = format!("{}/{}", dialog.kind.folder().name(), trimmed);
         let parent = self.parent_for_insert();
         let outcome = match dialog.kind {
             PathKind::Model => {
-                let id = stem_asset(&self.scene, ReferenceKind::Model, &trimmed, "model");
+                let id = stem_asset(&self.scene, ReferenceKind::Model, &path, "model");
                 self.scene
-                    .edit(|edit| edit.import_model(&id, &trimmed, parent.as_deref()))
+                    .edit(|edit| edit.import_model(&id, &path, parent.as_deref()))
                     .map(|(target, delta)| (target, delta, Tab::Scene))
             }
             PathKind::Prefab => {
-                let stem = sanitized_stem(&trimmed, "prefab");
+                let stem = sanitized_stem(&path, "prefab");
                 self.scene
                     .edit(|edit| {
                         let id = match &parent {
@@ -621,35 +618,33 @@ impl Editor {
                             None => unique_node(edit, &stem),
                         };
                         match &parent {
-                            Some(parent) => {
-                                edit.insert_child(parent, Node::instance(&id, &trimmed))
-                            }
-                            None => edit.add_instance(&id, &trimmed),
+                            Some(parent) => edit.insert_child(parent, Node::instance(&id, &path)),
+                            None => edit.add_instance(&id, &path),
                         }
                     })
                     .map(|(target, delta)| (target, delta, Tab::Scene))
             }
             PathKind::Image => {
-                let id = stem_asset(&self.scene, ReferenceKind::Image, &trimmed, "image");
+                let id = stem_asset(&self.scene, ReferenceKind::Image, &path, "image");
                 self.scene
-                    .edit(|edit| edit.add_image(&id, &trimmed))
+                    .edit(|edit| edit.add_image(&id, &path))
                     .map(|(target, delta)| (target, delta, Tab::Asset))
             }
             PathKind::Sound => {
-                let id = stem_asset(&self.scene, ReferenceKind::Sound, &trimmed, "sound");
+                let id = stem_asset(&self.scene, ReferenceKind::Sound, &path, "sound");
                 self.scene
-                    .edit(|edit| edit.add_sound(&id, &trimmed))
+                    .edit(|edit| edit.add_sound(&id, &path))
                     .map(|(target, delta)| (target, delta, Tab::Asset))
             }
             PathKind::Panorama => {
                 let id = stem_asset(
                     &self.scene,
                     ReferenceKind::Environment,
-                    &trimmed,
+                    &path,
                     "environment",
                 );
                 self.scene
-                    .edit(|edit| edit.add_environment(&id, &trimmed))
+                    .edit(|edit| edit.add_environment(&id, &path))
                     .map(|(target, delta)| (target, delta, Tab::Asset))
             }
         };
@@ -1543,14 +1538,30 @@ fn unique_asset(scene: &Scene, kind: ReferenceKind, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     const SIZE: (u32, u32) = (800, 600);
 
-    fn editor() -> Editor {
-        Editor::new(EditorConfig {
-            scene: PathBuf::from("dome-editor-test-scene-that-does-not-exist.toml"),
-            ..EditorConfig::default()
-        })
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    struct Cleanup(PathBuf);
+
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn editor() -> (Editor, Cleanup) {
+        let root = std::env::temp_dir().join(format!(
+            "dome_editor_test_{}_{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let project = Project::create(&root, "Editor Test");
+        (Editor::new(EditorConfig::new(project)), Cleanup(root))
     }
 
     fn key(code: KeyCode, repeat: bool) -> Event {
@@ -1579,7 +1590,7 @@ mod tests {
 
     #[test]
     fn a_repeated_key_press_removes_one_node() {
-        let mut editor = editor();
+        let (mut editor, _cleanup) = editor();
         let parent = editor
             .scene
             .nodes()
@@ -1614,7 +1625,7 @@ mod tests {
 
     #[test]
     fn a_gizmo_drag_follows_the_logical_pointer_and_ends_when_focus_leaves() {
-        let mut editor = editor();
+        let (mut editor, _cleanup) = editor();
         editor.viewport = Rect::from_min_size(Vec2::ZERO, Vec2::new(800.0, 600.0));
         let index = editor.selected_node().expect("the editor starts on a node");
         let before = editor.scene.world_transform(index).translation;
@@ -1677,7 +1688,7 @@ mod tests {
 
     #[test]
     fn a_property_drag_records_one_history_step() {
-        let mut editor = editor();
+        let (mut editor, _cleanup) = editor();
         let target = editor.selected.clone().expect("the editor starts selected");
         let index = editor.selected_node().expect("the editor starts on a node");
         let before = editor.scene.transform(index).translation;

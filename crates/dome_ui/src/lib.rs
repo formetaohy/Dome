@@ -32,7 +32,7 @@ mod ui;
 pub mod widget;
 mod window;
 
-pub use clipboard::Clipboard;
+pub use clipboard::{Clipboard, MemoryClipboard};
 pub use color::Color;
 pub use dome_math::Vec2;
 pub use dome_text::Align;

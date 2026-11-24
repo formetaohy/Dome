@@ -103,7 +103,7 @@ fn model(value: Toml, what: &str) -> ModelEntry {
         .need("path")
         .string_value(&format!("the path of {what}"));
     fields.done();
-    ModelEntry::new(id, PathBuf::from(path))
+    ModelEntry::new(id, crate::folder::relative_path(&path))
 }
 
 fn sounds(value: Toml, what: &str) -> Vec<SoundEntry> {
@@ -125,7 +125,7 @@ fn sound(value: Toml, what: &str) -> SoundEntry {
         .take("stream")
         .is_some_and(|stream| stream.boolean_value(&format!("the stream of {what}")));
     fields.done();
-    let mut entry = SoundEntry::new(id, PathBuf::from(path));
+    let mut entry = SoundEntry::new(id, crate::folder::relative_path(&path));
     entry.stream = stream;
     entry
 }
@@ -151,7 +151,7 @@ fn environment(value: Toml, what: &str) -> EnvironmentEntry {
     match (path, atmosphere, capture) {
         (Some(path), None, false) => {
             let path = path.string_value(&format!("the path of {what}"));
-            EnvironmentEntry::new(id, PathBuf::from(path))
+            EnvironmentEntry::new(id, crate::folder::relative_path(&path))
         }
         (None, Some(value), false) => {
             let what = format!("the atmosphere of {what}");
@@ -250,7 +250,7 @@ fn image(value: Toml, what: &str) -> ImageEntry {
     let entry = match (path, model, index) {
         (Some(path), None, None) => ImageEntry::new(
             id,
-            PathBuf::from(path.string_value(&format!("the path of {what}"))),
+            crate::folder::relative_path(&path.string_value(&format!("the path of {what}"))),
         ),
         (None, Some(model), Some(index)) => ImageEntry::embedded(
             id,
@@ -524,8 +524,8 @@ fn node(value: Toml, what: &str, schema: &dyn Schema) -> Node {
                 ));
             }
             "prefab" => {
-                prefab = Some(PathBuf::from(
-                    value.string_value(&format!("the prefab of {what}")),
+                prefab = Some(crate::folder::relative_path(
+                    &value.string_value(&format!("the prefab of {what}")),
                 ));
             }
             "overrides" => {

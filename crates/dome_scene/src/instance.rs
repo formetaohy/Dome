@@ -252,16 +252,14 @@ impl Edit<'_> {
             .clone()
             .expect("a prefab instance names its prefab");
         let mut loader = Loader::new(self.root.clone(), self.schema_arc());
-        let loaded = catch_unwind(AssertUnwindSafe(|| {
-            loader.load(&self.root, &path, "the instance")
-        }))
-        .map_err(|payload| {
-            format!(
-                "the prefab {} loads: {}",
-                path.display(),
-                describe(payload.as_ref()),
-            )
-        })?;
+        let loaded = catch_unwind(AssertUnwindSafe(|| loader.load(&path, "the instance")))
+            .map_err(|payload| {
+                format!(
+                    "the prefab {} loads: {}",
+                    path.display(),
+                    describe(payload.as_ref()),
+                )
+            })?;
         let (template, key) = loaded?;
         let mut ids = self
             .nodes
@@ -269,9 +267,7 @@ impl Edit<'_> {
             .map(|node| node.id.clone())
             .collect::<HashSet<_>>();
         let keys = crate::prefab::owners(&template, &key);
-        let from = crate::prefab::root_of(&self.root, &path);
-        let root = self.root.clone();
-        crate::prefab::import(self, &template, &key, &from, &root, &marker.id)?;
+        crate::prefab::import(self, &template, &key, &marker.id)?;
         self.set_instance(&marker.id, Some(keys.clone()));
         for (nested, held) in template.instances.iter() {
             self.set_instance(&format!("{}_{nested}", marker.id), Some(held.clone()));
@@ -285,7 +281,7 @@ impl Edit<'_> {
             held.extend(keys);
             self.set_instance(outer, Some(held));
         }
-        let generated = crate::prefab::instantiate(&marker, &template, &mut ids, &from, &root)?;
+        let generated = crate::prefab::instantiate(&marker, &template, &mut ids)?;
         Ok((marker, generated))
     }
 
@@ -554,11 +550,7 @@ impl Edit<'_> {
             .clone()
             .expect("a prefab instance names its prefab");
         let loaded = catch_unwind(AssertUnwindSafe(|| {
-            Loader::new(self.root.clone(), self.schema_arc()).load(
-                &self.root,
-                &prefab,
-                "the instance",
-            )
+            Loader::new(self.root.clone(), self.schema_arc()).load(&prefab, "the instance")
         }))
         .map_err(|payload| {
             format!(

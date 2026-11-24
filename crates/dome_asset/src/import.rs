@@ -16,7 +16,6 @@ use dome_schema::{AnimationRef, MeshRef, SkinRef};
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
 
 pub trait Import {
     fn import_model(&mut self, id: &str, path: &str, place: Option<&str>)
@@ -36,14 +35,17 @@ impl Import for Edit<'_> {
         if self.model_index(id).is_some() {
             return Err(format!("the scene holds the model {id}"));
         }
-        let path = PathBuf::from(path);
-        if path.as_os_str().is_empty() || !path.is_relative() {
-            return Err(format!("the model {id} holds the path {}", path.display()));
+        let path = dome_scene::relative_path(path);
+        if !dome_scene::Folder::Asset.holds(&path) {
+            return Err(format!(
+                "the model {id} holds the path {} outside the assets folder",
+                path.display(),
+            ));
         }
-        let file = self.root().join(&path);
+        let file = self.asset(&path);
         if !file.is_file() {
             return Err(format!(
-                "the model {id} names {}, which the scene root {} does not hold",
+                "the model {id} names {}, which the project {} does not hold",
                 path.display(),
                 self.root().display(),
             ));

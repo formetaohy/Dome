@@ -251,7 +251,7 @@ impl<'a> Edit<'a> {
         if self.node_index(id).is_some() {
             return Err(format!("the scene holds the node {id}"));
         }
-        self.attach_instance(Node::instance(id, path))
+        self.attach_instance(Node::instance(id, crate::folder::relative_path(path)))
     }
 
     pub fn add_mesh(&mut self, id: &str, shape: Shape) -> Result<Target, String> {
@@ -376,13 +376,16 @@ impl<'a> Edit<'a> {
     }
 
     fn relative(&self, id: &str, kind: &str, path: &str) -> Result<PathBuf, String> {
-        let path = PathBuf::from(path);
-        if path.as_os_str().is_empty() || !path.is_relative() {
-            return Err(format!("the {kind} {id} holds the path {}", path.display()));
-        }
-        if !self.root.join(&path).is_file() {
+        let path = crate::folder::relative_path(path);
+        if !crate::folder::Folder::Asset.holds(&path) {
             return Err(format!(
-                "the {kind} {id} names {}, which the scene root {} does not hold",
+                "the {kind} {id} holds the path {} outside the assets folder",
+                path.display(),
+            ));
+        }
+        if !self.scene.asset(&path).is_file() {
+            return Err(format!(
+                "the {kind} {id} names {}, which the project {} does not hold",
                 path.display(),
                 self.root.display(),
             ));

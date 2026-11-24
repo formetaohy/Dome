@@ -1,6 +1,7 @@
 use crate::component::ReferenceKind;
 use crate::edit::Edit;
 use crate::field::{axis_value, no_axis, number, split, unit, with_axis};
+use crate::folder::Folder;
 use crate::image::{ImageSource, address_name, address_of, filter_name, filter_of};
 use crate::material::MaterialAsset;
 use crate::mesh::MeshAsset;
@@ -429,17 +430,7 @@ fn set_image(
             let ImageSource::Path(held) = &mut entry.source else {
                 return Err(format!("the image {id} reads its bytes from its model"));
             };
-            let path = PathBuf::from(value.text()?);
-            if path.as_os_str().is_empty() || !path.is_relative() {
-                return Err(format!("the image {id} holds the path {}", path.display()));
-            }
-            if !scene.root.join(&path).is_file() {
-                return Err(format!(
-                    "the image {id} names {}, which the scene root {} does not hold",
-                    path.display(),
-                    scene.root.display(),
-                ));
-            }
+            let path = checked_asset(scene, "image", id, value)?;
             *held = path;
         }
         "min_filter" | "mag_filter" | "mip_filter" | "wrap_u" | "wrap_v" => {
@@ -487,20 +478,7 @@ fn set_environment(
             if field != "path" {
                 return Err(format!("the environment {id} holds no property {field}"));
             }
-            let next = PathBuf::from(value.text()?);
-            if next.as_os_str().is_empty() || !next.is_relative() {
-                return Err(format!(
-                    "the environment {id} holds the path {}",
-                    next.display(),
-                ));
-            }
-            if !scene.root.join(&next).is_file() {
-                return Err(format!(
-                    "the environment {id} names {}, which the scene root {} does not hold",
-                    next.display(),
-                    scene.root.display(),
-                ));
-            }
+            let next = checked_asset(scene, "environment", &id, value)?;
             *path = next;
         }
         crate::environment::EnvironmentSource::Atmosphere(atmosphere) => {
@@ -614,22 +592,7 @@ fn set_sound(
     if field != "path" {
         return Err(format!("the sound {} holds no property {field}", entry.id));
     }
-    let path = PathBuf::from(value.text()?);
-    if path.as_os_str().is_empty() || !path.is_relative() {
-        return Err(format!(
-            "the sound {} holds the path {}",
-            entry.id,
-            path.display()
-        ));
-    }
-    if !scene.root.join(&path).is_file() {
-        return Err(format!(
-            "the sound {} names {}, which the scene root {} does not hold",
-            entry.id,
-            path.display(),
-            scene.root.display(),
-        ));
-    }
+    let path = checked_asset(scene, "sound", &entry.id, value)?;
     entry.path = path;
     Ok(Effect::Structure)
 }
@@ -645,22 +608,7 @@ fn set_model(
     if field != "path" {
         return Err(format!("the model {} holds no property {field}", entry.id));
     }
-    let path = PathBuf::from(value.text()?);
-    if path.as_os_str().is_empty() || !path.is_relative() {
-        return Err(format!(
-            "the model {} holds the path {}",
-            entry.id,
-            path.display()
-        ));
-    }
-    if !scene.root.join(&path).is_file() {
-        return Err(format!(
-            "the model {} names {}, which the scene root {} does not hold",
-            entry.id,
-            path.display(),
-            scene.root.display(),
-        ));
-    }
+    let path = checked_asset(scene, "model", &entry.id, value)?;
     entry.path = path;
     Ok(Effect::Structure)
 }
@@ -727,6 +675,24 @@ fn image_property(entry: &crate::image::ImageEntry, field: &str) -> Option<Value
         )))),
         _ => None,
     }
+}
+
+fn checked_asset(scene: &Scene, kind: &str, id: &str, value: &Value) -> Result<PathBuf, String> {
+    let path = crate::folder::relative_path(value.text()?);
+    if !Folder::Asset.holds(&path) {
+        return Err(format!(
+            "the {kind} {id} holds the path {} outside the assets folder",
+            path.display(),
+        ));
+    }
+    if !scene.asset(&path).is_file() {
+        return Err(format!(
+            "the {kind} {id} names {}, which the project {} does not hold",
+            path.display(),
+            scene.root().display(),
+        ));
+    }
+    Ok(path)
 }
 
 fn model_property(path: &std::path::Path, field: &str) -> Option<Value> {

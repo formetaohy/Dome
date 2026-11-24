@@ -26,11 +26,11 @@ fn an_imported_skin_and_animation_deform_into_a_rendered_frame() {
 fn paint(backend: Backend) {
     let root = directory();
     let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a test opens its directory");
+    fs::create_dir_all(root.join("assets")).expect("a test opens its directory");
     let binary = skinned_triangle();
-    fs::write(root.join("model.bin"), &binary).expect("a test writes a buffer");
+    fs::write(root.join("assets/model.bin"), &binary).expect("a test writes a buffer");
     fs::write(
-        root.join("model.gltf"),
+        root.join("assets/model.gltf"),
         serde_json::to_vec(&document(binary.len())).expect("a test writes JSON"),
     )
     .expect("a test writes a model");
@@ -52,7 +52,7 @@ fn paint(backend: Backend) {
     );
     let mut scene = Scene::new(&root, schema());
     edit(&mut scene, |edit| {
-        edit.import_model("rig", "model.gltf", None)
+        edit.import_model("rig", "assets/model.gltf", None)
     })
     .expect("a scene imports a skinned model");
     edit(&mut scene, |edit| {

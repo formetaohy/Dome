@@ -10,7 +10,7 @@ use dome_schema::{observe_runtime, read_runtime_property, set_runtime_property};
 
 const SCENE: &str = r#"format = "dome_scene"
 images = []
-sounds = [{ id = "tone", path = "tone.wav" }]
+sounds = [{ id = "tone", path = "assets/tone.wav" }]
 meshes = []
 materials = []
 
@@ -296,8 +296,8 @@ fn an_authored_audio_source_installs_and_edits() {
 fn a_scene_that_differs_only_in_sound_is_not_equal() {
     let scene = Scene::parse(SCENE, ".", "the audio scene", schema());
     let streamed = SCENE.replace(
-        "sounds = [{ id = \"tone\", path = \"tone.wav\" }]",
-        "sounds = [{ id = \"tone\", path = \"tone.wav\", stream = true }]",
+        "sounds = [{ id = \"tone\", path = \"assets/tone.wav\" }]",
+        "sounds = [{ id = \"tone\", path = \"assets/tone.wav\", stream = true }]",
     );
     let other = Scene::parse(&streamed, ".", "the streamed audio scene", schema());
     assert!(!scene.sounds()[0].stream);

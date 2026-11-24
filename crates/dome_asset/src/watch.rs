@@ -64,31 +64,42 @@ impl Watch {
         desired.insert(self.path.clone(), Kind::Scene);
         for owners in root.instances().values() {
             for prefab in owners {
-                desired.insert(root.root().join(prefab), Kind::Scene);
+                desired.insert(root.prefab(prefab), Kind::Scene);
             }
         }
         for image in root.images() {
             if let Some(path) = image.source.path() {
-                desired.insert(root.root().join(path), Kind::Asset);
+                desired.insert(root.asset(path), Kind::Asset);
             }
         }
         for sound in root.sounds() {
-            desired.insert(root.root().join(&sound.path), Kind::Asset);
+            desired.insert(root.asset(&sound.path), Kind::Asset);
         }
         for environment in root.environments() {
             if let Some(path) = environment.panorama() {
-                desired.insert(root.root().join(path), Kind::Asset);
+                desired.insert(root.asset(path), Kind::Asset);
             }
         }
         for model in root.models() {
-            let path = root.root().join(&model.path);
+            let path = root.asset(&model.path);
             desired.insert(path.clone(), Kind::Model);
             let held = self.sources.dependencies(&path);
             if let Some(error) = held.error() {
                 self.errors.push(String::from(error));
             }
             for dependency in held.sources().buffers.iter().chain(&held.sources().images) {
-                desired.insert(dependency.clone(), Kind::Asset);
+                let inside = dependency
+                    .strip_prefix(root.root())
+                    .is_ok_and(|relative| dome_scene::Folder::Asset.holds(relative));
+                if inside {
+                    desired.insert(dependency.clone(), Kind::Asset);
+                } else {
+                    self.errors.push(format!(
+                        "the model {} reads {} outside the assets folder",
+                        model.id,
+                        dependency.display(),
+                    ));
+                }
             }
         }
         let mut files = Vec::with_capacity(desired.len());

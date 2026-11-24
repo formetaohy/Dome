@@ -42,7 +42,7 @@ materials = []
 
 [[nodes]]
 id = "prop"
-prefab = "prop.toml"
+prefab = "prefabs/prop.toml"
 
 [nodes.transform]
 translation = [0.0, 0.0, 0.0]
@@ -134,10 +134,10 @@ motor_force = 0.0
 fn deleting_a_prefab_instance_prunes_the_assets_it_owns() {
     let root = directory("deletion_instance");
     let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a test opens its directory");
-    fs::write(root.join("prop.toml"), PROP).expect("a test writes its prefab");
+    fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
+    fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), INSTANCE).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
     assert_eq!(
         scene.meshes().len(),
         1,

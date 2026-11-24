@@ -12,16 +12,21 @@ use dome_schema::{Registry, SceneSync};
 use dome_window::{Event, Flow, Handler, Input, Window, WindowConfig, run as run_window};
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+pub struct SceneConfig {
+    pub path: PathBuf,
+    pub root: PathBuf,
+}
 
 pub struct AppConfig {
     pub window: WindowConfig,
     pub gpu: GpuRequest,
     pub fixed_hz: f64,
     pub max_fixed_steps: u32,
-    pub scene: Option<PathBuf>,
+    pub scene: Option<SceneConfig>,
     pub audio: bool,
     pub debug: bool,
     pub registry: Arc<Registry>,
@@ -108,6 +113,7 @@ const ASSET_UPLOAD_BYTES: u64 = 8 << 20;
 
 struct LiveScene {
     path: PathBuf,
+    root: PathBuf,
     scene: Scene,
     assets: Library,
     sync: SceneSync,
@@ -125,13 +131,13 @@ struct Reload {
 
 impl LiveScene {
     fn new(
-        path: PathBuf,
+        file: SceneConfig,
         registry: &Arc<Registry>,
         renderer: &mut Renderer,
         world: &mut World,
         blocking: bool,
     ) -> Self {
-        let scene = Scene::load(&path, registry.clone());
+        let scene = Scene::load(&file.path, file.root.clone(), registry.clone());
         let mut assets = Library::new();
         let mut sync = SceneSync::new(registry.clone());
         let mut messages = Vec::new();
@@ -151,9 +157,10 @@ impl LiveScene {
             assert!(assets.request(&scene), "a new library loads its scene");
             (Some(scene.clone()), Some(scene.clone()))
         };
-        let watch = Watch::new(&path, &scene);
+        let watch = Watch::new(&file.path, &scene);
         Self {
-            path,
+            path: file.path,
+            root: file.root,
             scene,
             assets,
             sync,
@@ -176,7 +183,7 @@ impl LiveScene {
             self.renew = true;
             if change.scene {
                 match catch_unwind(AssertUnwindSafe(|| {
-                    Scene::load(&self.path, registry.clone())
+                    Scene::load(&self.path, self.root.clone(), registry.clone())
                 })) {
                     Ok(scene) => {
                         self.watch.renew(&scene);
@@ -345,12 +352,15 @@ impl Session {
     fn load_scene(
         &mut self,
         world: &mut World,
-        path: &Path,
+        file: &SceneConfig,
         registry: &Arc<Registry>,
         blocking: bool,
     ) {
         self.live = Some(LiveScene::new(
-            path.to_path_buf(),
+            SceneConfig {
+                path: file.path.clone(),
+                root: file.root.clone(),
+            },
             registry,
             &mut self.renderer,
             world,
@@ -592,8 +602,8 @@ impl App {
             .resource_mut::<Input>()
             .expect("an application keeps its input")
             .handle(Event::Focused(focused));
-        if let Some(path) = &self.config.scene {
-            session.load_scene(&mut self.world, path, &self.config.registry, blocking);
+        if let Some(file) = &self.config.scene {
+            session.load_scene(&mut self.world, file, &self.config.registry, blocking);
             self.reload = session.live.as_mut().and_then(LiveScene::take_error);
         }
         if !blocking && self.config.scene.is_some() {

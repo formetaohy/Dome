@@ -7,6 +7,7 @@ mod document;
 mod edit;
 mod environment;
 pub mod field;
+mod folder;
 mod graph;
 mod graph_edit;
 mod image;
@@ -43,6 +44,7 @@ pub use dome_render::environment::Atmosphere;
 pub use edit::Edit;
 pub use environment::{EnvironmentEntry, EnvironmentSource};
 pub use field::Axis;
+pub use folder::{Folder, relative_path};
 pub use graph::{
     GraphAsset, GraphCondition, GraphEntry, GraphParameter, GraphState, GraphTransition,
 };

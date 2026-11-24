@@ -43,7 +43,7 @@ materials = []
 
 [[nodes]]
 id = "prop"
-prefab = "prop.toml"
+prefab = "prefabs/prop.toml"
 
 [nodes.transform]
 translation = [0.0, 0.0, 0.0]
@@ -55,10 +55,10 @@ scale = [1.0, 1.0, 1.0]
 fn an_edit_transaction_returns_the_scene_it_edited() {
     let root = directory("edit_revert");
     let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a test opens its directory");
-    fs::write(root.join("prop.toml"), PROP).expect("a test writes its prefab");
+    fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
+    fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), INSTANCE).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
     let before = scene.write();
     let (_, delta) = scene
         .edit(|edit| {
@@ -133,10 +133,10 @@ fn an_edit_transaction_returns_the_scene_it_edited() {
 fn an_unpacked_instance_keeps_the_nodes_and_assets_it_materialized() {
     let root = directory("edit_unpack");
     let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a test opens its directory");
-    fs::write(root.join("prop.toml"), PROP).expect("a test writes its prefab");
+    fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
+    fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), INSTANCE).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
     let tint = dome_scene::Value::Vector(dome_math::Vec3::new(0.25, 0.5, 0.75));
     edit(&mut scene, |edit| {
         edit.set_property(&Target::Node(String::from("prop_body")), "mesh.tint", &tint)
@@ -183,7 +183,7 @@ materials = []
 
 [[nodes]]
 id = "prop"
-prefab = "prop.toml"
+prefab = "prefabs/prop.toml"
 
 [nodes.transform]
 translation = [0.0, 0.0, 0.0]
@@ -203,10 +203,10 @@ value = [1.0, 2.0, 3.0]
 fn an_override_of_a_node_the_instance_lacks_is_refused() {
     let root = directory("edit_override");
     let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a test opens its directory");
-    fs::write(root.join("prop.toml"), PROP).expect("a test writes its prefab");
+    fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
+    fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), OVERRIDING).expect("a test writes its scene");
-    Scene::load(root.join("scene.toml"), schema());
+    Scene::load(root.join("scene.toml"), &root, schema());
 }
 
 fn directory(name: &str) -> PathBuf {

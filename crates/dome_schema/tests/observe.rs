@@ -24,7 +24,7 @@ materials = []
 
 [[models]]
 id = "rig"
-path = "rig.glb"
+path = "assets/rig.glb"
 
 [[skins]]
 id = "rig_skin_0"
@@ -74,7 +74,7 @@ fade = 0.25
 
 [[nodes]]
 id = "prop"
-prefab = "prop.toml"
+prefab = "prefabs/prop.toml"
 
 [nodes.transform]
 translation = [0.0, 0.0, 0.0]
@@ -86,10 +86,10 @@ scale = [1.0, 1.0, 1.0]
 fn an_observed_scene_holds_every_asset_and_every_node_it_installed() {
     let root = directory("observe");
     let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a test opens its directory");
-    fs::write(root.join("prop.toml"), PREFAB).expect("a test writes its prefab");
+    fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
+    fs::write(root.join("prefabs/prop.toml"), PREFAB).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), SCENE).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
     edit(&mut scene, |edit| {
         edit.insert_child("prop", dome_scene::Node::new("antenna"))
     })

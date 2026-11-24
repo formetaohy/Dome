@@ -1,6 +1,7 @@
 use crate::animation::AnimationEntry;
 use crate::component::{ReferenceKind, Schema};
 use crate::environment::EnvironmentEntry;
+use crate::folder::Folder;
 use crate::graph::GraphEntry;
 use crate::image::ImageEntry;
 use crate::material::MaterialEntry;
@@ -113,14 +114,10 @@ impl Scene {
         }
     }
 
-    pub fn load(path: impl AsRef<Path>, schema: Arc<dyn Schema>) -> Self {
+    pub fn load(path: impl AsRef<Path>, root: impl Into<PathBuf>, schema: Arc<dyn Schema>) -> Self {
         let path = path.as_ref();
         let text = fs::read_to_string(path)
             .unwrap_or_else(|error| panic!("the scene {} reads no text: {error}", path.display()));
-        let root = match path.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-            _ => PathBuf::from("."),
-        };
         Self::parse(
             &text,
             root,
@@ -136,7 +133,7 @@ impl Scene {
         schema: Arc<dyn Schema>,
     ) -> Self {
         let root = root.into();
-        crate::prefab::Loader::new(root.clone(), schema).document(text, root, what)
+        crate::prefab::Loader::new(root.clone(), schema).document(text, what)
     }
 
     pub fn write(&self) -> String {
@@ -172,6 +169,14 @@ impl Scene {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn asset(&self, path: &Path) -> PathBuf {
+        Folder::Asset.resolve(&self.root, path)
+    }
+
+    pub fn prefab(&self, path: &Path) -> PathBuf {
+        Folder::Prefab.resolve(&self.root, path)
     }
 
     pub fn instances(&self) -> &BTreeMap<String, BTreeSet<PathBuf>> {
@@ -553,8 +558,8 @@ impl Scene {
                     .as_deref()
                     .expect("a prefab instance names its prefab");
                 assert!(
-                    !path.as_os_str().is_empty() && path.is_relative(),
-                    "the prefab instance {} holds the path {}",
+                    Folder::Prefab.holds(path),
+                    "the prefab instance {} holds the path {} outside the prefabs folder",
                     node.id,
                     path.display(),
                 );
@@ -694,8 +699,8 @@ impl Scene {
         }
         for model in self.models.iter() {
             assert!(
-                !model.path.as_os_str().is_empty() && model.path.is_relative(),
-                "{what} holds the model {} of path {}",
+                Folder::Asset.holds(&model.path),
+                "{what} holds the model {} of path {} outside the assets folder",
                 model.id,
                 model.path.display(),
             );
@@ -703,8 +708,8 @@ impl Scene {
         for image in self.images.iter() {
             match &image.source {
                 crate::image::ImageSource::Path(path) => assert!(
-                    !path.as_os_str().is_empty() && path.is_relative(),
-                    "{what} holds the image {} of path {}",
+                    Folder::Asset.holds(path),
+                    "{what} holds the image {} of path {} outside the assets folder",
                     image.id,
                     path.display(),
                 ),
@@ -717,11 +722,21 @@ impl Scene {
         }
         for sound in self.sounds.iter() {
             assert!(
-                !sound.path.as_os_str().is_empty() && sound.path.is_relative(),
-                "{what} holds the sound {} of path {}",
+                Folder::Asset.holds(&sound.path),
+                "{what} holds the sound {} of path {} outside the assets folder",
                 sound.id,
                 sound.path.display(),
             );
+        }
+        for environment in self.environments.iter() {
+            if let Some(path) = environment.panorama() {
+                assert!(
+                    Folder::Asset.holds(path),
+                    "{what} holds the environment {} of path {} outside the assets folder",
+                    environment.id,
+                    path.display(),
+                );
+            }
         }
         for skin in self.skins.iter() {
             assert!(

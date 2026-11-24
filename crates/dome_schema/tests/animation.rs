@@ -49,7 +49,7 @@ materials = []
 
 [[models]]
 id = "rig"
-path = "rig.glb"
+path = "assets/rig.glb"
 
 [[skins]]
 id = "rig_skin_0"

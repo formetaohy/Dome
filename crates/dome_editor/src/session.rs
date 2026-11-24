@@ -2,22 +2,7 @@ use crate::action::Action;
 use crate::preview::Preview;
 use dome_gpu::{GpuContext, Surface};
 use dome_scene::Scene;
-use dome_ui::{Clipboard, Ui};
-
-#[derive(Default)]
-struct MemoryClipboard {
-    text: Option<String>,
-}
-
-impl Clipboard for MemoryClipboard {
-    fn read(&mut self) -> Option<String> {
-        self.text.clone()
-    }
-
-    fn write(&mut self, text: &str) {
-        self.text = Some(String::from(text));
-    }
-}
+use dome_ui::{MemoryClipboard, Ui};
 
 pub(crate) struct Session {
     pub(crate) context: GpuContext,

@@ -61,7 +61,11 @@ impl Node {
 
     pub fn instance(id: impl Into<String>, prefab: impl Into<PathBuf>) -> Self {
         let mut node = Self::new(id);
-        node.prefab = Some(prefab.into());
+        let path = prefab.into();
+        node.prefab = Some(match path.to_str() {
+            Some(text) => crate::folder::relative_path(text),
+            None => path,
+        });
         node
     }
 

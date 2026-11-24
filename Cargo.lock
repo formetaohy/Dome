@@ -349,6 +349,9 @@ version = "0.1.0"
 dependencies = [
  "dome_app",
  "dome_editor",
+ "dome_launcher",
+ "dome_project",
+ "dome_window",
 ]
 
 [[package]]
@@ -423,6 +426,7 @@ dependencies = [
  "dome_gpu",
  "dome_math",
  "dome_physics",
+ "dome_project",
  "dome_render",
  "dome_scene",
  "dome_schema",
@@ -469,6 +473,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dome_launcher"
+version = "0.1.0"
+dependencies = [
+ "dome_gpu",
+ "dome_math",
+ "dome_project",
+ "dome_ui",
+ "dome_window",
+]
+
+[[package]]
 name = "dome_math"
 version = "0.1.0"
 
@@ -478,6 +493,17 @@ version = "0.1.0"
 dependencies = [
  "dome_ecs",
  "dome_math",
+]
+
+[[package]]
+name = "dome_project"
+version = "0.1.0"
+dependencies = [
+ "dome_math",
+ "dome_render",
+ "dome_scene",
+ "dome_schema",
+ "dome_toml",
 ]
 
 [[package]]

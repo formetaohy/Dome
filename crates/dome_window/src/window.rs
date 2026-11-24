@@ -76,6 +76,10 @@ impl Window {
         self.raw.set_title(title);
     }
 
+    pub fn hide(&self) {
+        self.raw.set_visible(false);
+    }
+
     pub fn request_redraw(&self) {
         self.raw.request_redraw();
     }

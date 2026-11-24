@@ -94,6 +94,18 @@ pub(crate) fn modal(
                 title,
                 TextStyle::new(theme.font(Level::Headline), palette.on_surface),
             ),
+            Element::row()
+                .height(Length::Fixed(24.0))
+                .padding(Edges::symmetric(11.0, 0.0))
+                .align(Align::Center)
+                .background(
+                    Surface::fill(palette.surface_container_highest)
+                        .with_corners(Corners::capsule()),
+                )
+                .children([label(
+                    format!("{}/", dialog.kind.folder().name()),
+                    TextStyle::new(theme.font(Level::Monospace), palette.on_surface_variant),
+                )]),
         ]);
 
     let field_width = DIALOG_WIDTH - 40.0;

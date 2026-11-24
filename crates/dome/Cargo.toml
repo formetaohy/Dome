@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 dome_app = { workspace = true }
 dome_editor = { workspace = true }
+dome_launcher = { workspace = true }
+dome_project = { workspace = true }
+dome_window = { workspace = true }

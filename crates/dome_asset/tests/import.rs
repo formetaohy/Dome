@@ -10,11 +10,11 @@ use std::path::PathBuf;
 fn an_imported_model_expands_into_the_assets_and_nodes_it_holds() {
     let root = directory("import");
     let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a test opens its directory");
+    fs::create_dir_all(root.join("assets")).expect("a test opens its directory");
     let texture = dome_image::encode(1, 1, &[255, 0, 0, 255]);
-    fs::write(root.join("texture.png"), &texture).expect("a test writes a texture");
+    fs::write(root.join("assets/texture.png"), &texture).expect("a test writes a texture");
     let binary = triangle();
-    fs::write(root.join("model.bin"), &binary).expect("a test writes a buffer");
+    fs::write(root.join("assets/model.bin"), &binary).expect("a test writes a buffer");
     let document = json!({
         "asset": { "version": "2.0" },
         "scene": 0,
@@ -60,12 +60,12 @@ fn an_imported_model_expands_into_the_assets_and_nodes_it_holds() {
         "buffers": [{ "uri": "model.bin", "byteLength": binary.len() }],
     });
     fs::write(
-        root.join("model.gltf"),
+        root.join("assets/model.gltf"),
         serde_json::to_vec(&document).expect("a test writes JSON"),
     )
     .expect("a test writes a model");
     let rig = skinned_triangle();
-    fs::write(root.join("rig.bin"), &rig).expect("a test writes a buffer");
+    fs::write(root.join("assets/rig.bin"), &rig).expect("a test writes a buffer");
     let document = json!({
         "asset": { "version": "2.0" },
         "scene": 0,
@@ -107,19 +107,19 @@ fn an_imported_model_expands_into_the_assets_and_nodes_it_holds() {
         "buffers": [{ "uri": "rig.bin", "byteLength": rig.len() }],
     });
     fs::write(
-        root.join("rig.gltf"),
+        root.join("assets/rig.gltf"),
         serde_json::to_vec(&document).expect("a test writes JSON"),
     )
     .expect("a test writes a model");
 
     let mut scene = Scene::new(&root, schema());
     let target = edit(&mut scene, |edit| {
-        edit.import_model("box", "model.gltf", None)
+        edit.import_model("box", "assets/model.gltf", None)
     })
     .expect("a scene imports a model");
     assert_eq!(target, Target::Node(String::from("box")));
     let target = edit(&mut scene, |edit| {
-        edit.import_model("rig", "rig.gltf", None)
+        edit.import_model("rig", "assets/rig.gltf", None)
     })
     .expect("a scene imports a skinned model");
     assert_eq!(target, Target::Node(String::from("rig")));
@@ -214,7 +214,7 @@ fn an_imported_model_expands_into_the_assets_and_nodes_it_holds() {
     assert!(
         edit(&mut parsed, |edit| edit.import_model(
             "box",
-            "model.gltf",
+            "assets/model.gltf",
             None
         ))
         .is_err()

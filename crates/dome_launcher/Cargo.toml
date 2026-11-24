@@ -1,0 +1,17 @@
+[package]
+name = "dome_launcher"
+version.workspace = true
+edition.workspace = true
+description = "The Dome launcher: the projects it remembers and the editor it starts"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_gpu = { workspace = true }
+dome_math = { workspace = true }
+dome_project = { workspace = true }
+dome_ui = { workspace = true }
+dome_window = { workspace = true }
