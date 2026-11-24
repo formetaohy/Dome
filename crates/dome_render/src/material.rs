@@ -4,7 +4,6 @@ use dome_gpu::{
     AddressMode, Device, FilterMode, Queue, Sampler, SamplerDesc, SamplerTable, Texture,
     TextureFormat, TextureTable, TextureUsages,
 };
-use dome_gpu::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use dome_math::Vec3;
 use std::ops::Range;
 
@@ -276,8 +275,9 @@ impl MaterialLibrary {
                 compare: None,
             },
         );
-        let textures = TextureTable::new(device, TEXTURE_TABLE_CAPACITY, &white_srgb);
-        let samplers = SamplerTable::new(device, SAMPLER_TABLE_CAPACITY, &clamp);
+        let capacity = *device.tables();
+        let textures = TextureTable::new(device, capacity.textures, &white_srgb);
+        let samplers = SamplerTable::new(device, capacity.samplers, &clamp);
         let mut library = Self {
             textures,
             samplers,
@@ -295,9 +295,9 @@ impl MaterialLibrary {
             white_linear_index: 0,
             flat_normal_index: 0,
             clamp_index: 0,
-            texture_counts: vec![0; TEXTURE_TABLE_CAPACITY as usize],
+            texture_counts: vec![0; capacity.textures as usize],
             texture_free: Vec::new(),
-            sampler_counts: vec![0; SAMPLER_TABLE_CAPACITY as usize],
+            sampler_counts: vec![0; capacity.samplers as usize],
             sampler_free: Vec::new(),
         };
         library.reset();

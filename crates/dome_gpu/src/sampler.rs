@@ -1,5 +1,5 @@
 use crate::context::Device;
-use crate::identity::ResourceId;
+use crate::identity::{Liveness, ResourceId};
 pub use wgpu::{AddressMode, CompareFunction, FilterMode, MipmapFilterMode};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -25,7 +25,7 @@ pub struct Sampler {
     device: Device,
     native: wgpu::Sampler,
     desc: SamplerDesc,
-    identity: ResourceId,
+    liveness: std::sync::Arc<Liveness>,
 }
 
 impl Sampler {
@@ -50,7 +50,7 @@ impl Sampler {
             device: device.clone(),
             native,
             desc,
-            identity: ResourceId::next(),
+            liveness: Liveness::new(device.retirements()),
         }
     }
 
@@ -59,7 +59,7 @@ impl Sampler {
     }
 
     pub fn identity(&self) -> ResourceId {
-        self.identity
+        self.liveness.id()
     }
 
     pub(crate) fn device(&self) -> &Device {

@@ -199,34 +199,22 @@ impl Renderer {
                 compare: Some(CompareFunction::LessEqual),
             },
         );
-        let limits = device.limits();
-        assert!(
-            dome_gpu::TEXTURE_TABLE_CAPACITY <= limits.max_sampled_textures_per_shader_stage,
-            "the renderer material table of {} images outruns the device limit of {}",
-            dome_gpu::TEXTURE_TABLE_CAPACITY,
-            limits.max_sampled_textures_per_shader_stage,
-        );
-        assert!(
-            dome_gpu::SAMPLER_TABLE_CAPACITY <= limits.max_samplers_per_shader_stage,
-            "the renderer material table of {} samplers outruns the device limit of {}",
-            dome_gpu::SAMPLER_TABLE_CAPACITY,
-            limits.max_samplers_per_shader_stage,
-        );
+        let tables = *device.tables();
         let draw = GraphicsPipeline::new_depth(
             &device,
-            program::instancing(),
+            program::instancing(tables),
             TextureFormat::Rgba16Float,
             PipelineState::COVERED,
         );
         let capture_draw = GraphicsPipeline::new_depth(
             &device,
-            program::instancing(),
+            program::instancing(tables),
             TextureFormat::Rgba16Float,
             PipelineState::DEPTH_WRITE,
         );
         let transparent_draw = GraphicsPipeline::new_depth(
             &device,
-            program::instancing(),
+            program::instancing(tables),
             TextureFormat::Rgba16Float,
             PipelineState::TRANSPARENT,
         );
@@ -244,12 +232,12 @@ impl Renderer {
         );
         let shadow = GraphicsPipeline::new_depth_only(
             &device,
-            program::shadowing(),
+            program::shadowing(tables),
             PipelineState::DEPTH_WRITE,
         );
         let depth = GraphicsPipeline::new_depth_only(
             &device,
-            program::depth_prepass(),
+            program::depth_prepass(tables),
             PipelineState::DEPTH_WRITE,
         );
         let hzb_base = GraphicsPipeline::new(

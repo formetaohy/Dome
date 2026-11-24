@@ -1,3 +1,7 @@
+use crate::table::TableCapacity;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BindingKind {
     Storage,
@@ -127,6 +131,10 @@ impl BindingSpec {
     }
 }
 
+pub const TEXTURE_TABLE_EXTENT: &str = "TEXTURE_TABLE_EXTENT";
+pub const SAMPLER_TABLE_EXTENT: &str = "SAMPLER_TABLE_EXTENT";
+
+#[derive(Clone, Copy)]
 pub struct GraphicsShader {
     pub label: &'static str,
     pub source: &'static str,
@@ -136,6 +144,7 @@ pub struct GraphicsShader {
     pub targets: usize,
 }
 
+#[derive(Clone, Copy)]
 pub struct ComputeShader {
     pub label: &'static str,
     pub source: &'static str,
@@ -147,6 +156,28 @@ pub struct ComputeShader {
 impl GraphicsShader {
     pub fn label(&self) -> &'static str {
         self.label
+    }
+
+    pub fn specialized(&'static self, tables: TableCapacity) -> &'static Self {
+        static SPECIALIZED: LazyLock<
+            Mutex<HashMap<(usize, TableCapacity), &'static GraphicsShader>>,
+        > = LazyLock::new(|| Mutex::new(HashMap::new()));
+        let key = (std::ptr::from_ref(self) as usize, tables);
+        let mut held = SPECIALIZED
+            .lock()
+            .expect("a specialized program cache is never poisoned");
+        if let Some(shader) = held.get(&key) {
+            return shader;
+        }
+        let source: &'static str = Box::leak(
+            self.source
+                .replace(TEXTURE_TABLE_EXTENT, &tables.textures.to_string())
+                .replace(SAMPLER_TABLE_EXTENT, &tables.samplers.to_string())
+                .into_boxed_str(),
+        );
+        let shader: &'static Self = Box::leak(Box::new(Self { source, ..*self }));
+        held.insert(key, shader);
+        shader
     }
 }
 

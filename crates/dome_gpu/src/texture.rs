@@ -1,5 +1,5 @@
 use crate::context::Device;
-use crate::identity::ResourceId;
+use crate::identity::{Liveness, ResourceId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 pub use wgpu::{TextureFormat, TextureUsages};
@@ -70,7 +70,7 @@ pub struct Texture {
     mip_levels: u32,
     format: TextureFormat,
     usages: TextureUsages,
-    identity: ResourceId,
+    liveness: std::sync::Arc<Liveness>,
     base_mip: u32,
     view: wgpu::TextureView,
     views: Arc<Mutex<HashMap<u32, wgpu::TextureView>>>,
@@ -124,7 +124,7 @@ impl Texture {
             mip_levels,
             format,
             usages,
-            identity: ResourceId::next(),
+            liveness: Liveness::new(device.retirements()),
             base_mip: 0,
             view,
             views: Arc::new(Mutex::new(HashMap::new())),
@@ -148,7 +148,7 @@ impl Texture {
             mip_levels: 1,
             format,
             usages,
-            identity: ResourceId::next(),
+            liveness: Liveness::new(device.retirements()),
             base_mip: 0,
             view,
             views: Arc::new(Mutex::new(HashMap::new())),
@@ -161,7 +161,7 @@ impl Texture {
     }
 
     pub fn identity(&self) -> ResourceId {
-        self.identity
+        self.liveness.id()
     }
 
     pub fn width(&self) -> u32 {
@@ -350,7 +350,7 @@ impl Texture {
             mip_levels: 1,
             format: self.format,
             usages: self.usages,
-            identity: ResourceId::next(),
+            liveness: Liveness::new(self.device.retirements()),
             base_mip: self.base_mip + level,
             view,
             views: Arc::clone(&self.views),

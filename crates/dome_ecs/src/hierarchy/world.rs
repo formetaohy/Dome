@@ -58,7 +58,7 @@ pub fn set_parent(world: &mut World, child: Entity, parent: Entity) {
     }
     world.tree.attach(child, parent);
     world.store(child, Parent::new(parent));
-    world.bump_hierarchy();
+    world.reposition(child);
 }
 
 pub fn clear_parent(world: &mut World, child: Entity) -> bool {
@@ -67,6 +67,6 @@ pub fn clear_parent(world: &mut World, child: Entity) -> bool {
     };
     world.tree.detach(child, previous);
     world.drop_component::<Parent>(child);
-    world.bump_hierarchy();
+    world.reposition(child);
     true
 }

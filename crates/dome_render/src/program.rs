@@ -24,7 +24,7 @@ use crate::abi::{
     IRRADIANCE_PARTIALS, LIGHT_CAPACITY, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE, SHADOW_CASCADES,
     VERTEX_FLOATS, WORKGROUP,
 };
-use dome_gpu::{BindingSpec, ComputeShader, GraphicsShader};
+use dome_gpu::{BindingSpec, ComputeShader, GraphicsShader, TableCapacity};
 
 pub(crate) const CULL_VIEW: u32 = 0;
 pub(crate) const CULL_INSTANCES: u32 = 1;

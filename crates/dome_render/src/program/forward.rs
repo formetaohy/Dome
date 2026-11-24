@@ -134,14 +134,14 @@ const MOTION_VECTORS: GraphicsShader = GraphicsShader {
     targets: 1,
 };
 
-pub(crate) fn instancing() -> &'static GraphicsShader {
-    &INSTANCING
+pub(crate) fn instancing(tables: TableCapacity) -> &'static GraphicsShader {
+    INSTANCING.specialized(tables)
 }
-pub(crate) fn shadowing() -> &'static GraphicsShader {
-    &SHADOWING
+pub(crate) fn shadowing(tables: TableCapacity) -> &'static GraphicsShader {
+    SHADOWING.specialized(tables)
 }
-pub(crate) fn depth_prepass() -> &'static GraphicsShader {
-    &DEPTH_PREPASS
+pub(crate) fn depth_prepass(tables: TableCapacity) -> &'static GraphicsShader {
+    DEPTH_PREPASS.specialized(tables)
 }
 pub(crate) fn picking() -> &'static GraphicsShader {
     &PICKING
@@ -149,6 +149,6 @@ pub(crate) fn picking() -> &'static GraphicsShader {
 pub(crate) fn debug_lines() -> &'static GraphicsShader {
     &DEBUG_LINES
 }
-pub(crate) fn motion_vectors() -> &'static GraphicsShader {
-    &MOTION_VECTORS
+pub(crate) fn motion_vectors(tables: TableCapacity) -> &'static GraphicsShader {
+    MOTION_VECTORS.specialized(tables)
 }

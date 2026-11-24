@@ -18,9 +18,14 @@ pub use context::{Device, Gpu, GpuRequest, GpuUnavailable, Queue};
 pub use identity::ResourceId;
 pub use pipeline::{ComputePipeline, GraphicsPipeline, PipelineState};
 pub use sampler::{AddressMode, CompareFunction, FilterMode, Sampler, SamplerDesc};
-pub use shader::{BindingKind, BindingSpec, ComputeShader, GraphicsShader};
+pub use shader::{
+    BindingKind, BindingSpec, ComputeShader, GraphicsShader, SAMPLER_TABLE_EXTENT,
+    TEXTURE_TABLE_EXTENT,
+};
 pub use surface::{Surface, SurfaceFrame, WindowHandle};
-pub use table::{SAMPLER_TABLE_CAPACITY, SamplerTable, TEXTURE_TABLE_CAPACITY, TextureTable};
+pub use table::{
+    SAMPLER_TABLE_CAPACITY, SamplerTable, TEXTURE_TABLE_CAPACITY, TableCapacity, TextureTable,
+};
 pub use texture::{Texture, TextureFormat, TextureFormatExt, TextureRegion, TextureUsages};
 pub use wgpu::SubmissionIndex;
 

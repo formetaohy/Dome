@@ -1391,7 +1391,12 @@ impl Editor {
         match event {
             Event::Modifiers(state) => self.modifiers = *state,
             Event::Resized { .. } | Event::ScaleFactorChanged { .. } => {
-                if let Some(session) = &mut self.session {
+                if size.0 == 0 || size.1 == 0 {
+                    return;
+                }
+                if let Some(session) = &mut self.session
+                    && (session.surface.width() != size.0 || session.surface.height() != size.1)
+                {
                     session.surface.resize(size.0, size.1);
                 }
             }

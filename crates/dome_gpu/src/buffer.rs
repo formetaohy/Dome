@@ -1,5 +1,5 @@
 use crate::context::Device;
-use crate::identity::ResourceId;
+use crate::identity::{Liveness, ResourceId};
 pub use wgpu::BufferUsages;
 
 #[derive(Clone)]
@@ -8,7 +8,7 @@ pub struct GpuBuffer {
     native: wgpu::Buffer,
     size: u64,
     usage: BufferUsages,
-    identity: ResourceId,
+    liveness: std::sync::Arc<Liveness>,
 }
 
 #[derive(Clone, Copy)]
@@ -55,12 +55,12 @@ impl GpuBuffer {
             native,
             size,
             usage,
-            identity: ResourceId::next(),
+            liveness: Liveness::new(device.retirements()),
         }
     }
 
     pub fn identity(&self) -> ResourceId {
-        self.identity
+        self.liveness.id()
     }
 
     pub fn size(&self) -> u64 {

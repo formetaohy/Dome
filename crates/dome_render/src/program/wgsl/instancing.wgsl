@@ -13,8 +13,8 @@
 @group(0) @binding(12) var<storage, read> vertices: array<f32>;
 @group(0) @binding(13) var<storage, read> lights: array<u32>;
 @group(0) @binding(14) var<storage, read> point_light: array<u32>;
-@group(1) @binding(0) var textures: binding_array<texture_2d<f32>, 1024>;
-@group(1) @binding(1) var samplers: binding_array<sampler, 64>;
+@group(1) @binding(0) var textures: binding_array<texture_2d<f32>, TEXTURE_TABLE_EXTENT>;
+@group(1) @binding(1) var samplers: binding_array<sampler, SAMPLER_TABLE_EXTENT>;
 @group(2) @binding(0) var shadows: texture_depth_2d;
 @group(2) @binding(1) var shadower: sampler_comparison;
 @group(2) @binding(2) var radiance: texture_2d<f32>;
@@ -23,8 +23,8 @@
 @group(2) @binding(5) var brdf_sampler: sampler;
 @group(2) @binding(6) var point_shadows: texture_depth_2d;
 @group(2) @binding(7) var point_shadower: sampler_comparison;
-@group(2) @binding(8) var probe_textures: binding_array<texture_2d<f32>, 1024>;
-@group(2) @binding(9) var probe_samplers: binding_array<sampler, 64>;
+@group(2) @binding(8) var probe_textures: binding_array<texture_2d<f32>, TEXTURE_TABLE_EXTENT>;
+@group(2) @binding(9) var probe_samplers: binding_array<sampler, SAMPLER_TABLE_EXTENT>;
 
 fn clamped(value: f32, low: f32, high: f32) -> f32 {
     return min(max(value, low), high);

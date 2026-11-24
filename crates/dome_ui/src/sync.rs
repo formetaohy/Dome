@@ -68,7 +68,7 @@ impl<A: Clone> Ui<A> {
                 .runtime
                 .edit
                 .as_ref()
-                .map(|edit| edit.blink_remaining(elapsed));
+                .map(|edit| edit.blink_remaining(self.time));
             if let Some(remaining) = blink {
                 self.tree.nodes[id].paint_dirty = true;
                 self.wake(remaining);

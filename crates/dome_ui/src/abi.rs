@@ -51,8 +51,10 @@ mod abi_layout {
 
     #[test]
     fn the_shader_records_match_their_rust_layout() {
-        let source = include_str!("wgsl/paint.wgsl");
-        let module = naga::front::wgsl::parse_str(source)
+        let source = include_str!("wgsl/paint.wgsl")
+            .replace(dome_gpu::TEXTURE_TABLE_EXTENT, "1024")
+            .replace(dome_gpu::SAMPLER_TABLE_EXTENT, "64");
+        let module = naga::front::wgsl::parse_str(&source)
             .unwrap_or_else(|error| panic!("the shader records parse: {error}"));
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),

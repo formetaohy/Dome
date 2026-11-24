@@ -49,6 +49,7 @@ struct State {
     device: wgpu::Device,
     queue: wgpu::Queue,
     limits: wgpu::Limits,
+    tables: crate::table::TableCapacity,
     features: wgpu::Features,
     cache: Cache,
 }
@@ -189,6 +190,7 @@ impl Device {
             )));
         }
         let limits = adapter.limits();
+        let tables = crate::table::TableCapacity::of(&limits);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("dome"),
             required_features: REQUIRED_FEATURES,
@@ -203,6 +205,7 @@ impl Device {
                 device,
                 queue,
                 limits,
+                tables,
                 features: offered & REQUIRED_FEATURES,
                 cache: Cache::default(),
             }),
@@ -211,6 +214,14 @@ impl Device {
 
     pub fn limits(&self) -> &wgpu::Limits {
         &self.state.limits
+    }
+
+    pub fn tables(&self) -> &crate::table::TableCapacity {
+        &self.state.tables
+    }
+
+    pub fn cached_bind_groups(&self) -> usize {
+        self.state.cache.len()
     }
 
     pub fn features(&self) -> wgpu::Features {
@@ -235,6 +246,10 @@ impl Device {
 
     pub(crate) fn cache(&self) -> &Cache {
         &self.state.cache
+    }
+
+    pub(crate) fn retirements(&self) -> &Arc<crate::identity::Retirements> {
+        self.state.cache.retirements()
     }
 
     pub(crate) fn same(&self, other: &Self) -> bool {

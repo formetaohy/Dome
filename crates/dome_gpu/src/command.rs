@@ -695,12 +695,15 @@ impl Submission {
             "a submission crosses compute devices"
         );
         let Self {
-            encoder, surface, ..
+            device,
+            encoder,
+            surface,
         } = self;
         let index = queue.native().submit([encoder.finish()]);
         if let Some(surface) = surface {
             queue.native().present(surface);
         }
+        device.cache().bury();
         index
     }
 }

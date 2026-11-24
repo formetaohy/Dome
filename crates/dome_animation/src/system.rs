@@ -3,7 +3,10 @@ use dome_ecs::{LocalTransform, World};
 
 pub fn apply(world: &mut World, machine: &AnimationMachine) {
     for (target, transform) in machine.pose(world) {
-        world.insert(target, LocalTransform(transform));
+        let held = LocalTransform(transform);
+        if world.get::<LocalTransform>(target) != Some(&held) {
+            world.insert(target, held);
+        }
     }
 }
 

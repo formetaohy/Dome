@@ -1,16 +1,48 @@
 use crate::context::Device;
-use crate::identity::ResourceId;
+use crate::identity::Liveness;
 use crate::sampler::{Sampler, SamplerDesc};
 use crate::texture::{Texture, TextureUsages};
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const TEXTURE_TABLE_CAPACITY: u32 = 1024;
 pub const SAMPLER_TABLE_CAPACITY: u32 = 64;
 
+const ARRAYS_PER_STAGE: u32 = 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TableCapacity {
+    pub textures: u32,
+    pub samplers: u32,
+}
+
+impl TableCapacity {
+    pub fn of(limits: &wgpu::Limits) -> Self {
+        let textures = (limits.max_binding_array_elements_per_shader_stage / ARRAYS_PER_STAGE)
+            .min(TEXTURE_TABLE_CAPACITY);
+        let samplers = (limits.max_binding_array_sampler_elements_per_shader_stage
+            / ARRAYS_PER_STAGE)
+            .min(SAMPLER_TABLE_CAPACITY);
+        assert!(
+            textures > 0 && samplers > 0,
+            "the device binds {textures} images and {samplers} samplers through its resource tables",
+        );
+        Self { textures, samplers }
+    }
+
+    pub fn texture_count(self) -> Option<NonZeroU32> {
+        NonZeroU32::new(self.textures)
+    }
+
+    pub fn sampler_count(self) -> Option<NonZeroU32> {
+        NonZeroU32::new(self.samplers)
+    }
+}
+
 struct TextureTableState {
     generation: AtomicU64,
-    identity: ResourceId,
+    liveness: std::sync::Arc<Liveness>,
 }
 
 pub struct TextureTable {
@@ -63,7 +95,7 @@ impl TextureTable {
             filled: 0,
             state: Arc::new(TextureTableState {
                 generation: AtomicU64::new(1),
-                identity: ResourceId::next(),
+                liveness: Liveness::new(device.retirements()),
             }),
         }
     }
@@ -148,8 +180,8 @@ impl TextureTable {
         &self.device
     }
 
-    pub(crate) fn identity(&self) -> ResourceId {
-        self.state.identity
+    pub(crate) fn identity(&self) -> crate::identity::ResourceId {
+        self.state.liveness.id()
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -179,6 +211,13 @@ impl TextureTable {
             .map(|(index, _)| index as u32)
     }
 
+    fn retire(&mut self) {
+        self.state
+            .liveness
+            .supersede(self.state.generation.load(Ordering::Relaxed));
+        self.state.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn fill(&mut self, index: u32, texture: &Texture) {
         assert!(
             texture.device().same(&self.device),
@@ -189,13 +228,13 @@ impl TextureTable {
             "a texture table holds sampled textures"
         );
         self.entries[index as usize] = texture.clone();
-        self.state.generation.fetch_add(1, Ordering::Relaxed);
+        self.retire();
     }
 }
 
 struct SamplerTableState {
     generation: AtomicU64,
-    identity: ResourceId,
+    liveness: std::sync::Arc<Liveness>,
 }
 
 pub struct SamplerTable {
@@ -244,7 +283,7 @@ impl SamplerTable {
             filled: 0,
             state: Arc::new(SamplerTableState {
                 generation: AtomicU64::new(1),
-                identity: ResourceId::next(),
+                liveness: Liveness::new(device.retirements()),
             }),
         }
     }
@@ -332,8 +371,8 @@ impl SamplerTable {
         &self.device
     }
 
-    pub(crate) fn identity(&self) -> ResourceId {
-        self.state.identity
+    pub(crate) fn identity(&self) -> crate::identity::ResourceId {
+        self.state.liveness.id()
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -363,12 +402,19 @@ impl SamplerTable {
             .map(|(index, _)| index as u32)
     }
 
+    fn retire(&mut self) {
+        self.state
+            .liveness
+            .supersede(self.state.generation.load(Ordering::Relaxed));
+        self.state.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn fill(&mut self, index: u32, sampler: &Sampler) {
         assert!(
             sampler.device().same(&self.device),
             "a sampler table fills from another device"
         );
         self.entries[index as usize] = sampler.clone();
-        self.state.generation.fetch_add(1, Ordering::Relaxed);
+        self.retire();
     }
 }

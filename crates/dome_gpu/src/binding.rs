@@ -1,11 +1,11 @@
 use crate::buffer::{BufferBinding, BufferRange, BufferUsages};
 use crate::cache::Cache;
 use crate::context::Device;
-use crate::identity::ResourceId;
+use crate::identity::{ResourceId, Retired};
 use crate::pipeline::PipelineLayout;
 use crate::sampler::Sampler;
 use crate::shader::{BindingKind, BindingSpec};
-use crate::table::{SamplerTable, TextureTable};
+use crate::table::{SamplerTable, TableCapacity, TextureTable};
 use crate::texture::{Texture, TextureFormatExt, TextureUsages};
 use std::num::NonZeroU32;
 use std::num::NonZeroU64;
@@ -86,11 +86,34 @@ pub(crate) enum ResourceKey {
     SamplerTable(ResourceId, u64),
 }
 
+impl ResourceKey {
+    fn retired(&self, retired: &[Retired]) -> bool {
+        retired.iter().any(|held| match (self, held) {
+            (Self::Buffer(range), Retired::Resource(id)) => range.identity == *id,
+            (Self::Texture(id) | Self::Sampler(id), Retired::Resource(dead)) => id == dead,
+            (Self::TextureTable(id, _) | Self::SamplerTable(id, _), Retired::Resource(dead)) => {
+                id == dead
+            }
+            (
+                Self::TextureTable(id, generation) | Self::SamplerTable(id, generation),
+                Retired::Generation(dead, superseded),
+            ) => id == dead && generation <= superseded,
+            (_, Retired::Generation(..)) => false,
+        })
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct GroupKey {
     layout: ResourceId,
     group: u32,
     entries: Vec<ResourceKey>,
+}
+
+impl GroupKey {
+    pub(crate) fn retired(&self, retired: &[Retired]) -> bool {
+        self.entries.iter().any(|entry| entry.retired(retired))
+    }
 }
 
 pub struct BindGroupLayout {
@@ -133,13 +156,14 @@ pub(crate) fn layouts(
     graphics: bool,
 ) -> Vec<Arc<BindGroupLayout>> {
     let groups = crate::shader::group_count(bindings, label, !graphics);
+    let tables = *device.tables();
     (0..groups)
         .map(|group| {
             let specs = crate::shader::group_specs(bindings, group, label);
             device.cache().layout(specs, graphics, |specs| {
                 let entries = specs
                     .iter()
-                    .map(|spec| entry(*spec, graphics))
+                    .map(|spec| entry(*spec, graphics, tables))
                     .collect::<Vec<_>>();
                 device
                     .native()
@@ -152,7 +176,7 @@ pub(crate) fn layouts(
         .collect()
 }
 
-fn entry(spec: BindingSpec, graphics: bool) -> wgpu::BindGroupLayoutEntry {
+fn entry(spec: BindingSpec, graphics: bool, tables: TableCapacity) -> wgpu::BindGroupLayoutEntry {
     let visibility = if graphics {
         match spec.kind {
             BindingKind::Storage => wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -178,7 +202,7 @@ fn entry(spec: BindingSpec, graphics: bool) -> wgpu::BindGroupLayoutEntry {
                 view_dimension: wgpu::TextureViewDimension::D2,
                 multisampled: false,
             },
-            table_count(spec.kind),
+            table_count(spec.kind, tables),
         ),
         BindingKind::UnfilterableTexture => (
             wgpu::BindingType::Texture {
@@ -198,7 +222,7 @@ fn entry(spec: BindingSpec, graphics: bool) -> wgpu::BindGroupLayoutEntry {
         ),
         BindingKind::FilteringSampler | BindingKind::SamplerTable => (
             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            table_count(spec.kind),
+            table_count(spec.kind, tables),
         ),
         BindingKind::NonFilteringSampler => (
             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
@@ -217,10 +241,10 @@ fn entry(spec: BindingSpec, graphics: bool) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-fn table_count(kind: BindingKind) -> Option<NonZeroU32> {
+fn table_count(kind: BindingKind, tables: TableCapacity) -> Option<NonZeroU32> {
     match kind {
-        BindingKind::TextureTable => NonZeroU32::new(crate::table::TEXTURE_TABLE_CAPACITY),
-        BindingKind::SamplerTable => NonZeroU32::new(crate::table::SAMPLER_TABLE_CAPACITY),
+        BindingKind::TextureTable => tables.texture_count(),
+        BindingKind::SamplerTable => tables.sampler_count(),
         _ => None,
     }
 }

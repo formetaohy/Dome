@@ -58,16 +58,17 @@ pub(crate) struct Temporality {
 
 impl Temporality {
     pub(crate) fn new(device: &Device) -> Self {
+        let tables = *device.tables();
         Self {
             motion_pipeline: GraphicsPipeline::new_depth(
                 device,
-                program::motion_vectors(),
+                program::motion_vectors(tables),
                 FORMAT,
                 PipelineState::COVERED,
             ),
             motion_blended_pipeline: GraphicsPipeline::new_depth(
                 device,
-                program::motion_vectors(),
+                program::motion_vectors(tables),
                 FORMAT,
                 PipelineState::TESTED,
             ),

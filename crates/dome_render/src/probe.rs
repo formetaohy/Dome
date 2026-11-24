@@ -5,7 +5,6 @@ use dome_gpu::{
     BufferBinding, BufferUsages, Device, Queue, ResourceId, Sampler, SamplerTable, Texture,
     TextureTable,
 };
-use dome_gpu::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use dome_math::{Mat4, Transform, Vec3};
 use std::mem::size_of;
 
@@ -24,8 +23,8 @@ pub(crate) struct Probes {
 impl Probes {
     pub(crate) fn new(device: &Device, texture: &Texture, sampler: &Sampler) -> Self {
         Self {
-            textures: TextureTable::new(device, TEXTURE_TABLE_CAPACITY, texture),
-            samplers: SamplerTable::new(device, SAMPLER_TABLE_CAPACITY, sampler),
+            textures: TextureTable::new(device, device.tables().textures, texture),
+            samplers: SamplerTable::new(device, device.tables().samplers, sampler),
             records: Growing::new(
                 device,
                 "dome probes",

@@ -1,4 +1,4 @@
-use dome_gpu::{BindingSpec, GraphicsShader};
+use dome_gpu::{BindingSpec, GraphicsShader, TableCapacity};
 
 const PAINT: GraphicsShader = GraphicsShader {
     label: "paint",
@@ -14,6 +14,6 @@ const PAINT: GraphicsShader = GraphicsShader {
     targets: 1,
 };
 
-pub(crate) fn program() -> &'static GraphicsShader {
-    &PAINT
+pub(crate) fn program(tables: TableCapacity) -> &'static GraphicsShader {
+    PAINT.specialized(tables)
 }

@@ -1,16 +1,15 @@
 use dome_gpu::{
     AddressMode, Binding, BindingSpec, BufferUsages, Draw, FilterMode, Gpu, GpuBuffer, GpuRequest,
-    GraphicsPipeline, GraphicsShader, Pass, PipelineState, SAMPLER_TABLE_CAPACITY, Sampler,
-    SamplerDesc, SamplerTable, Submission, TEXTURE_TABLE_CAPACITY, Texture, TextureFormat,
-    TextureTable, TextureUsages,
+    GraphicsPipeline, GraphicsShader, Pass, PipelineState, Sampler, SamplerDesc, SamplerTable,
+    Submission, Texture, TextureFormat, TextureTable, TextureUsages,
 };
 
 const SHADER: &str = r#"
 enable wgpu_binding_array;
 
 @group(0) @binding(0) var<storage, read> vertices: array<f32>;
-@group(1) @binding(0) var albedos: binding_array<texture_2d<f32>, 1024>;
-@group(1) @binding(1) var palettes: binding_array<sampler, 64>;
+@group(1) @binding(0) var albedos: binding_array<texture_2d<f32>, TEXTURE_TABLE_EXTENT>;
+@group(1) @binding(1) var palettes: binding_array<sampler, SAMPLER_TABLE_EXTENT>;
 
 struct Out {
     @builtin(position) position: vec4<f32>,
@@ -166,7 +165,12 @@ fn render(gpu: &Gpu, albedo: &Texture, sampler: &Sampler, format: TextureFormat)
         format,
         TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
     );
-    let pipeline = GraphicsPipeline::new(device, &QUAD, format, PipelineState::SCREEN);
+    let pipeline = GraphicsPipeline::new(
+        device,
+        QUAD.specialized(*device.tables()),
+        format,
+        PipelineState::SCREEN,
+    );
     let vertices = GpuBuffer::new(
         device,
         "quad vertices",
@@ -188,9 +192,9 @@ fn render(gpu: &Gpu, albedo: &Texture, sampler: &Sampler, format: TextureFormat)
         TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
     white.write(&queue, &[255, 255, 255, 255]);
-    let mut albedos = TextureTable::new(device, TEXTURE_TABLE_CAPACITY, &white);
+    let mut albedos = TextureTable::new(device, device.tables().textures, &white);
     albedos.add(albedo);
-    let mut palettes = SamplerTable::new(device, SAMPLER_TABLE_CAPACITY, sampler);
+    let mut palettes = SamplerTable::new(device, device.tables().samplers, sampler);
     palettes.add(sampler);
     let material = pipeline.bind_group(
         1,

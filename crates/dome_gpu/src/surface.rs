@@ -274,7 +274,12 @@ impl Surface {
 
     fn rebuild(&mut self) {
         self.native = create(crate::context::instance(), self.window);
-        self.format = select_format(&self.native, self.device.adapter());
+        let format = select_format(&self.native, self.device.adapter());
+        assert_eq!(
+            format, self.format,
+            "a lost surface presents a {:?} format where its renderer paints {:?}",
+            format, self.format,
+        );
         self.configure();
         self.generation.fetch_add(1, Ordering::AcqRel);
     }

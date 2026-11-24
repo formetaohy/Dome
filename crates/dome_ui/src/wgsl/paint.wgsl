@@ -25,8 +25,8 @@ struct UiInstance {
 
 @group(0) @binding(0) var<storage, read> screen: array<UiScreen>;
 @group(0) @binding(1) var<storage, read> instances: array<UiInstance>;
-@group(1) @binding(0) var images: binding_array<texture_2d<f32>, 1024>;
-@group(1) @binding(1) var samplers: binding_array<sampler, 64>;
+@group(1) @binding(0) var images: binding_array<texture_2d<f32>, TEXTURE_TABLE_EXTENT>;
+@group(1) @binding(1) var samplers: binding_array<sampler, SAMPLER_TABLE_EXTENT>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,

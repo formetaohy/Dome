@@ -1,4 +1,5 @@
 use crate::binding::{BindGroup, BindGroupLayout, GroupKey};
+use crate::identity::Retirements;
 use crate::shader::BindingSpec;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -27,9 +28,22 @@ pub(crate) struct Cache {
     shaders: Mutex<HashMap<(usize, usize), wgpu::ShaderModule>>,
     layouts: Mutex<HashMap<LayoutKey, Arc<BindGroupLayout>>>,
     groups: Mutex<Groups>,
+    retirements: Arc<Retirements>,
 }
 
 impl Cache {
+    pub(crate) fn retirements(&self) -> &Arc<Retirements> {
+        &self.retirements
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.groups
+            .lock()
+            .expect("a bind group cache is never poisoned")
+            .entries
+            .len()
+    }
+
     pub(crate) fn shader(
         &self,
         device: &wgpu::Device,
@@ -75,6 +89,7 @@ impl Cache {
     }
 
     pub(crate) fn group(&self, key: GroupKey, build: impl FnOnce() -> BindGroup) -> BindGroup {
+        self.bury();
         let mut groups = self
             .groups
             .lock()
@@ -105,5 +120,17 @@ impl Cache {
             groups.entries.retain(|_, held| held.used > oldest);
         }
         group
+    }
+
+    pub(crate) fn bury(&self) {
+        let retired = self.retirements.drain();
+        if retired.is_empty() {
+            return;
+        }
+        self.groups
+            .lock()
+            .expect("a bind group cache is never poisoned")
+            .entries
+            .retain(|key, _| !key.retired(&retired));
     }
 }

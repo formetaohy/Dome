@@ -1,7 +1,7 @@
 use crate::column::Column;
 use crate::component::Component;
 use crate::entity::{Entity, EntityAllocator};
-use crate::hierarchy::{LocalTransform, Parent, Tree};
+use crate::hierarchy::{LocalTransform, Parent, Propagation, Tree};
 use crate::resource::Resource;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ pub struct World {
     columns: Vec<Box<dyn ErasedColumn>>,
     index: HashMap<TypeId, usize>,
     resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-    pub(crate) hierarchy: u64,
+    pub(crate) propagation: Propagation,
     pub(crate) tree: Tree,
 }
 
@@ -66,8 +66,8 @@ impl World {
                 column.remove_entity(*dead);
             }
             self.entities.release(*dead);
-            self.hierarchy = self.hierarchy.wrapping_add(1);
         }
+        self.propagation.restructure();
         true
     }
 
@@ -98,7 +98,10 @@ impl World {
             entity.index(),
         );
         if Self::moves_hierarchy::<T>() {
-            self.bump_hierarchy();
+            if !self.contains::<LocalTransform>(entity) {
+                self.propagation.restructure();
+            }
+            self.propagation.mark(entity);
         }
         self.column_or_insert::<T>().insert(entity, value)
     }
@@ -109,6 +112,11 @@ impl World {
             "the parent of entity {} belongs to clear_parent",
             entity.index(),
         );
+        assert!(
+            !Self::moves_hierarchy::<T>(),
+            "the local transform of entity {} belongs to the hierarchy",
+            entity.index(),
+        );
         self.column_mut::<T>()?.remove(entity)
     }
 
@@ -117,7 +125,19 @@ impl World {
     }
 
     pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
-        self.column_mut::<T>()?.get_mut(entity)
+        assert!(
+            !Self::holds_parent::<T>(),
+            "the parent of entity {} belongs to the hierarchy index",
+            entity.index(),
+        );
+        let index = *self.index.get(&TypeId::of::<T>())?;
+        let column = self.columns[index]
+            .as_any_mut()
+            .downcast_mut::<Column<T>>()?;
+        if Self::moves_hierarchy::<T>() {
+            self.propagation.mark(entity);
+        }
+        column.get_mut(entity)
     }
 
     pub fn contains<T: Component>(&self, entity: Entity) -> bool {
@@ -140,18 +160,16 @@ impl World {
             "the parent column belongs to the hierarchy index",
         );
         if Self::moves_hierarchy::<T>() {
-            self.bump_hierarchy();
+            self.propagation.restructure();
+            self.propagation.mark_all();
         }
         let index = *self.index.get(&TypeId::of::<T>())?;
         self.columns[index].as_any_mut().downcast_mut()
     }
 
-    pub fn hierarchy_change(&self) -> u64 {
-        self.hierarchy
-    }
-
-    pub(crate) fn bump_hierarchy(&mut self) {
-        self.hierarchy = self.hierarchy.wrapping_add(1);
+    pub(crate) fn reposition(&mut self, entity: Entity) {
+        self.propagation.restructure();
+        self.propagation.mark(entity);
     }
 
     pub(crate) fn store<T: Component>(&mut self, entity: Entity, value: T) -> Option<T> {

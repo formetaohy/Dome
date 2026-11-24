@@ -4,8 +4,8 @@
 @group(0) @binding(3) var<storage, read> skins: array<SkinVertex>;
 @group(0) @binding(4) var<storage, read> materials: array<Material>;
 @group(0) @binding(5) var<storage, read> vertices: array<f32>;
-@group(1) @binding(0) var textures: binding_array<texture_2d<f32>, 1024>;
-@group(1) @binding(1) var samplers: binding_array<sampler, 64>;
+@group(1) @binding(0) var textures: binding_array<texture_2d<f32>, TEXTURE_TABLE_EXTENT>;
+@group(1) @binding(1) var samplers: binding_array<sampler, SAMPLER_TABLE_EXTENT>;
 
 fn deformed(col0: vec4<f32>, col1: vec4<f32>, col2: vec4<f32>, col3: vec4<f32>, point: vec4<f32>) -> vec4<f32> {
     return col0 * point.x + col1 * point.y + col2 * point.z + col3 * point.w;

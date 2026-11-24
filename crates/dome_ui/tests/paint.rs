@@ -137,7 +137,7 @@ fn a_user_interface_recycles_the_texture_slots_of_removed_images() {
         format,
         TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
     );
-    let slot = dome_gpu::TEXTURE_TABLE_CAPACITY - RESERVED;
+    let slot = device.tables().textures - RESERVED;
     let red = Texture::new(
         device,
         "dome recycled red",

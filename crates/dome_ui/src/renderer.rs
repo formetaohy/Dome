@@ -4,8 +4,8 @@ use crate::paint::{Instance, LayerBuffer};
 use crate::shader;
 use crate::texture::Textures;
 use dome_gpu::{
-    BindGroup, Binding, BufferUsages, Device, Draw, GpuBuffer, GraphicsPipeline, Pass,
-    PipelineState, Queue, Submission, Texture, TextureFormat, TextureUsages,
+    Binding, BufferUsages, Device, Draw, GpuBuffer, GraphicsPipeline, Pass, PipelineState, Queue,
+    Submission, Texture, TextureFormat, TextureUsages,
 };
 use std::mem::size_of;
 
@@ -20,7 +20,6 @@ struct Slot {
     buffer: GpuBuffer,
     capacity: usize,
     revision: Option<u64>,
-    generation: u64,
 }
 
 impl Slot {
@@ -29,7 +28,6 @@ impl Slot {
             buffer: storage(device, label, MINIMUM_INSTANCES),
             capacity: MINIMUM_INSTANCES,
             revision: None,
-            generation: 0,
         }
     }
 
@@ -46,7 +44,6 @@ impl Slot {
         if self.capacity < count {
             self.capacity = count.next_power_of_two().max(MINIMUM_INSTANCES);
             self.buffer = storage(device, "dome ui instances", self.capacity);
-            self.generation = self.generation.wrapping_add(1);
             grown = true;
         }
         match layer.dirty {
@@ -64,11 +61,6 @@ impl Slot {
     }
 }
 
-struct Cached {
-    key: u64,
-    groups: [BindGroup; 2],
-}
-
 pub struct Renderer {
     device: Device,
     queue: Queue,
@@ -77,7 +69,6 @@ pub struct Renderer {
     screen: GpuBuffer,
     fallback: Texture,
     slots: [Slot; SLOTS],
-    groups: [Option<Cached>; SLOTS],
     vertical: f32,
     written: Option<(u32, u32, u32)>,
 }
@@ -103,7 +94,12 @@ impl Renderer {
             device: device.clone(),
             queue: queue.clone(),
             format,
-            paint: GraphicsPipeline::new(device, shader::program(), format, PipelineState::OVERLAY),
+            paint: GraphicsPipeline::new(
+                device,
+                shader::program(*device.tables()),
+                format,
+                PipelineState::OVERLAY,
+            ),
             screen: GpuBuffer::new(
                 device,
                 "dome ui screen",
@@ -112,7 +108,6 @@ impl Renderer {
             ),
             fallback,
             slots: std::array::from_fn(|index| Slot::new(device, labels()[index])),
-            groups: std::array::from_fn(|_| None),
             vertical,
             written: None,
         }
@@ -151,66 +146,49 @@ impl Renderer {
             self.slots[index].upload(&self.device, &self.queue, layer);
         }
         textures.set_scene(scene.unwrap_or(&self.fallback));
-        for (index, layer) in layers.iter().enumerate() {
-            let key = group_key(&self.slots[index], layer.revision, textures);
-            let stale = self.groups[index]
-                .as_ref()
-                .is_none_or(|cached| cached.key != key);
-            if stale {
-                let groups = self.groups_of(&self.slots[index], textures);
-                self.groups[index] = Some(Cached { key, groups });
-            }
+        let mut cached = Vec::with_capacity(SLOTS);
+        for slot in &self.slots {
+            cached.push(groups_of(&self.paint, &self.screen, slot, textures));
         }
         let mut draws = Vec::with_capacity(SLOTS);
         for (index, layer) in layers.iter().enumerate() {
             if layer.material.is_empty() {
                 continue;
             }
-            let cached = self.groups[index]
-                .as_ref()
-                .expect("a painted layer holds its groups");
             draws.push(
-                Draw::new(&self.paint, &cached.groups, VERTICES)
+                Draw::new(&self.paint, &cached[index], VERTICES)
                     .instances(layer.material.len() as u32),
             );
         }
         submission.render(Pass::new(target, CLEAR), &draws);
     }
-
-    fn groups_of(&self, slot: &Slot, textures: &Textures) -> [BindGroup; 2] {
-        let settings = self.paint.bind_group(
-            0,
-            &[
-                Binding::buffer(0, self.screen.binding(0, SCREEN_BYTES)),
-                Binding::buffer(
-                    1,
-                    slot.buffer
-                        .binding(0, slot.capacity as u64 * size_of::<Instance>() as u64),
-                ),
-            ],
-        );
-        let resources = self.paint.bind_group(
-            1,
-            &[
-                Binding::texture_table(0, textures.table()),
-                Binding::sampler_table(1, textures.samplers()),
-            ],
-        );
-        [settings, resources]
-    }
 }
 
-fn group_key(slot: &Slot, revision: u64, textures: &Textures) -> u64 {
-    let mut key = 0xcbf2_9ce4_8422_2325u64;
-    for value in [
-        slot.generation,
-        slot.capacity as u64,
-        revision,
-        textures.generation(),
-    ] {
-        key = (key ^ value).wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    key
+fn groups_of(
+    paint: &GraphicsPipeline,
+    screen: &GpuBuffer,
+    slot: &Slot,
+    textures: &Textures,
+) -> [dome_gpu::BindGroup; 2] {
+    let settings = paint.bind_group(
+        0,
+        &[
+            Binding::buffer(0, screen.binding(0, SCREEN_BYTES)),
+            Binding::buffer(
+                1,
+                slot.buffer
+                    .binding(0, slot.capacity as u64 * size_of::<Instance>() as u64),
+            ),
+        ],
+    );
+    let resources = paint.bind_group(
+        1,
+        &[
+            Binding::texture_table(0, textures.table()),
+            Binding::sampler_table(1, textures.samplers()),
+        ],
+    );
+    [settings, resources]
 }
 
 fn storage(device: &Device, label: &str, capacity: usize) -> GpuBuffer {

@@ -2,7 +2,6 @@ use dome_gpu::{
     AddressMode, Device, FilterMode, Queue, ResourceId, Sampler, SamplerDesc, SamplerTable,
     Submission, Texture, TextureFormat, TextureRegion, TextureTable, TextureUsages,
 };
-use dome_gpu::{SAMPLER_TABLE_CAPACITY, TEXTURE_TABLE_CAPACITY};
 use dome_text::Text;
 use std::collections::{HashMap, HashSet};
 
@@ -45,7 +44,6 @@ pub(crate) struct Textures {
     scene_index: u32,
     scene_identity: ResourceId,
     named: HashMap<String, Named>,
-    generation: u64,
 }
 
 impl Textures {
@@ -60,14 +58,12 @@ impl Textures {
             TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
         );
         white.write(queue, &WHITE);
-        let mut table = TextureTable::new(device, TEXTURE_TABLE_CAPACITY, &white);
+        let capacity = *device.tables();
+        let mut table = TextureTable::new(device, capacity.textures, &white);
         let scene_index = table.add(&white);
         let atlas_index = table.add(&white);
-        let mut samplers = SamplerTable::new(
-            device,
-            SAMPLER_TABLE_CAPACITY,
-            &Sampler::new(device, LINEAR),
-        );
+        let mut samplers =
+            SamplerTable::new(device, capacity.samplers, &Sampler::new(device, LINEAR));
         samplers.add(&Sampler::new(device, LINEAR));
         samplers.add(&Sampler::new(device, NEAREST));
         Self {
@@ -81,7 +77,6 @@ impl Textures {
             scene_index,
             scene_identity: white.identity(),
             named: HashMap::new(),
-            generation: 0,
         }
     }
 
@@ -127,7 +122,6 @@ impl Textures {
             let _ = text.atlas_mut().drain();
             self.table.set(self.atlas_index, &texture);
             self.atlas = Some(texture);
-            self.generation = self.generation.wrapping_add(1);
         }
         self.atlas_revision = Some(revision);
     }
@@ -182,9 +176,6 @@ impl Textures {
             );
             changed = true;
         }
-        if changed {
-            self.generation = self.generation.wrapping_add(1);
-        }
         changed
     }
 
@@ -208,7 +199,6 @@ impl Textures {
         }
         self.table.set(self.scene_index, texture);
         self.scene_identity = texture.identity();
-        self.generation = self.generation.wrapping_add(1);
     }
 
     pub(crate) fn scene(&self) -> (u32, u32) {
@@ -217,10 +207,6 @@ impl Textures {
 
     pub(crate) fn atlas(&self) -> (u32, u32) {
         (self.atlas_index, LINEAR_SAMPLER)
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
     }
 
     pub(crate) fn table(&self) -> &TextureTable {

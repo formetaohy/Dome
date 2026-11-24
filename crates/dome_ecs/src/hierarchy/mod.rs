@@ -3,6 +3,7 @@ mod propagate;
 mod tree;
 mod world;
 
+pub(crate) use propagate::Propagation;
 pub(crate) use tree::Tree;
 
 pub use component::{LocalTransform, Parent};
