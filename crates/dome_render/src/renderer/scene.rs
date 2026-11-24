@@ -116,7 +116,7 @@ impl Renderer {
         }
         palettes.commit(&self.device, &self.queue);
         let alignment = self.device.binding_alignment().max(WORD_BYTES);
-        let blocks = span::blocks(alignment, DRAW_BYTES);
+        let blocks = span::blocks(alignment, INDEX_BYTES);
         self.batches.begin();
         for (_, _, instance, blended) in &gathered {
             self.batches.claim(instance.mesh, *blended);

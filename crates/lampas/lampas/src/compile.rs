@@ -77,8 +77,12 @@ fn files(root: &Path) -> Result<Vec<PathBuf>, ScriptError> {
         path: root.to_path_buf(),
         error,
     };
-    let mut files = std::fs::read_dir(root)
-        .map_err(read)?
+    let directory = match std::fs::read_dir(root) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(read(error)),
+    };
+    let mut files = directory
         .map(|entry| entry.map(|entry| entry.path()).map_err(read))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()

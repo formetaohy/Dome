@@ -10,7 +10,7 @@ const CULL: ComputeShader = ComputeShader {
     bindings: &[
         BindingSpec::storage(0, CULL_VIEW),
         BindingSpec::storage(0, CULL_INSTANCES),
-        BindingSpec::writable_storage(0, CULL_DRAWN),
+        BindingSpec::writable_storage(0, CULL_VISIBLE),
         BindingSpec::writable_storage(0, CULL_ARGUMENTS),
         BindingSpec::unfilterable_texture(0, CULL_HZB),
         BindingSpec::non_filtering_sampler(0, CULL_FILTER),

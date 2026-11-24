@@ -4,7 +4,8 @@ use crate::value::Value;
 use dome_ecs::Entity;
 use lampas_bytecode::Module;
 
-const MAXIMUM_DEPTH: usize = 256;
+pub(crate) const MAXIMUM_DEPTH: usize = 256;
+pub(crate) const INSTRUCTION_BUDGET: usize = 4 << 20;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Frame {
@@ -29,6 +30,7 @@ pub struct Vm {
     pub(crate) stack: Vec<Value>,
     pub(crate) frames: Vec<Frame>,
     pub(crate) globals: Vec<Value>,
+    pub(crate) written: Vec<(usize, Value)>,
 }
 
 impl Vm {
@@ -41,6 +43,7 @@ impl Vm {
                 .iter()
                 .map(|global| Value::constant(&global.value))
                 .collect(),
+            written: Vec::new(),
         }
     }
 
@@ -57,10 +60,10 @@ impl Vm {
     ) -> Result<Value, Trap> {
         match self.invoke(module, function, arguments, context)? {
             Outcome::Returned(value) => Ok(value),
-            Outcome::Stopped => panic!(
-                "the lampas function {} stops",
+            Outcome::Stopped => Err(Trap::new(format!(
+                "the lampas function {} stops where its caller awaits a value",
                 module.functions[function as usize].name,
-            ),
+            ))),
         }
     }
 
@@ -90,7 +93,7 @@ impl Vm {
         }
         self.start(module, function);
         let outcome = self.execute(module, context);
-        match self.clear_on_trap(outcome)? {
+        match self.settle(outcome)? {
             Outcome::Returned(_) => Ok(RunOutcome::Completed),
             Outcome::Stopped => Ok(RunOutcome::Stopped),
         }
@@ -107,15 +110,24 @@ impl Vm {
         self.stack.extend_from_slice(arguments);
         self.start(module, function);
         let outcome = self.execute(module, context);
-        self.clear_on_trap(outcome)
+        self.settle(outcome)
     }
 
-    fn clear_on_trap(&mut self, outcome: Result<Outcome, Trap>) -> Result<Outcome, Trap> {
-        if outcome.is_err() {
-            self.stack.clear();
-            self.frames.clear();
+    fn settle(&mut self, outcome: Result<Outcome, Trap>) -> Result<Outcome, Trap> {
+        match outcome {
+            Ok(outcome) => {
+                self.written.clear();
+                Ok(outcome)
+            }
+            Err(trap) => {
+                self.stack.clear();
+                self.frames.clear();
+                for (index, previous) in self.written.drain(..).rev() {
+                    self.globals[index] = previous;
+                }
+                Err(trap)
+            }
         }
-        outcome
     }
 
     fn enter(&mut self, module: &Module, function: u32) {
@@ -144,9 +156,5 @@ impl Vm {
             pc: 0,
             dst: 0,
         });
-    }
-
-    pub(crate) fn maximum_depth(&self) -> usize {
-        MAXIMUM_DEPTH
     }
 }

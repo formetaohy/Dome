@@ -12,10 +12,10 @@ use scene::Collection;
 
 use crate::abi::Fvec4;
 use crate::abi::{
-    ARGUMENT_WORDS, CascadeRecord, DebugLineRecord, DrawRecord, InstanceRecord, JointRecord,
-    LIGHT_CAPACITY, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE, LightRecord, MaterialRecord,
-    NO_HIGHLIGHT, PointLightRecord, SHADOW_ATLAS, SHADOW_ATLAS_COLUMNS, SHADOW_CASCADES,
-    SHADOW_SIDE, SkinVertexRecord, SkyRecord, VERTEX_FLOATS, ViewRecord, WORKGROUP,
+    ARGUMENT_WORDS, CascadeRecord, DebugLineRecord, InstanceRecord, JointRecord, LIGHT_CAPACITY,
+    LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE, LightRecord, MaterialRecord, NO_HIGHLIGHT,
+    PointLightRecord, SHADOW_ATLAS, SHADOW_ATLAS_COLUMNS, SHADOW_CASCADES, SHADOW_SIDE,
+    SkinVertexRecord, SkyRecord, VERTEX_FLOATS, ViewRecord, WORKGROUP,
 };
 use crate::batch::{Pipelines, Shared, Slot, SlotGroups, table};
 use crate::capture::{Capture, CaptureFrame, CaptureProbe, Captures, Probe};
@@ -65,7 +65,7 @@ const VIEW_BYTES: u64 = size_of::<ViewRecord>() as u64;
 const LIGHT_BYTES: u64 = size_of::<LightRecord>() as u64;
 const CASCADE_BYTES: u64 = size_of::<CascadeRecord>() as u64;
 const INSTANCE_BYTES: u64 = size_of::<InstanceRecord>() as u64;
-const DRAW_BYTES: u64 = size_of::<DrawRecord>() as u64;
+const INDEX_BYTES: u64 = size_of::<u32>() as u64;
 const MATERIAL_BYTES: u64 = size_of::<MaterialRecord>() as u64;
 const POINT_LIGHT_BYTES: u64 = size_of::<PointLightRecord>() as u64;
 const CLUSTER_BYTES: u64 = LIGHT_STRIDE as u64 * WORD_BYTES;
@@ -141,13 +141,13 @@ pub struct Renderer {
     cascades: GpuBuffer,
     instance_buffer: Growing,
     instances: Instances,
-    depth_drawn: Growing,
+    depth_visible: Growing,
     depth_arguments: Growing,
-    main_drawn: Growing,
+    main_visible: Growing,
     main_arguments: Growing,
     main_batches: u32,
     batches: crate::batches::Batches,
-    shadow_drawn: Growing,
+    shadow_visible: Growing,
     shadow_arguments: Growing,
     shadow_span: u64,
     point_light: Growing,
@@ -310,19 +310,19 @@ impl Renderer {
             storage,
         );
         let instance_buffer = Growing::new(&device, "dome instances", storage);
-        let depth_drawn = Growing::new(&device, "dome depth drawn", storage);
+        let depth_visible = Growing::new(&device, "dome depth visible", storage);
         let depth_arguments = Growing::new(
             &device,
             "dome depth arguments",
             storage | BufferUsages::INDIRECT,
         );
-        let main_drawn = Growing::new(&device, "dome drawn", storage);
+        let main_visible = Growing::new(&device, "dome visible", storage);
         let main_arguments = Growing::new(
             &device,
             "dome arguments",
             storage | BufferUsages::INDIRECT | BufferUsages::COPY_SRC,
         );
-        let shadow_drawn = Growing::new(&device, "dome shadow drawn", storage);
+        let shadow_visible = Growing::new(&device, "dome shadow visible", storage);
         let shadow_arguments = Growing::new(
             &device,
             "dome shadow arguments",
@@ -369,13 +369,13 @@ impl Renderer {
             cascades,
             instance_buffer,
             instances: Instances::new(),
-            depth_drawn,
+            depth_visible,
             depth_arguments,
-            main_drawn,
+            main_visible,
             main_arguments,
             main_batches: 0,
             batches: crate::batches::Batches::new(),
-            shadow_drawn,
+            shadow_visible,
             shadow_arguments,
             shadow_span: 0,
             point_light,
@@ -832,6 +832,7 @@ impl Renderer {
         }
         self.pick_frame = Some(PickFrame {
             clip: view.clip,
+            palette_base: self.palettes.base(),
             width: texture.width(),
             height: texture.height(),
             batches: collection
@@ -929,7 +930,8 @@ impl Renderer {
     pub fn pick(&mut self, point: Vec2) -> Option<Entity> {
         let frame = self.pick_frame.as_ref()?;
         let resources = PickResources {
-            drawn: self.main_drawn.buffer(),
+            visible: self.main_visible.buffer(),
+            instances: self.instance_buffer.buffer(),
             arguments: self.main_arguments.buffer(),
             meshes: &self.meshes,
             palette: self.palettes.binding(),

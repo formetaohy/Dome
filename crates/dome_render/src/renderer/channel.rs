@@ -112,9 +112,9 @@ impl Renderer {
             &self.hzb_sampler,
             self.views.binding(VIEW_BYTES, VIEW_BYTES),
             instances,
-            self.depth_drawn
+            self.depth_visible
                 .buffer()
-                .binding(0, u64::from(slots) * DRAW_BYTES),
+                .binding(0, u64::from(slots) * INDEX_BYTES),
             self.depth_arguments
                 .buffer()
                 .binding(0, arguments.len() as u64 * WORD_BYTES),
@@ -124,9 +124,9 @@ impl Renderer {
             &self.hzb_sampler,
             self.views.binding(0, VIEW_BYTES),
             instances,
-            self.main_drawn
+            self.main_visible
                 .buffer()
-                .binding(0, u64::from(slots) * DRAW_BYTES),
+                .binding(0, u64::from(slots) * INDEX_BYTES),
             self.main_arguments
                 .buffer()
                 .binding(0, arguments.len() as u64 * WORD_BYTES),
@@ -140,9 +140,9 @@ impl Renderer {
                     self.shadow_views
                         .binding(u64::from(cascade) * VIEW_BYTES, VIEW_BYTES),
                     instances,
-                    self.shadow_drawn.buffer().binding(
-                        u64::from(cascade) * u64::from(slots) * DRAW_BYTES,
-                        u64::from(slots) * DRAW_BYTES,
+                    self.shadow_visible.buffer().binding(
+                        u64::from(cascade) * u64::from(slots) * INDEX_BYTES,
+                        u64::from(slots) * INDEX_BYTES,
                     ),
                     self.shadow_arguments.buffer().binding(
                         u64::from(cascade) * self.shadow_span,
@@ -162,7 +162,7 @@ impl Renderer {
                     &self.hzb_sampler,
                     self.point_shadows.view(cell),
                     instances,
-                    self.point_shadows.drawn_view(cell),
+                    self.point_shadows.visible_view(cell),
                     self.point_shadows.argument_view(cell),
                 );
                 submission.dispatch(&self.cull, &group, [total.div_ceil(WORKGROUP), 1, 1]);
@@ -185,19 +185,19 @@ impl Renderer {
                     u64::from(geometry.count) * VERTEX_BYTES,
                 ),
                 skins: self.meshes.skin_binding(geometry),
-                depth_drawn: self.depth_drawn.buffer().binding(
-                    u64::from(bases[index]) * DRAW_BYTES,
-                    u64::from(batch.count) * DRAW_BYTES,
+                depth_visible: self.depth_visible.buffer().binding(
+                    u64::from(bases[index]) * INDEX_BYTES,
+                    u64::from(batch.count) * INDEX_BYTES,
                 ),
-                main_drawn: self.main_drawn.buffer().binding(
-                    u64::from(bases[index]) * DRAW_BYTES,
-                    u64::from(batch.count) * DRAW_BYTES,
+                main_visible: self.main_visible.buffer().binding(
+                    u64::from(bases[index]) * INDEX_BYTES,
+                    u64::from(batch.count) * INDEX_BYTES,
                 ),
-                shadow_drawn: std::array::from_fn(|cascade| {
-                    self.shadow_drawn.buffer().binding(
-                        cascade as u64 * u64::from(slots) * DRAW_BYTES
-                            + u64::from(bases[index]) * DRAW_BYTES,
-                        u64::from(batch.count) * DRAW_BYTES,
+                shadow_visible: std::array::from_fn(|cascade| {
+                    self.shadow_visible.buffer().binding(
+                        cascade as u64 * u64::from(slots) * INDEX_BYTES
+                            + u64::from(bases[index]) * INDEX_BYTES,
+                        u64::from(batch.count) * INDEX_BYTES,
                     )
                 }),
             });
@@ -224,6 +224,12 @@ impl Renderer {
             colors: self.transparency.colors(),
             dropped: self.transparency.dropped(),
             settings: self.transparency.settings(),
+            instances,
+            depth_view: self.views.binding(VIEW_BYTES, VIEW_BYTES),
+            shadow_views: std::array::from_fn(|cascade| {
+                self.shadow_views
+                    .binding(u64::from(cascade as u32) * VIEW_BYTES, VIEW_BYTES)
+            }),
         };
         let groups = slots_in
             .iter()
@@ -391,8 +397,8 @@ impl Renderer {
                                     self.meshes.skin_binding(geometry),
                                 ),
                                 Binding::buffer(
-                                    program::SHADOW_DRAWN,
-                                    self.point_shadows.drawn(cell, base, batch.count),
+                                    program::SHADOW_VISIBLE,
+                                    self.point_shadows.visible(cell, base, batch.count),
                                 ),
                                 Binding::buffer(
                                     program::SHADOW_VERTICES,
@@ -402,6 +408,11 @@ impl Renderer {
                                     ),
                                 ),
                                 Binding::buffer(program::SHADOW_MATERIALS, materials),
+                                Binding::buffer(
+                                    program::SHADOW_VIEW,
+                                    self.point_shadows.view(cell),
+                                ),
+                                Binding::buffer(program::SHADOW_INSTANCES, instances),
                             ],
                         ),
                         shadow_tables.clone(),

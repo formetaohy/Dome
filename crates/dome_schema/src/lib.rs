@@ -21,6 +21,7 @@ pub use dome_ecs::{Entity, World};
 pub use dome_schema_macro::SceneComponent;
 pub use environment::EnvironmentRef;
 pub use graph_library::GraphLibrary;
+pub use install::NodeMap;
 pub use joint::JointRef;
 pub use node::{AnimationRef, MeshRef, SceneNode, SkinRef};
 pub use registry::{

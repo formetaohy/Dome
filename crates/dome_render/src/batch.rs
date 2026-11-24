@@ -27,14 +27,17 @@ pub(crate) struct Shared<'a> {
     pub(crate) colors: BufferBinding<'a>,
     pub(crate) dropped: BufferBinding<'a>,
     pub(crate) settings: BufferBinding<'a>,
+    pub(crate) instances: BufferBinding<'a>,
+    pub(crate) depth_view: BufferBinding<'a>,
+    pub(crate) shadow_views: [BufferBinding<'a>; CASCADES],
 }
 
 pub(crate) struct Slot<'a> {
     pub(crate) vertices: BufferBinding<'a>,
     pub(crate) skins: BufferBinding<'a>,
-    pub(crate) depth_drawn: BufferBinding<'a>,
-    pub(crate) main_drawn: BufferBinding<'a>,
-    pub(crate) shadow_drawn: [BufferBinding<'a>; CASCADES],
+    pub(crate) depth_visible: BufferBinding<'a>,
+    pub(crate) main_visible: BufferBinding<'a>,
+    pub(crate) shadow_visible: [BufferBinding<'a>; CASCADES],
 }
 
 pub(crate) struct SlotGroups {
@@ -56,9 +59,11 @@ impl SlotGroups {
             &[
                 Binding::buffer(program::DEPTH_PALETTE, shared.palette),
                 Binding::buffer(program::DEPTH_SKINS, slot.skins),
-                Binding::buffer(program::DEPTH_DRAWN, slot.depth_drawn),
+                Binding::buffer(program::DEPTH_VISIBLE, slot.depth_visible),
                 Binding::buffer(program::DEPTH_VERTICES, slot.vertices),
                 Binding::buffer(program::DEPTH_MATERIALS, shared.materials),
+                Binding::buffer(program::DEPTH_VIEW, shared.depth_view),
+                Binding::buffer(program::DEPTH_INSTANCES, shared.instances),
             ],
         );
         let pipeline = if blended {
@@ -71,7 +76,7 @@ impl SlotGroups {
             &[
                 Binding::buffer(program::DRAW_LIGHT, shared.light),
                 Binding::buffer(program::DRAW_CASCADES, shared.cascades),
-                Binding::buffer(program::DRAW_DRAWN, slot.main_drawn),
+                Binding::buffer(program::DRAW_VISIBLE, slot.main_visible),
                 Binding::buffer(program::DRAW_MATERIALS, shared.materials),
                 Binding::buffer(program::DRAW_VIEW, shared.view),
                 Binding::buffer(program::DRAW_PALETTE, shared.palette),
@@ -84,17 +89,19 @@ impl SlotGroups {
                 Binding::buffer(program::DRAW_VERTICES, slot.vertices),
                 Binding::buffer(program::DRAW_LIGHTS, shared.lighting),
                 Binding::buffer(program::DRAW_POINT_LIGHTS, shared.point_light),
+                Binding::buffer(program::DRAW_INSTANCES, shared.instances),
             ],
         );
         let motion = pipelines.motion.bind_group(
             0,
             &[
                 Binding::buffer(program::MOTION_VIEW, shared.motion_view),
-                Binding::buffer(program::MOTION_DRAWN, slot.main_drawn),
+                Binding::buffer(program::MOTION_VISIBLE, slot.main_visible),
                 Binding::buffer(program::MOTION_PALETTE, shared.palette),
                 Binding::buffer(program::MOTION_SKINS, slot.skins),
                 Binding::buffer(program::MOTION_MATERIALS, shared.materials),
                 Binding::buffer(program::MOTION_VERTICES, slot.vertices),
+                Binding::buffer(program::MOTION_INSTANCES, shared.instances),
             ],
         );
         let shadow = std::array::from_fn(|cascade| {
@@ -103,9 +110,11 @@ impl SlotGroups {
                 &[
                     Binding::buffer(program::SHADOW_PALETTE, shared.palette),
                     Binding::buffer(program::SHADOW_SKINS, slot.skins),
-                    Binding::buffer(program::SHADOW_DRAWN, slot.shadow_drawn[cascade]),
+                    Binding::buffer(program::SHADOW_VISIBLE, slot.shadow_visible[cascade]),
                     Binding::buffer(program::SHADOW_VERTICES, slot.vertices),
                     Binding::buffer(program::SHADOW_MATERIALS, shared.materials),
+                    Binding::buffer(program::SHADOW_VIEW, shared.shadow_views[cascade]),
+                    Binding::buffer(program::SHADOW_INSTANCES, shared.instances),
                 ],
             )
         });

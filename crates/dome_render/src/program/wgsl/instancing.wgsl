@@ -1,6 +1,6 @@
 @group(0) @binding(0) var<storage, read> light: array<Light>;
 @group(0) @binding(1) var<storage, read> cascades: array<Cascade>;
-@group(0) @binding(2) var<storage, read> drawn: array<Draw>;
+@group(0) @binding(2) var<storage, read> visible: array<u32>;
 @group(0) @binding(3) var<storage, read> materials: array<Material>;
 @group(0) @binding(4) var<storage, read> view: array<View>;
 @group(0) @binding(5) var<storage, read> palette: array<Joint>;
@@ -13,6 +13,7 @@
 @group(0) @binding(12) var<storage, read> vertices: array<f32>;
 @group(0) @binding(13) var<storage, read> lights: array<u32>;
 @group(0) @binding(14) var<storage, read> point_light: array<u32>;
+@group(0) @binding(15) var<storage, read> instances: array<Instance>;
 @group(1) @binding(0) var textures: binding_array<texture_2d<f32>, TEXTURE_TABLE_EXTENT>;
 @group(1) @binding(1) var samplers: binding_array<sampler, SAMPLER_TABLE_EXTENT>;
 @group(2) @binding(0) var shadows: texture_depth_2d;
@@ -374,7 +375,8 @@ struct VertexOut {
 
 @vertex
 fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> VertexOut {
-    let held = drawn[instance];
+    let index = visible[instance];
+    let held = instances[index];
     let camera = view[0u];
     let base = vertex * 8u;
     let rest = vec4<f32>(
@@ -392,14 +394,17 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         held.tint.x,
         held.tint.y,
         held.tint.z,
-        select(material, -(material + 1.0), held.pick == camera.highlight),
+        select(material, -(material + 1.0), index == camera.highlight),
     );
+    var local = rest;
+    var oriented = resting;
     if held.joints > 0u {
         let skin = skins[vertex];
-        let first = palette[held.palette + skin.joints.x];
-        let second = palette[held.palette + skin.joints.y];
-        let third = palette[held.palette + skin.joints.z];
-        let fourth = palette[held.palette + skin.joints.w];
+        let palette_base = held.palette + camera.palette_base;
+        let first = palette[palette_base + skin.joints.x];
+        let second = palette[palette_base + skin.joints.y];
+        let third = palette[palette_base + skin.joints.z];
+        let fourth = palette[palette_base + skin.joints.w];
         let place = deformed(first.col0, first.col1, first.col2, first.col3, rest)
             * skin.weights.x
             + deformed(second.col0, second.col1, second.col2, second.col3, rest)
@@ -415,34 +420,21 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
                 * skin.weights.z
             + deformed(fourth.col0, fourth.col1, fourth.col2, fourth.col3, resting)
                 * skin.weights.w;
-        let local = vec4<f32>(place.x, place.y, place.z, 1.0);
-        let moved = held.model0 * local.x
-            + held.model1 * local.y
-            + held.model2 * local.z
-            + held.model3 * local.w;
-        let projected = held.clip0 * local.x
-            + held.clip1 * local.y
-            + held.clip2 * local.z
-            + held.clip3 * local.w;
-        out.position = projected;
-        out.placed = vec4<f32>(moved.x, moved.y, moved.z, vertices[base + 6u]);
-        out.oriented = vec4<f32>(normal.x, normal.y, normal.z, vertices[base + 7u]);
-    } else {
-        let moved = held.model0 * rest.x
-            + held.model1 * rest.y
-            + held.model2 * rest.z
-            + held.model3 * rest.w;
-        let projected = held.clip0 * rest.x
-            + held.clip1 * rest.y
-            + held.clip2 * rest.z
-            + held.clip3 * rest.w;
-        out.position = projected;
-        out.placed = vec4<f32>(moved.x, moved.y, moved.z, vertices[base + 6u]);
-        out.oriented = vec4<f32>(resting.x, resting.y, resting.z, vertices[base + 7u]);
+        local = vec4<f32>(place.x, place.y, place.z, 1.0);
+        oriented = vec4<f32>(normal.x, normal.y, normal.z, 0.0);
     }
+    let moved = held.model0 * local.x
+        + held.model1 * local.y
+        + held.model2 * local.z
+        + held.model3 * local.w;
+    out.position = camera.clip0 * moved.x
+        + camera.clip1 * moved.y
+        + camera.clip2 * moved.z
+        + camera.clip3;
+    out.placed = vec4<f32>(moved.x, moved.y, moved.z, vertices[base + 6u]);
+    out.oriented = vec4<f32>(oriented.x, oriented.y, oriented.z, vertices[base + 7u]);
     return out;
 }
-
 struct FragmentIn {
     @location(0) world: vec4<f32>,
     @location(1) surface: vec4<f32>,

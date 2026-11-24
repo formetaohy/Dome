@@ -28,14 +28,16 @@ use dome_gpu::{BindingSpec, ComputeShader, GraphicsShader, TableCapacity};
 
 pub(crate) const CULL_VIEW: u32 = 0;
 pub(crate) const CULL_INSTANCES: u32 = 1;
-pub(crate) const CULL_DRAWN: u32 = 2;
+pub(crate) const CULL_VISIBLE: u32 = 2;
 pub(crate) const CULL_ARGUMENTS: u32 = 3;
 pub(crate) const CULL_HZB: u32 = 4;
 pub(crate) const CULL_FILTER: u32 = 5;
 
 pub(crate) const DEPTH_PALETTE: u32 = 0;
 pub(crate) const DEPTH_SKINS: u32 = 1;
-pub(crate) const DEPTH_DRAWN: u32 = 2;
+pub(crate) const DEPTH_VISIBLE: u32 = 2;
+pub(crate) const DEPTH_VIEW: u32 = 5;
+pub(crate) const DEPTH_INSTANCES: u32 = 6;
 pub(crate) const DEPTH_VERTICES: u32 = 3;
 pub(crate) const DEPTH_MATERIALS: u32 = 4;
 
@@ -45,7 +47,7 @@ pub(crate) const HZB_SAMPLER_BINDING: u32 = 1;
 
 pub(crate) const DRAW_LIGHT: u32 = 0;
 pub(crate) const DRAW_CASCADES: u32 = 1;
-pub(crate) const DRAW_DRAWN: u32 = 2;
+pub(crate) const DRAW_VISIBLE: u32 = 2;
 pub(crate) const DRAW_MATERIALS: u32 = 3;
 pub(crate) const DRAW_VIEW: u32 = 4;
 pub(crate) const DRAW_PALETTE: u32 = 5;
@@ -58,11 +60,13 @@ pub(crate) const DRAW_PROBES: u32 = 11;
 pub(crate) const DRAW_VERTICES: u32 = 12;
 pub(crate) const DRAW_LIGHTS: u32 = 13;
 pub(crate) const DRAW_POINT_LIGHTS: u32 = 14;
+pub(crate) const DRAW_INSTANCES: u32 = 15;
 
 pub(crate) const PICK_VIEW: u32 = 0;
 pub(crate) const PICK_PALETTE: u32 = 1;
 pub(crate) const PICK_SKINS: u32 = 2;
-pub(crate) const PICK_DRAWN: u32 = 3;
+pub(crate) const PICK_VISIBLE: u32 = 3;
+pub(crate) const PICK_INSTANCES: u32 = 5;
 pub(crate) const PICK_VERTICES: u32 = 4;
 
 pub(crate) const CLUSTER_VIEW: u32 = 0;
@@ -71,7 +75,9 @@ pub(crate) const CLUSTER_GRID: u32 = 2;
 
 pub(crate) const SHADOW_PALETTE: u32 = 0;
 pub(crate) const SHADOW_SKINS: u32 = 1;
-pub(crate) const SHADOW_DRAWN: u32 = 2;
+pub(crate) const SHADOW_VISIBLE: u32 = 2;
+pub(crate) const SHADOW_VIEW: u32 = 5;
+pub(crate) const SHADOW_INSTANCES: u32 = 6;
 pub(crate) const SHADOW_VERTICES: u32 = 3;
 pub(crate) const SHADOW_MATERIALS: u32 = 4;
 
@@ -136,7 +142,8 @@ pub(crate) const LINE_VIEW: u32 = 0;
 pub(crate) const LINE_SEGMENTS: u32 = 1;
 
 pub(crate) const MOTION_VIEW: u32 = 0;
-pub(crate) const MOTION_DRAWN: u32 = 1;
+pub(crate) const MOTION_VISIBLE: u32 = 1;
+pub(crate) const MOTION_INSTANCES: u32 = 6;
 pub(crate) const MOTION_PALETTE: u32 = 2;
 pub(crate) const MOTION_SKINS: u32 = 3;
 pub(crate) const MOTION_MATERIALS: u32 = 4;
@@ -197,10 +204,9 @@ const _: () = assert!(
 mod abi_layout {
     use crate::abi::{
         AtlasRecord, AtmosphereRecord, BakeLevelRecord, BloomRecord, BloomUpRecord, CascadeRecord,
-        DebugLineRecord, DrawRecord, InstanceRecord, IrradianceRecord, IrradianceSetupRecord,
-        JointRecord, LightRecord, MaterialRecord, MotionRecord, PointLightRecord, ProbeRecord,
-        SkinVertexRecord, SkyRecord, TemporalRecord, TonemapRecord, TransparentSetupRecord,
-        ViewRecord,
+        DebugLineRecord, InstanceRecord, IrradianceRecord, IrradianceSetupRecord, JointRecord,
+        LightRecord, MaterialRecord, MotionRecord, PointLightRecord, ProbeRecord, SkinVertexRecord,
+        SkyRecord, TemporalRecord, TonemapRecord, TransparentSetupRecord, ViewRecord,
     };
     use std::mem::size_of;
 
@@ -223,7 +229,6 @@ mod abi_layout {
             ("BloomUp", size_of::<BloomUpRecord>()),
             ("Cascade", size_of::<CascadeRecord>()),
             ("DebugLine", size_of::<DebugLineRecord>()),
-            ("Draw", size_of::<DrawRecord>()),
             ("Instance", size_of::<InstanceRecord>()),
             ("Irradiance", size_of::<IrradianceRecord>()),
             ("IrradianceSetup", size_of::<IrradianceSetupRecord>()),

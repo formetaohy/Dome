@@ -6,6 +6,8 @@ use crate::ast::{
 use crate::span::{Diagnostic, Sources, Span};
 use crate::token::{Keyword, Punctuation, Token, TokenKind};
 
+const MAXIMUM_NESTING: usize = 256;
+
 impl Program {
     pub fn parse(sources: Sources) -> Result<Self, Diagnostic> {
         let mut numbering = Numbering::default();
@@ -26,6 +28,7 @@ struct Parser<'a> {
     at: usize,
     numbering: &'a mut Numbering,
     brace_ends_expression: bool,
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -42,6 +45,7 @@ impl<'a> Parser<'a> {
             at: 0,
             numbering,
             brace_ends_expression: false,
+            depth: 0,
         }
     }
 
@@ -219,6 +223,13 @@ impl<'a> Parser<'a> {
     }
 
     fn block(&mut self) -> Result<Block, Diagnostic> {
+        self.nest()?;
+        let held = self.nested_block();
+        self.unnest();
+        held
+    }
+
+    fn nested_block(&mut self) -> Result<Block, Diagnostic> {
         let start = self.expect(Punctuation::LeftBrace)?;
         let mut statements = Vec::new();
         while self.peek_punctuation() != Some(Punctuation::RightBrace) {
@@ -377,7 +388,10 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) -> Result<Expr, Diagnostic> {
-        self.or_expression()
+        self.nest()?;
+        let held = self.or_expression();
+        self.unnest();
+        held
     }
 
     fn or_expression(&mut self) -> Result<Expr, Diagnostic> {
@@ -467,7 +481,10 @@ impl<'a> Parser<'a> {
             _ => return self.postfix(),
         };
         self.at += 1;
-        let operand = self.unary()?;
+        self.nest()?;
+        let operand = self.unary();
+        self.unnest();
+        let operand = operand?;
         let span = self.span_pair(token.span, operand.span);
         Ok(self.expr(
             span,
@@ -762,6 +779,20 @@ impl<'a> Parser<'a> {
 
     fn at_end(&self) -> bool {
         matches!(self.peek().kind, TokenKind::End)
+    }
+
+    fn nest(&mut self) -> Result<(), Diagnostic> {
+        self.depth += 1;
+        if self.depth > MAXIMUM_NESTING {
+            return Err(self.error_here(format!(
+                "the source nests past the {MAXIMUM_NESTING} levels its parser holds",
+            )));
+        }
+        Ok(())
+    }
+
+    fn unnest(&mut self) {
+        self.depth -= 1;
     }
 
     fn error(&self, span: Span, message: impl Into<String>) -> Diagnostic {

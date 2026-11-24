@@ -1,5 +1,5 @@
 use crate::abi::{
-    ARGUMENT_WORDS, AtlasRecord, CascadeRecord, DrawRecord, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE,
+    ARGUMENT_WORDS, AtlasRecord, CascadeRecord, LIGHT_SLICES, LIGHT_STRIDE, LIGHT_TILE,
     NO_HIGHLIGHT, PointLightRecord, SHADOW_CASCADES, SHADOW_SIDE, SkyRecord, ViewRecord,
 };
 use crate::camera::Camera;
@@ -23,13 +23,13 @@ use std::mem::size_of;
 pub const PROBE_RESOLUTION: u32 = 128;
 pub(crate) const FACES: u32 = 6;
 const VIEWS: u32 = FACES + 1;
-const SHADOW_VIEW: u32 = FACES;
+pub(crate) const SHADOW_VIEW: u32 = FACES;
 const PROBE_WIDTH: u32 = PROBE_RESOLUTION * FACES;
 pub(crate) const PANORAMA_WIDTH: u32 = PROBE_RESOLUTION * 4;
 pub(crate) const PANORAMA_HEIGHT: u32 = PROBE_RESOLUTION * 2;
 const VIEW_BYTES: u64 = size_of::<ViewRecord>() as u64;
 const SKY_BYTES: u64 = size_of::<SkyRecord>() as u64;
-const DRAW_BYTES: u64 = size_of::<DrawRecord>() as u64;
+const INDEX_BYTES: u64 = size_of::<u32>() as u64;
 const CASCADE_BYTES: u64 = size_of::<CascadeRecord>() as u64;
 const SETUP_BYTES: u64 = size_of::<AtlasRecord>() as u64;
 const POINT_LIGHT_BYTES: u64 = size_of::<PointLightRecord>() as u64;
@@ -127,7 +127,7 @@ pub(crate) struct Captures {
     pub(crate) skies: GpuBuffer,
     pub(crate) cascades: GpuBuffer,
     pub(crate) setup: GpuBuffer,
-    pub(crate) drawn: Growing,
+    pub(crate) visible: Growing,
     pub(crate) arguments: Growing,
     pub(crate) point_light: Growing,
     pub(crate) lighting: Growing,
@@ -138,7 +138,7 @@ pub(crate) struct Captures {
     point_bytes: u64,
     sky_span: u64,
     cluster_span: u64,
-    drawn_span: u64,
+    visible_span: u64,
     argument_span: u64,
     pending: Option<Pending>,
     results: Vec<Capture>,
@@ -220,7 +220,7 @@ impl Captures {
                 storage,
             ),
             setup,
-            drawn: Growing::new(device, "dome capture drawn", storage),
+            visible: Growing::new(device, "dome capture visible", storage),
             arguments: Growing::new(
                 device,
                 "dome capture arguments",
@@ -239,7 +239,7 @@ impl Captures {
             point_bytes: 0,
             sky_span,
             cluster_span: FACE_CLUSTER_BYTES,
-            drawn_span: DRAW_BYTES,
+            visible_span: INDEX_BYTES,
             argument_span: ARGUMENT_BYTES,
             sampler: Sampler::new(
                 device,
@@ -326,18 +326,18 @@ impl Captures {
             .binding(0, u64::from(SHADOW_CASCADES) * CASCADE_BYTES)
     }
 
-    pub(crate) fn drawn(&self, view: u32, offset: u32, count: u32) -> BufferBinding<'_> {
-        let base = u64::from(view) * self.drawn_span + u64::from(offset) * DRAW_BYTES;
-        self.drawn
+    pub(crate) fn visible(&self, view: u32, offset: u32, count: u32) -> BufferBinding<'_> {
+        let base = u64::from(view) * self.visible_span + u64::from(offset) * INDEX_BYTES;
+        self.visible
             .buffer()
-            .binding(base, u64::from(count) * DRAW_BYTES)
+            .binding(base, u64::from(count) * INDEX_BYTES)
     }
 
-    pub(crate) fn drawn_view(&self, view: u32) -> BufferBinding<'_> {
-        let offset = u64::from(view) * self.drawn_span;
-        self.drawn
+    pub(crate) fn visible_view(&self, view: u32) -> BufferBinding<'_> {
+        let offset = u64::from(view) * self.visible_span;
+        self.visible
             .buffer()
-            .binding(offset, u64::from(self.slots) * DRAW_BYTES)
+            .binding(offset, u64::from(self.slots) * INDEX_BYTES)
     }
 
     pub(crate) fn argument_view(&self, view: u32) -> BufferBinding<'_> {
@@ -389,7 +389,7 @@ impl Captures {
         self.point_bytes = (frame.points.len() as u64 * POINT_LIGHT_BYTES).max(POINT_LIGHT_BYTES);
         self.slots = frame.slots.max(1);
         self.batches = frame.batches.len() as u32;
-        self.drawn_span = crate::span::padded(alignment, u64::from(self.slots) * DRAW_BYTES);
+        self.visible_span = crate::span::padded(alignment, u64::from(self.slots) * INDEX_BYTES);
         self.argument_span =
             crate::span::padded(alignment, u64::from(self.batches) * ARGUMENT_BYTES);
         self.point_light.fit(&frame.device, self.point_bytes);
@@ -468,12 +468,12 @@ impl Captures {
             }
             self.arguments.buffer().write(&frame.queue, &arguments);
         }
-        self.drawn
-            .fit(&frame.device, u64::from(VIEWS) * self.drawn_span);
+        self.visible
+            .fit(&frame.device, u64::from(VIEWS) * self.visible_span);
     }
 
-    pub(crate) fn shadow_drawn(&self, offset: u32, count: u32) -> BufferBinding<'_> {
-        self.drawn(SHADOW_VIEW, offset, count)
+    pub(crate) fn shadow_visible(&self, offset: u32, count: u32) -> BufferBinding<'_> {
+        self.visible(SHADOW_VIEW, offset, count)
     }
 
     pub(crate) fn shadow_arguments(&self, batch: u32) -> BufferBinding<'_> {

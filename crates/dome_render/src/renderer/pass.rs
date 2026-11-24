@@ -29,23 +29,23 @@ impl Renderer {
                 bytemuck::cast_slice(&upload.records),
             );
         }
-        self.depth_drawn
-            .fit(&self.device, u64::from(slots) * DRAW_BYTES);
+        self.depth_visible
+            .fit(&self.device, u64::from(slots) * INDEX_BYTES);
         self.depth_arguments
             .fit(&self.device, arguments.len() as u64 * WORD_BYTES);
         self.depth_arguments
             .buffer()
             .write(&self.queue, bytemuck::cast_slice(arguments));
-        self.main_drawn
-            .fit(&self.device, u64::from(slots) * DRAW_BYTES);
+        self.main_visible
+            .fit(&self.device, u64::from(slots) * INDEX_BYTES);
         self.main_arguments
             .fit(&self.device, arguments.len() as u64 * WORD_BYTES);
         self.main_arguments
             .buffer()
             .write(&self.queue, bytemuck::cast_slice(arguments));
-        self.shadow_drawn.fit(
+        self.shadow_visible.fit(
             &self.device,
-            u64::from(CASCADE_COUNT) * u64::from(slots) * DRAW_BYTES,
+            u64::from(CASCADE_COUNT) * u64::from(slots) * INDEX_BYTES,
         );
         let argument_bytes = arguments.len() as u64 * WORD_BYTES;
         let alignment = self.device.binding_alignment().max(WORD_BYTES);

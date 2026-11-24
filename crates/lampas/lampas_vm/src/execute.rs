@@ -1,7 +1,7 @@
 use crate::context::Context;
 use crate::trap::Trap;
 use crate::value::Value;
-use crate::vm::{Frame, Outcome, Vm};
+use crate::vm::{Frame, INSTRUCTION_BUDGET, MAXIMUM_DEPTH, Outcome, Vm};
 use dome_ecs::Entity;
 use dome_math::Vec3;
 use lampas_bytecode::{Instruction, Module, Op};
@@ -15,7 +15,17 @@ impl Vm {
         module: &Module,
         context: &mut dyn Context,
     ) -> Result<Outcome, Trap> {
+        let mut remaining = INSTRUCTION_BUDGET;
         loop {
+            if remaining == 0 {
+                let frame = *self.frames.last().expect("a lampas frame executes");
+                return Err(fault(
+                    module,
+                    frame,
+                    format!("the call runs past its {INSTRUCTION_BUDGET} instruction budget"),
+                ));
+            }
+            remaining -= 1;
             let frame = *self.frames.last().expect("a lampas frame executes");
             let instruction = module.functions[frame.function as usize].code[frame.pc];
             self.frames.last_mut().expect("a lampas frame executes").pc += 1;
@@ -30,7 +40,9 @@ impl Vm {
                 }
                 Op::StoreGlobal => {
                     let value = self.stack[base + instruction.b as usize].clone();
-                    self.globals[instruction.imm as usize] = value;
+                    let index = instruction.imm as usize;
+                    self.written
+                        .push((index, std::mem::replace(&mut self.globals[index], value)));
                 }
                 Op::Move => {
                     if instruction.a != instruction.low() {
@@ -234,7 +246,7 @@ impl Vm {
                 Op::Call => {
                     let callee = instruction.imm as usize;
                     let at = base + instruction.b as usize;
-                    if self.frames.len() >= self.maximum_depth() {
+                    if self.frames.len() >= MAXIMUM_DEPTH {
                         return Err(fault(module, frame, "the lampas call stack overflows"));
                     }
                     let registers = module.functions[callee].registers as usize;
@@ -249,7 +261,11 @@ impl Vm {
                 Op::CallHost => {
                     let arity = instruction.high() as usize;
                     let at = base + instruction.low() as usize;
-                    let value = context.host(instruction.imm as u16, &self.stack[at..at + arity]);
+                    let value = context
+                        .host(instruction.imm as u16, &self.stack[at..at + arity])
+                        .map_err(|trap| {
+                            trap.locate(&module.functions[frame.function as usize].name, frame.pc)
+                        })?;
                     self.stack[dst] = value;
                 }
                 Op::Return | Op::ReturnUnit => {
@@ -534,7 +550,7 @@ fn item_absent(module: &Module, frame: Frame, index: i64) -> Trap {
 }
 
 fn fault(module: &Module, frame: Frame, message: impl Into<String>) -> Trap {
-    Trap::new(
+    Trap::located(
         &module.functions[frame.function as usize].name,
         frame.pc,
         message,

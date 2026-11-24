@@ -1,3 +1,4 @@
+use crate::trap::Trap;
 use crate::value::Value;
 use dome_ecs::Entity;
 
@@ -16,5 +17,5 @@ pub trait Context {
 
     fn despawn(&mut self, entity: Entity);
 
-    fn host(&mut self, function: u16, arguments: &[Value]) -> Value;
+    fn host(&mut self, function: u16, arguments: &[Value]) -> Result<Value, Trap>;
 }

@@ -1,13 +1,13 @@
-use crate::command::Command;
-use crate::host::Hosts;
+use crate::effects::Effects;
+use crate::host::{Call, Hosts};
 use crate::scripts::ScriptSpawned;
 use dome_ecs::{Entity, World};
-use lampas_vm::{Context, Value};
+use lampas_vm::{Context, Trap, Value};
 
 pub(crate) struct Runner<'a> {
     pub(crate) world: &'a mut World,
     pub(crate) hosts: &'a mut Hosts,
-    pub(crate) commands: &'a mut Vec<Command>,
+    pub(crate) effects: &'a mut Effects,
 }
 
 impl Context for Runner<'_> {
@@ -16,6 +16,8 @@ impl Context for Runner<'_> {
     }
 
     fn write(&mut self, row: u32, component: u16, field: u16, value: Value) {
+        let previous = self.world.dynamic().read(row, component, field).clone();
+        self.effects.field(row, component, field, previous);
         let value = dome_ecs::Value::from(&value);
         self.world.dynamic_mut().write(row, component, field, value);
     }
@@ -27,26 +29,25 @@ impl Context for Runner<'_> {
     fn spawn(&mut self) -> Entity {
         let entity = self.world.spawn();
         self.world.insert(entity, ScriptSpawned);
+        self.effects.spawned(entity);
         entity
     }
 
     fn add(&mut self, entity: Entity, component: u16, fields: &[Value]) {
-        self.commands.push(Command::Add {
-            entity,
-            component,
-            fields: fields.iter().map(dome_ecs::Value::from).collect(),
-        });
+        let fields = fields.iter().map(dome_ecs::Value::from).collect();
+        self.effects.add(entity, component, fields);
     }
 
     fn remove(&mut self, entity: Entity, component: u16) {
-        self.commands.push(Command::Remove { entity, component });
+        self.effects.remove(entity, component);
     }
 
     fn despawn(&mut self, entity: Entity) {
-        self.commands.push(Command::Despawn(entity));
+        self.effects.despawn(entity);
     }
 
-    fn host(&mut self, function: u16, arguments: &[Value]) -> Value {
-        self.hosts.call(function, arguments, self.world)
+    fn host(&mut self, function: u16, arguments: &[Value]) -> Result<Value, Trap> {
+        let mut call = Call::new(self.world, self.effects);
+        self.hosts.call(function, arguments, &mut call)
     }
 }

@@ -135,7 +135,7 @@ impl Hzb {
         sampler: &Sampler,
         view: BufferBinding<'_>,
         instances: BufferBinding<'_>,
-        drawn: BufferBinding<'_>,
+        visible: BufferBinding<'_>,
         arguments: BufferBinding<'_>,
     ) -> BindGroup {
         pipeline.bind_group(
@@ -143,7 +143,7 @@ impl Hzb {
             &[
                 Binding::buffer(program::CULL_VIEW, view),
                 Binding::buffer(program::CULL_INSTANCES, instances),
-                Binding::buffer(program::CULL_DRAWN, drawn),
+                Binding::buffer(program::CULL_VISIBLE, visible),
                 Binding::buffer(program::CULL_ARGUMENTS, arguments),
                 Binding::texture(program::CULL_HZB, &self.texture),
                 Binding::sampler(program::CULL_FILTER, sampler),

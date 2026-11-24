@@ -1,5 +1,5 @@
-use crate::command::{self, Command};
 use crate::compile::ScriptError;
+use crate::effects::Effects;
 use crate::host::Hosts;
 use crate::query::Matches;
 use crate::runner::Runner;
@@ -16,7 +16,7 @@ pub struct Scripts {
     vm: Vm,
     hosts: Hosts,
     matches: Matches,
-    commands: Vec<Command>,
+    effects: Effects,
 }
 
 pub fn reset(world: &mut World) {
@@ -55,7 +55,7 @@ impl Scripts {
             vm,
             hosts,
             matches: Matches::new(),
-            commands: Vec::new(),
+            effects: Effects::new(),
         }
     }
 
@@ -72,21 +72,15 @@ impl Scripts {
         let Some(function) = self.module.boot else {
             return Ok(());
         };
-        let recorded = self.commands.len();
         let outcome = {
             let mut runner = Runner {
                 world,
                 hosts: &mut self.hosts,
-                commands: &mut self.commands,
+                effects: &mut self.effects,
             };
             self.vm.boot(&self.module, function, &mut runner)
         };
-        if let Err(trap) = outcome {
-            self.commands.truncate(recorded);
-            return Err(trap);
-        }
-        command::apply(&mut self.commands, world);
-        Ok(())
+        self.settle(world, outcome)
     }
 
     pub fn update(&mut self, world: &mut World) -> Result<(), Trap> {
@@ -98,6 +92,7 @@ impl Scripts {
     }
 
     fn phase(&mut self, world: &mut World, phase: Phase) -> Result<(), Trap> {
+        let mut fault = None;
         for index in 0..self.module.systems.len() {
             if self.module.systems[index].phase != phase {
                 continue;
@@ -106,17 +101,18 @@ impl Scripts {
             let width = self.module.systems[index].components.len();
             self.matches
                 .collect(world, &self.module.systems[index].components);
-            let recorded = self.commands.len();
             let outcome = {
                 let mut runner = Runner {
                     world,
                     hosts: &mut self.hosts,
-                    commands: &mut self.commands,
+                    effects: &mut self.effects,
                 };
                 if width == 0 {
-                    self.vm.run(&self.module, function, None, &[], &mut runner)
+                    self.vm
+                        .run(&self.module, function, None, &[], &mut runner)
+                        .map(|_| ())
                 } else {
-                    let mut outcome = Ok(RunOutcome::Completed);
+                    let mut outcome = Ok(());
                     for at in 0..self.matches.len() {
                         let entity = self.matches.entity(at);
                         let rows = self.matches.rows(at);
@@ -135,14 +131,29 @@ impl Scripts {
                     outcome
                 }
             };
-            if let Err(trap) = outcome {
-                self.commands.truncate(recorded);
-                return Err(trap);
-            }
-            if !self.commands.is_empty() {
-                command::apply(&mut self.commands, world);
+            if let Err(trap) = self.settle(world, outcome) {
+                fault.get_or_insert(trap);
             }
         }
-        Ok(())
+        match fault {
+            Some(trap) => Err(trap),
+            None => Ok(()),
+        }
+    }
+
+    fn settle(&mut self, world: &mut World, outcome: Result<(), Trap>) -> Result<(), Trap> {
+        match outcome {
+            Ok(()) => match self.effects.commit(world) {
+                Ok(()) => Ok(()),
+                Err(trap) => {
+                    self.effects.rollback(world);
+                    Err(trap)
+                }
+            },
+            Err(trap) => {
+                self.effects.rollback(world);
+                Err(trap)
+            }
+        }
     }
 }

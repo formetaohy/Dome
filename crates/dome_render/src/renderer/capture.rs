@@ -65,23 +65,23 @@ impl Renderer {
             points: inputs.points,
         });
         let mut submission = Submission::new(&self.device, "dome capture");
+        let instances = self
+            .instance_buffer
+            .buffer()
+            .binding(0, u64::from(inputs.instances) * INSTANCE_BYTES);
         if inputs.opaque > 0 {
             let hzb = self
                 .hzb
                 .as_ref()
                 .expect("a captured scene culls against the depth pyramid of its frame");
             let culled = inputs.instances.div_ceil(WORKGROUP);
-            let instances = self
-                .instance_buffer
-                .buffer()
-                .binding(0, u64::from(inputs.instances) * INSTANCE_BYTES);
             for view in 0..self.captures.view_count() {
                 let group = hzb.cull(
                     &self.cull,
                     &self.hzb_sampler,
                     self.captures.view(view),
                     instances,
-                    self.captures.drawn_view(view),
+                    self.captures.visible_view(view),
                     self.captures.argument_view(view),
                 );
                 submission.dispatch(&self.cull, &group, [culled, 1, 1]);
@@ -161,8 +161,9 @@ impl Renderer {
                         Binding::buffer(program::SHADOW_PALETTE, palette),
                         Binding::buffer(program::SHADOW_SKINS, self.meshes.skin_binding(geometry)),
                         Binding::buffer(
-                            program::SHADOW_DRAWN,
-                            self.captures.shadow_drawn(inputs.bases[index], batch.count),
+                            program::SHADOW_VISIBLE,
+                            self.captures
+                                .shadow_visible(inputs.bases[index], batch.count),
                         ),
                         Binding::buffer(
                             program::SHADOW_VERTICES,
@@ -172,6 +173,11 @@ impl Renderer {
                             ),
                         ),
                         Binding::buffer(program::SHADOW_MATERIALS, materials),
+                        Binding::buffer(
+                            program::SHADOW_VIEW,
+                            self.captures.view(crate::capture::SHADOW_VIEW),
+                        ),
+                        Binding::buffer(program::SHADOW_INSTANCES, instances),
                     ],
                 );
                 cast_groups.push([group, shadow_tables.clone()]);
@@ -219,8 +225,9 @@ impl Renderer {
                             ),
                             Binding::buffer(program::DRAW_CASCADES, self.captures.cascades()),
                             Binding::buffer(
-                                program::DRAW_DRAWN,
-                                self.captures.drawn(face, inputs.bases[index], batch.count),
+                                program::DRAW_VISIBLE,
+                                self.captures
+                                    .visible(face, inputs.bases[index], batch.count),
                             ),
                             Binding::buffer(program::DRAW_MATERIALS, materials),
                             Binding::buffer(program::DRAW_VIEW, self.captures.view(face)),
@@ -246,6 +253,7 @@ impl Renderer {
                             ),
                             Binding::buffer(program::DRAW_LIGHTS, lights),
                             Binding::buffer(program::DRAW_POINT_LIGHTS, point_lights),
+                            Binding::buffer(program::DRAW_INSTANCES, instances),
                         ],
                     );
                     batches.push([shade, tables.clone(), capture_shade.clone()]);

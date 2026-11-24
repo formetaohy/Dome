@@ -2,40 +2,78 @@ use dome_app::{App, Time};
 use dome_asset::Change;
 use dome_ecs::{Entity, LocalTransform, Parent, World, children};
 use dome_math::Quat;
-use dome_schema::SceneNode;
+use dome_schema::NodeMap;
 use lampas::{Hosts, Kind, Scripts, Trap, Type, Value};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
-pub(crate) fn install(app: &mut App, root: &Path) -> Result<(), String> {
+#[derive(Clone, Default)]
+pub(crate) struct Faults {
+    state: Rc<RefCell<State>>,
+}
+
+#[derive(Default)]
+struct State {
+    reported: Option<String>,
+    first: Option<String>,
+}
+
+impl Faults {
+    pub(crate) fn take(&self) -> Option<String> {
+        self.state.borrow_mut().first.take()
+    }
+
+    fn clear_reported(&self) {
+        self.state.borrow_mut().reported = None;
+    }
+
+    fn report(&self, root: &Path, outcome: Result<(), Trap>) {
+        let Err(trap) = outcome else {
+            return;
+        };
+        let message = format!("[lampas {}] {trap}", root.display());
+        let mut state = self.state.borrow_mut();
+        if state.first.is_none() {
+            state.first = Some(message.clone());
+        }
+        if state.reported.as_deref() == Some(message.as_str()) {
+            return;
+        }
+        eprintln!("{message}");
+        state.reported = Some(message);
+    }
+}
+
+pub(crate) fn install(app: &mut App, root: &Path) -> Result<Faults, String> {
     let scripts = Rc::new(RefCell::new(load(root)?));
-    let reported = Rc::new(RefCell::new(None));
+    let faults = Faults::default();
     let boot = Rc::clone(&scripts);
-    let boot_report = Rc::clone(&reported);
+    let boot_faults = faults.clone();
     let boot_root = root.to_path_buf();
     app.add_startup(move |world: &mut World, _| {
-        report(&boot_report, &boot_root, boot.borrow_mut().boot(world));
+        let outcome = boot.borrow_mut().boot(world);
+        let failed = outcome.is_err();
+        boot_faults.report(&boot_root, outcome);
+        if failed {
+            world.insert_resource(dome_app::Exit);
+        }
     });
     let update = Rc::clone(&scripts);
-    let update_report = Rc::clone(&reported);
+    let update_faults = faults.clone();
     let update_root = root.to_path_buf();
     app.add_system(move |world: &mut World| {
-        report(
-            &update_report,
-            &update_root,
-            update.borrow_mut().update(world),
-        );
+        update_faults.report(&update_root, update.borrow_mut().update(world));
     });
     let fixed = Rc::clone(&scripts);
-    let fixed_report = Rc::clone(&reported);
+    let fixed_faults = faults.clone();
     let fixed_root = root.to_path_buf();
     app.add_fixed(move |world: &mut World| {
-        report(&fixed_report, &fixed_root, fixed.borrow_mut().fixed(world));
+        fixed_faults.report(&fixed_root, fixed.borrow_mut().fixed(world));
     });
     let reload = Rc::clone(&scripts);
-    let reload_report = Rc::clone(&reported);
+    let reload_faults = faults.clone();
     let folder = root.to_path_buf();
     app.add_reload(move |world: &mut World, change: Change| {
         if !change.script {
@@ -44,8 +82,8 @@ pub(crate) fn install(app: &mut App, root: &Path) -> Result<(), String> {
         match Scripts::load(&folder, hosts()) {
             Ok(mut fresh) => {
                 lampas::reset(world);
-                *reload_report.borrow_mut() = None;
-                report(&reload_report, &folder, fresh.boot(world));
+                reload_faults.clear_reported();
+                reload_faults.report(&folder, fresh.boot(world));
                 *reload.borrow_mut() = fresh;
             }
             Err(error) => eprintln!(
@@ -54,19 +92,7 @@ pub(crate) fn install(app: &mut App, root: &Path) -> Result<(), String> {
             ),
         }
     });
-    Ok(())
-}
-
-fn report(reported: &RefCell<Option<String>>, root: &Path, outcome: Result<(), Trap>) {
-    let Err(trap) = outcome else {
-        return;
-    };
-    let message = format!("[lampas {}] {trap}", root.display());
-    if reported.borrow().as_deref() == Some(message.as_str()) {
-        return;
-    }
-    eprintln!("{message}");
-    *reported.borrow_mut() = Some(message);
+    Ok(faults)
 }
 
 fn load(root: &Path) -> Result<Scripts, String> {
@@ -77,89 +103,99 @@ fn load(root: &Path) -> Result<Scripts, String> {
 fn hosts() -> Hosts {
     let mut hosts = Hosts::new();
     hosts
-        .function("log", &[Type::TEXT], Type::VOID, |arguments, _world| {
+        .function("log", &[Type::TEXT], Type::VOID, |arguments, _| {
             println!("[lampas] {}", arguments[0].text());
-            Value::Unit
+            Ok(Value::Unit)
         })
-        .function("delta", &[], Type::FLOAT, |_, world| {
-            Value::Float(seconds(world, Time::delta))
+        .function("delta", &[], Type::FLOAT, |_, call| {
+            Ok(Value::Float(seconds(call.world(), Time::delta)))
         })
-        .function("elapsed", &[], Type::FLOAT, |_, world| {
-            Value::Float(seconds(world, Time::elapsed))
+        .function("elapsed", &[], Type::FLOAT, |_, call| {
+            Ok(Value::Float(seconds(call.world(), Time::elapsed)))
         })
-        .function("find", &[Type::TEXT], Type::ENTITY, |arguments, world| {
+        .function("find", &[Type::TEXT], Type::ENTITY, |arguments, call| {
             let id = arguments[0].text();
-            let entity = world
-                .iter::<SceneNode>()
-                .find(|(_, node)| node.id == id)
-                .map(|(entity, _)| entity)
-                .unwrap_or_else(|| panic!("the lampas script finds no scene node {id}"));
-            Value::Entity(entity)
+            let entity = call
+                .world()
+                .resource::<NodeMap>()
+                .and_then(|nodes| nodes.id(id))
+                .ok_or_else(|| Trap::new(format!("the lampas script finds no scene node {id}")))?;
+            Ok(Value::Entity(entity))
         })
-        .function("alive", &[Type::ENTITY], Type::BOOL, |arguments, world| {
-            Value::Bool(world.is_alive(arguments[0].entity()))
+        .function("alive", &[Type::ENTITY], Type::BOOL, |arguments, call| {
+            Ok(Value::Bool(call.world().is_alive(arguments[0].entity())))
         })
         .function(
             "position",
             &[Type::ENTITY],
             Type::VECTOR,
-            |arguments, world| Value::Vector(transform(world, arguments[0].entity()).0.translation),
+            |arguments, call| {
+                Ok(Value::Vector(
+                    transform(call.world(), arguments[0].entity())?
+                        .0
+                        .translation,
+                ))
+            },
         )
         .function(
             "set_position",
             &[Type::ENTITY, Type::VECTOR],
             Type::VOID,
-            |arguments, world| {
-                transform(world, arguments[0].entity()).0.translation = arguments[1].vector();
-                Value::Unit
+            |arguments, call| {
+                let translation = arguments[1].vector();
+                call.edit::<LocalTransform>(arguments[0].entity(), |held| {
+                    held.0.translation = translation;
+                })
+                .map(|()| Value::Unit)
             },
         )
         .function(
             "rotate_y",
             &[Type::ENTITY, Type::FLOAT],
             Type::VOID,
-            |arguments, world| {
+            |arguments, call| {
                 let rotation = Quat::from_rotation_y(arguments[1].float() as f32);
-                let transform = transform(world, arguments[0].entity());
-                transform.0.rotation = rotation * transform.0.rotation;
-                Value::Unit
+                call.edit::<LocalTransform>(arguments[0].entity(), |held| {
+                    held.0.rotation = rotation * held.0.rotation;
+                })
+                .map(|()| Value::Unit)
             },
         )
         .function(
             "parent",
             &[Type::ENTITY],
             Type::list(Kind::Entity),
-            |arguments, world| {
-                let parent = world.get::<Parent>(arguments[0].entity());
-                Value::from_list(
+            |arguments, call| {
+                let parent = call.world().get::<Parent>(arguments[0].entity());
+                Ok(Value::from_list(
                     parent
                         .map(|held| Value::Entity(held.entity()))
                         .into_iter()
                         .collect(),
-                )
+                ))
             },
         )
         .function(
             "children",
             &[Type::ENTITY],
             Type::list(Kind::Entity),
-            |arguments, world| {
-                let held = children(world, arguments[0].entity())
+            |arguments, call| {
+                let held = children(call.world(), arguments[0].entity())
                     .iter()
                     .map(|child| Value::Entity(*child))
                     .collect();
-                Value::from_list(held)
+                Ok(Value::from_list(held))
             },
         );
     hosts
 }
 
-fn transform(world: &mut World, entity: Entity) -> &mut LocalTransform {
-    world.get_mut::<LocalTransform>(entity).unwrap_or_else(|| {
-        panic!(
-            "the lampas script transforms the entity {} that holds no local transform",
+fn transform(world: &World, entity: Entity) -> Result<&LocalTransform, Trap> {
+    world.get::<LocalTransform>(entity).ok_or_else(|| {
+        Trap::new(format!(
+            "the lampas script reads the entity {} that holds no local transform",
             entity.index(),
-        )
+        ))
     })
 }
 

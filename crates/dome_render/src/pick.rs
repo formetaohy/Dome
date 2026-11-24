@@ -1,4 +1,4 @@
-use crate::abi::{DrawRecord, VERTEX_FLOATS, ViewRecord};
+use crate::abi::{VERTEX_FLOATS, ViewRecord};
 use crate::frame::record_of_view;
 use crate::mesh::{Mesh, MeshLibrary};
 use crate::program;
@@ -12,10 +12,11 @@ use dome_math::{Mat4, Vec2, Vec3, Vec4};
 use std::mem::size_of;
 
 const VIEW_BYTES: u64 = size_of::<ViewRecord>() as u64;
-const DRAW_BYTES: u64 = size_of::<DrawRecord>() as u64;
+const INDEX_BYTES: u64 = size_of::<u32>() as u64;
 const VERTEX_BYTES: u64 = (VERTEX_FLOATS * 4) as u64;
 const ARGUMENT_BYTES: u64 = 16;
 const TARGET_SIDE: u32 = 1;
+const INSTANCE_BYTES: u64 = size_of::<crate::abi::InstanceRecord>() as u64;
 const CLEAR: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 const ID_LIMIT: usize = 1 << 24;
 
@@ -27,6 +28,7 @@ pub(crate) struct PickBatch {
 
 pub(crate) struct PickFrame {
     pub(crate) clip: Mat4,
+    pub(crate) palette_base: u32,
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) batches: Vec<PickBatch>,
@@ -34,7 +36,8 @@ pub(crate) struct PickFrame {
 }
 
 pub(crate) struct PickResources<'a> {
-    pub(crate) drawn: &'a GpuBuffer,
+    pub(crate) visible: &'a GpuBuffer,
+    pub(crate) instances: &'a GpuBuffer,
     pub(crate) arguments: &'a GpuBuffer,
     pub(crate) meshes: &'a MeshLibrary,
     pub(crate) palette: BufferBinding<'a>,
@@ -111,7 +114,7 @@ impl Picker {
             frame.entities.len() as u32,
             Vec3::ZERO,
             Vec3::Z,
-            0,
+            frame.palette_base,
         );
         self.view.write(queue, bytemuck::bytes_of(&record));
         let groups = frame
@@ -129,10 +132,10 @@ impl Picker {
                             resources.meshes.skin_binding(geometry),
                         ),
                         Binding::buffer(
-                            program::PICK_DRAWN,
-                            resources.drawn.binding(
-                                u64::from(batch.base) * DRAW_BYTES,
-                                u64::from(batch.count) * DRAW_BYTES,
+                            program::PICK_VISIBLE,
+                            resources.visible.binding(
+                                u64::from(batch.base) * INDEX_BYTES,
+                                u64::from(batch.count) * INDEX_BYTES,
                             ),
                         ),
                         Binding::buffer(
@@ -141,6 +144,12 @@ impl Picker {
                                 u64::from(geometry.first) * VERTEX_BYTES,
                                 u64::from(geometry.count) * VERTEX_BYTES,
                             ),
+                        ),
+                        Binding::buffer(
+                            program::PICK_INSTANCES,
+                            resources
+                                .instances
+                                .binding(0, frame.entities.len() as u64 * INSTANCE_BYTES),
                         ),
                     ],
                 )

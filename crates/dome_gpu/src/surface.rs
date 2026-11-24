@@ -215,6 +215,9 @@ impl SurfaceFrame {
 
 impl Drop for SurfaceFrame {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
         assert!(
             self.surface.is_none(),
             "a surface frame presents before it is dropped"

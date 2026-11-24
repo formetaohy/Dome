@@ -1,9 +1,10 @@
-use dome_ecs::World;
+use crate::effects::Effects;
+use dome_ecs::{Component, Entity, World};
 use lampas_bytecode::Kind;
 use lampas_semantic::{HostSignature, Intrinsic, Type};
-use lampas_vm::Value;
+use lampas_vm::{Trap, Value};
 
-type Callback = Box<dyn FnMut(&[Value], &mut World) -> Value>;
+type Callback = Box<dyn FnMut(&[Value], &mut Call<'_>) -> Result<Value, Trap>>;
 
 struct Entry {
     signature: HostSignature,
@@ -13,6 +14,51 @@ struct Entry {
 #[derive(Default)]
 pub struct Hosts {
     entries: Vec<Entry>,
+}
+
+pub struct Call<'a> {
+    world: &'a mut World,
+    effects: &'a mut Effects,
+}
+
+impl<'a> Call<'a> {
+    pub(crate) fn new(world: &'a mut World, effects: &'a mut Effects) -> Self {
+        Self { world, effects }
+    }
+
+    pub fn world(&self) -> &World {
+        self.world
+    }
+
+    pub fn edit<T: Component + Clone>(
+        &mut self,
+        entity: Entity,
+        edit: impl FnOnce(&mut T),
+    ) -> Result<(), Trap> {
+        let previous = self
+            .world
+            .get::<T>(entity)
+            .cloned()
+            .ok_or_else(|| missing(entity))?;
+        let held = self
+            .world
+            .get_mut::<T>(entity)
+            .ok_or_else(|| missing(entity))?;
+        self.effects.edited(move |world: &mut World| {
+            if let Some(held) = world.get_mut::<T>(entity) {
+                *held = previous;
+            }
+        });
+        edit(held);
+        Ok(())
+    }
+}
+
+fn missing(entity: Entity) -> Trap {
+    Trap::new(format!(
+        "the lampas script edits a component the entity {} does not hold",
+        entity.index(),
+    ))
 }
 
 impl Hosts {
@@ -25,7 +71,7 @@ impl Hosts {
         name: &str,
         params: &[Type],
         result: Type,
-        call: impl FnMut(&[Value], &mut World) -> Value + 'static,
+        call: impl FnMut(&[Value], &mut Call<'_>) -> Result<Value, Trap> + 'static,
     ) -> &mut Self {
         self.holds_name(name);
         assert!(
@@ -62,9 +108,14 @@ impl Hosts {
             .collect()
     }
 
-    pub(crate) fn call(&mut self, index: u16, arguments: &[Value], world: &mut World) -> Value {
+    pub(crate) fn call(
+        &mut self,
+        index: u16,
+        arguments: &[Value],
+        call: &mut Call<'_>,
+    ) -> Result<Value, Trap> {
         let entry = &mut self.entries[index as usize];
-        let value = (entry.call)(arguments, world);
+        let value = (entry.call)(arguments, call)?;
         assert!(
             holds(&entry.signature.result, &value),
             "the host function {} returns a {} where {} belongs",
@@ -72,7 +123,7 @@ impl Hosts {
             value.kind(),
             describe(&entry.signature.result),
         );
-        value
+        Ok(value)
     }
 
     fn holds_name(&self, name: &str) {

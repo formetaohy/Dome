@@ -77,11 +77,21 @@ fn play(project: Project, debug: bool) {
         debug,
         ..Default::default()
     });
-    if let Err(error) = script::install(&mut app, &scripts) {
-        eprintln!("{error}");
+    let faults = match script::install(&mut app, &scripts) {
+        Ok(faults) => faults,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+    app.run();
+    report(&faults);
+}
+
+fn report(faults: &script::Faults) {
+    if faults.take().is_some() {
         std::process::exit(1);
     }
-    app.run();
 }
 
 fn headless(project: Project, capture: Capture, debug: bool) {
@@ -93,10 +103,13 @@ fn headless(project: Project, capture: Capture, debug: bool) {
         debug,
         ..Default::default()
     });
-    if let Err(error) = script::install(&mut app, &scripts) {
-        eprintln!("{error}");
-        std::process::exit(1);
-    }
+    let faults = match script::install(&mut app, &scripts) {
+        Ok(faults) => faults,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
     let shot = app.run_headless(HeadlessConfig {
         width: capture.width,
         height: capture.height,
@@ -108,6 +121,7 @@ fn headless(project: Project, capture: Capture, debug: bool) {
         eprintln!("{error}");
         std::process::exit(1);
     }
+    report(&faults);
     if let Some(path) = capture.screenshot {
         let png = shot.unwrap_or_else(|| panic!("a headless run captures the frame it renders"));
         std::fs::write(&path, png)

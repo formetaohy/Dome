@@ -9,17 +9,12 @@ fn hosts() -> (Hosts, Rc<RefCell<Vec<String>>>) {
     let messages = Rc::new(RefCell::new(Vec::new()));
     let held = Rc::clone(&messages);
     let mut hosts = Hosts::new();
-    hosts.function(
-        "log",
-        &[Type::TEXT],
-        Type::VOID,
-        move |arguments, _world| {
-            held.borrow_mut().push(String::from(arguments[0].text()));
-            Value::Unit
-        },
-    );
-    hosts.function("delta", &[], Type::FLOAT, |_, _world| Value::Float(1.0));
-    hosts.function("damage", &[], Type::FLOAT, |_, _world| Value::Float(1.0));
+    hosts.function("log", &[Type::TEXT], Type::VOID, move |arguments, _call| {
+        held.borrow_mut().push(String::from(arguments[0].text()));
+        Ok(Value::Unit)
+    });
+    hosts.function("delta", &[], Type::FLOAT, |_, _call| Ok(Value::Float(1.0)));
+    hosts.function("damage", &[], Type::FLOAT, |_, _call| Ok(Value::Float(1.0)));
     (hosts, messages)
 }
 
@@ -412,8 +407,8 @@ fn a_boot_fault_returns_the_trap_its_function_holds() {
     let mut world = World::new();
     let at = fault_at(&scripts, "divide", Op::DivideInt);
     let trap = scripts.boot(&mut world).expect_err("the divide faults");
-    assert_eq!(trap.function(), "divide");
-    assert_eq!(trap.instruction(), at);
+    assert_eq!(trap.function(), Some("divide"));
+    assert_eq!(trap.instruction(), Some(at));
     assert_eq!(trap.message(), "the int divides by zero");
     assert_eq!(
         trap.to_string(),
@@ -439,7 +434,8 @@ system mark() {
     add(first, Mark {});
 }
 
-system explode() {
+system explode(mark: write Mark) {
+    mark.on = false;
     let second = spawn();
     add(second, Mark {});
     let items = [1, 2];
@@ -458,8 +454,8 @@ fn a_system_fault_discards_the_commands_its_run_recorded() {
     let trap = scripts
         .update(&mut world)
         .expect_err("the list read faults");
-    assert_eq!(trap.function(), "explode");
-    assert_eq!(trap.instruction(), at);
+    assert_eq!(trap.function(), Some("explode"));
+    assert_eq!(trap.instruction(), Some(at));
     assert_eq!(trap.message(), "the list holds no item 5");
     assert_eq!(
         trap.to_string(),
@@ -470,6 +466,21 @@ fn a_system_fault_discards_the_commands_its_run_recorded() {
         world.dynamic().column(mark).len(),
         1,
         "the fault discards the commands of its run",
+    );
+    assert_eq!(
+        world.len(),
+        1,
+        "the fault reclaims the entity its run spawned",
+    );
+    let held = world
+        .dynamic()
+        .entities(mark)
+        .next()
+        .expect("the marking system commits its entity");
+    assert_eq!(
+        value(&world, &scripts, held, "Mark", "on"),
+        Value::Bool(true),
+        "the fault takes back the field its run wrote",
     );
     assert!(messages.borrow().is_empty());
     assert_eq!(
@@ -500,8 +511,8 @@ fn a_deep_call_returns_the_trap_the_call_stack_names() {
     let trap = scripts
         .boot(&mut world)
         .expect_err("the call stack overflows");
-    assert_eq!(trap.function(), "recurse");
-    assert_eq!(trap.instruction(), at);
+    assert_eq!(trap.function(), Some("recurse"));
+    assert_eq!(trap.instruction(), Some(at));
     assert_eq!(trap.message(), "the lampas call stack overflows");
     assert!(messages.borrow().is_empty());
 }

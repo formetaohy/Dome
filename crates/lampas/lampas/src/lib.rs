@@ -1,5 +1,5 @@
-mod command;
 mod compile;
+mod effects;
 mod host;
 mod query;
 mod runner;
@@ -7,7 +7,7 @@ mod scripts;
 
 pub use compile::{ScriptError, compile, compile_folder};
 pub use dome_ecs::Kind;
-pub use host::Hosts;
+pub use host::{Call, Hosts};
 pub use lampas_bytecode::Module;
 pub use lampas_semantic::{HostSignature, Type};
 pub use lampas_syntax::Diagnostic;

@@ -1,4 +1,4 @@
-use crate::abi::{DrawRecord, PointLightRecord, ViewRecord};
+use crate::abi::{PointLightRecord, ViewRecord};
 use crate::frame::record_of_view;
 use crate::growing::Growing;
 use crate::view::View;
@@ -15,7 +15,7 @@ pub(crate) const POINT_SHADOW_FACES: u32 = 6;
 pub(crate) const POINT_SHADOW_NONE: f32 = -1.0;
 
 const VIEW_BYTES: u64 = size_of::<ViewRecord>() as u64;
-const DRAW_BYTES: u64 = size_of::<DrawRecord>() as u64;
+const INDEX_BYTES: u64 = size_of::<u32>() as u64;
 const ARGUMENT_BYTES: u64 = 16;
 const WORD_BYTES: u64 = 4;
 const WIDE: f32 = std::f32::consts::FRAC_PI_2;
@@ -41,13 +41,13 @@ pub(crate) struct PointShadows {
     atlas: Texture,
     sampler: Sampler,
     views: GpuBuffer,
-    drawn: Growing,
+    visible: Growing,
     arguments: Growing,
     rows: u32,
     casting: u32,
     slots: u32,
     batches: u32,
-    drawn_span: u64,
+    visible_span: u64,
     argument_span: u64,
 }
 
@@ -73,7 +73,7 @@ impl PointShadows {
                 u64::from(rows) * u64::from(POINT_SHADOW_FACES) * VIEW_BYTES,
                 BufferUsages::STORAGE | BufferUsages::COPY_DST,
             ),
-            drawn: Growing::new(device, "dome point shadow drawn", BufferUsages::STORAGE),
+            visible: Growing::new(device, "dome point shadow visible", BufferUsages::STORAGE),
             arguments: Growing::new(
                 device,
                 "dome point shadow arguments",
@@ -83,7 +83,7 @@ impl PointShadows {
             casting: 0,
             slots: 0,
             batches: 0,
-            drawn_span: 0,
+            visible_span: 0,
             argument_span: 0,
         }
     }
@@ -119,10 +119,10 @@ impl PointShadows {
             return;
         }
         let alignment = device.binding_alignment().max(4);
-        self.drawn_span = (u64::from(slots) * DRAW_BYTES).next_multiple_of(alignment);
+        self.visible_span = (u64::from(slots) * INDEX_BYTES).next_multiple_of(alignment);
         self.argument_span = (arguments.len() as u64 * WORD_BYTES).next_multiple_of(alignment);
         let cells = u64::from(self.casting) * u64::from(POINT_SHADOW_FACES);
-        self.drawn.fit(device, cells * self.drawn_span);
+        self.visible.fit(device, cells * self.visible_span);
         self.arguments.fit(device, cells * self.argument_span);
         let mut views = Vec::with_capacity(cells as usize);
         for light in casting {
@@ -174,10 +174,10 @@ impl PointShadows {
         self.views.binding(u64::from(cell) * VIEW_BYTES, VIEW_BYTES)
     }
 
-    pub(crate) fn drawn_view(&self, cell: u32) -> BufferBinding<'_> {
-        self.drawn.buffer().binding(
-            u64::from(cell) * self.drawn_span,
-            u64::from(self.slots).max(1) * DRAW_BYTES,
+    pub(crate) fn visible_view(&self, cell: u32) -> BufferBinding<'_> {
+        self.visible.buffer().binding(
+            u64::from(cell) * self.visible_span,
+            u64::from(self.slots).max(1) * INDEX_BYTES,
         )
     }
 
@@ -188,10 +188,10 @@ impl PointShadows {
         )
     }
 
-    pub(crate) fn drawn(&self, cell: u32, base: u32, count: u32) -> BufferBinding<'_> {
-        self.drawn.buffer().binding(
-            u64::from(cell) * self.drawn_span + u64::from(base) * DRAW_BYTES,
-            u64::from(count) * DRAW_BYTES,
+    pub(crate) fn visible(&self, cell: u32, base: u32, count: u32) -> BufferBinding<'_> {
+        self.visible.buffer().binding(
+            u64::from(cell) * self.visible_span + u64::from(base) * INDEX_BYTES,
+            u64::from(count) * INDEX_BYTES,
         )
     }
 
