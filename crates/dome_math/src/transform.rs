@@ -39,6 +39,14 @@ impl Transform {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
 
+    pub fn interpolate(previous: Self, current: Self, phase: f32) -> Self {
+        Self {
+            translation: previous.translation.lerp(current.translation, phase),
+            rotation: previous.rotation.slerp(current.rotation, phase),
+            scale: previous.scale.lerp(current.scale, phase),
+        }
+    }
+
     pub fn transform_point(self, point: Vec3) -> Vec3 {
         self.rotation.rotate_vec3(self.scale * point) + self.translation
     }

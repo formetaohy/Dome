@@ -26,7 +26,7 @@ use crate::environment::{
 };
 use crate::frame::{
     Batch, Placement, Screen, ambient_of, arguments_of, camera_of, direction_record, light_of,
-    record_of, record_of_cascade, record_of_main_view, record_of_view, vector,
+    pose_of, record_of, record_of_cascade, record_of_main_view, record_of_view, vector,
 };
 use crate::growing::Growing;
 use crate::hidden::Hidden;
@@ -164,6 +164,7 @@ pub struct Renderer {
     spheres: Vec<(Entity, (Vec3, f32))>,
     damage: Damage,
     probes: Probes,
+    interpolation: f32,
     submitted: Option<SubmissionIndex>,
     retired: Vec<(SubmissionIndex, Retired)>,
 }
@@ -391,12 +392,21 @@ impl Renderer {
             spheres: Vec::new(),
             damage: Damage::default(),
             probes,
+            interpolation: 1.0,
             captures,
             queue,
             device,
             submitted: None,
             retired: Vec::new(),
         }
+    }
+
+    pub fn set_interpolation(&mut self, phase: f32) {
+        assert!(
+            phase.is_finite() && (0.0..=1.0).contains(&phase),
+            "a rendered frame interpolates at {phase} outside the span of its fixed step",
+        );
+        self.interpolation = phase;
     }
 
     fn refresh_ambient(&mut self, environment: Option<&Environment>) {
@@ -616,9 +626,10 @@ impl Renderer {
         self.release_retired();
         self.flush_materials();
         self.settle_captures();
-        let collection = self.collect(world, highlight);
+        let phase = self.interpolation;
+        let collection = self.collect(world, highlight, phase);
         self.absorb_damage(world, &collection);
-        let ambient = ambient_of(world);
+        let ambient = ambient_of(world, phase);
         let (environment, environment_transform) = match ambient.global {
             Some((environment, transform)) => (Some(environment), transform),
             None => (None, Transform::IDENTITY),
@@ -636,8 +647,8 @@ impl Renderer {
         if probe_textures {
             self.ambient = None;
         }
-        let (camera, transform) = camera_of(world);
-        let (light, light_transform) = light_of(world);
+        let (camera, transform) = camera_of(world, phase);
+        let (light, light_transform) = light_of(world, phase);
         let eye = transform.translation;
         let forward = transform.rotation.rotate_vec3(-Vec3::Z).normalize();
         let mut point_light_records = Vec::new();
@@ -645,6 +656,7 @@ impl Renderer {
             if world.contains::<Hidden>(entity) {
                 return;
             }
+            let transform = pose_of(world, entity, phase).unwrap_or(*transform);
             point_light_records.push(PointLightRecord {
                 position: Fvec4 {
                     x: transform.translation.x,

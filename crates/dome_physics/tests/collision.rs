@@ -122,6 +122,54 @@ fn a_resting_contact_begins_once_and_ends_when_its_body_leaves() {
 }
 
 #[test]
+fn a_contact_ends_before_the_bounds_of_its_shapes_separate() {
+    let mut world = World::new();
+    world.insert_resource(Gravity(Vec3::ZERO));
+    let first = spawn(
+        &mut world,
+        Vec3::ZERO,
+        Shape::sphere(1.0),
+        BodyKind::Dynamic,
+    );
+    let second = spawn(
+        &mut world,
+        Vec3::new(1.5, 0.0, 0.0),
+        Shape::sphere(1.0),
+        BodyKind::Dynamic,
+    );
+    step(&mut world, DELTA);
+    assert!(
+        events(&world)
+            .iter()
+            .any(|event| event.phase == CollisionPhase::Begin),
+        "two overlapping spheres begin one contact",
+    );
+    let origin = position(&world, first);
+    world.insert(
+        second,
+        LocalTransform(Transform::from_translation(
+            origin + Vec3::new(1.9, 1.9, 0.0),
+        )),
+    );
+    step(&mut world, DELTA);
+    let held = position(&world, second);
+    assert!(
+        held.distance(origin) > 2.0
+            && (held.x - origin.x).abs() < 2.0
+            && (held.y - origin.y).abs() < 2.0,
+        "a sphere at {held:?} leaves the sphere at {origin:?} while their bounds overlap",
+    );
+    let ended = events(&world)
+        .into_iter()
+        .filter(|event| event.phase == CollisionPhase::End)
+        .count();
+    assert_eq!(
+        ended, 1,
+        "a contact ends when its shapes separate before their bounds do",
+    );
+}
+
+#[test]
 fn a_collider_ignores_a_layer_outside_its_mask() {
     let mut world = world();
     spawn(

@@ -9,7 +9,7 @@ use crate::mesh::{Geometry, Mesh};
 use crate::palette::Skinning;
 use crate::shadow::Cascade;
 use crate::view::View;
-use dome_ecs::{Entity, World};
+use dome_ecs::{Entity, PreviousTransform, World};
 use dome_math::{Mat4, Transform, Vec3, Vec4};
 
 #[derive(Clone, Copy)]
@@ -35,30 +35,37 @@ pub(crate) fn vertical() -> f32 {
     -0.5
 }
 
-pub(crate) fn camera_of(world: &World) -> (Camera, Transform) {
+pub(crate) fn pose_of(world: &World, entity: Entity, phase: f32) -> Option<Transform> {
+    let current = *world.get::<Transform>(entity)?;
+    if phase >= 1.0 {
+        return Some(current);
+    }
+    Some(match world.get::<PreviousTransform>(entity) {
+        Some(previous) => Transform::interpolate(previous.0, current, phase),
+        None => current,
+    })
+}
+
+pub(crate) fn camera_of(world: &World, phase: f32) -> (Camera, Transform) {
     world
         .iter::<Camera>()
         .find_map(|(entity, camera)| {
             if world.contains::<Hidden>(entity) {
                 return None;
             }
-            world
-                .get::<Transform>(entity)
-                .map(|transform| (*camera, *transform))
+            pose_of(world, entity, phase).map(|transform| (*camera, transform))
         })
         .unwrap_or_else(|| panic!("a rendered world holds a camera with a transform"))
 }
 
-pub(crate) fn light_of(world: &World) -> (DirectionalLight, Transform) {
+pub(crate) fn light_of(world: &World, phase: f32) -> (DirectionalLight, Transform) {
     world
         .iter::<DirectionalLight>()
         .find_map(|(entity, light)| {
             if world.contains::<Hidden>(entity) {
                 return None;
             }
-            world
-                .get::<Transform>(entity)
-                .map(|transform| (*light, *transform))
+            pose_of(world, entity, phase).map(|transform| (*light, transform))
         })
         .unwrap_or((
             DirectionalLight {
@@ -75,7 +82,7 @@ pub(crate) struct Ambient<'a> {
     pub(crate) local: Vec<(&'a Environment, Transform)>,
 }
 
-pub(crate) fn ambient_of(world: &World) -> Ambient<'_> {
+pub(crate) fn ambient_of(world: &World, phase: f32) -> Ambient<'_> {
     let mut ambient = Ambient {
         global: None,
         local: Vec::new(),
@@ -84,10 +91,7 @@ pub(crate) fn ambient_of(world: &World) -> Ambient<'_> {
         if world.contains::<Hidden>(entity) {
             continue;
         }
-        let transform = world
-            .get::<Transform>(entity)
-            .copied()
-            .unwrap_or(Transform::IDENTITY);
+        let transform = pose_of(world, entity, phase).unwrap_or(Transform::IDENTITY);
         if environment.local {
             ambient.local.push((environment, transform));
         } else if ambient.global.is_none() {
@@ -259,5 +263,41 @@ pub(crate) fn vector(value: Vec4) -> Fvec4 {
         y: value.y,
         z: value.z,
         w: value.w,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pose_of;
+    use dome_ecs::{PreviousTransform, World};
+    use dome_math::{Transform, Vec3};
+
+    #[test]
+    fn a_rendered_pose_spans_the_two_samples_a_step_published() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        world.insert(entity, PreviousTransform(Transform::IDENTITY));
+        world.insert(
+            entity,
+            Transform::from_translation(Vec3::new(2.0, 0.0, 0.0)),
+        );
+        assert_eq!(
+            pose_of(&world, entity, 0.0)
+                .expect("a posed entity renders")
+                .translation,
+            Vec3::ZERO,
+        );
+        assert_eq!(
+            pose_of(&world, entity, 0.5)
+                .expect("a posed entity renders")
+                .translation,
+            Vec3::X,
+        );
+        assert_eq!(
+            pose_of(&world, entity, 1.0)
+                .expect("a posed entity renders")
+                .translation,
+            Vec3::new(2.0, 0.0, 0.0),
+        );
     }
 }

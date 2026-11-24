@@ -3,6 +3,9 @@ use dome_math::Transform;
 
 const VACANT: u32 = u32::MAX;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PreviousTransform(pub Transform);
+
 #[derive(Default)]
 pub(crate) struct Propagation {
     order: Vec<Entity>,
@@ -11,16 +14,32 @@ pub(crate) struct Propagation {
     dirty: Vec<Entity>,
     pending: Vec<Entity>,
     stamp: Vec<Option<(Entity, u32)>>,
+    poses: Vec<(Entity, Transform)>,
     epoch: u32,
     structure: bool,
     all: bool,
+    snap: bool,
     walk: Vec<Entity>,
     spread: Vec<(Entity, Transform)>,
 }
 
 pub fn propagate(world: &mut World) {
     let mut held = std::mem::take(&mut world.propagation);
+    held.snap = true;
     held.run(world);
+    world.propagation = held;
+}
+
+pub fn propagate_step(world: &mut World) {
+    let mut held = std::mem::take(&mut world.propagation);
+    held.snap = false;
+    held.run(world);
+    world.propagation = held;
+}
+
+pub fn snapshot(world: &mut World) {
+    let mut held = std::mem::take(&mut world.propagation);
+    held.remember(world);
     world.propagation = held;
 }
 
@@ -35,6 +54,18 @@ impl Propagation {
 
     pub(crate) fn mark_all(&mut self) {
         self.all = true;
+    }
+
+    fn remember(&mut self, world: &mut World) {
+        self.poses.clear();
+        self.poses.extend(
+            world
+                .iter::<Transform>()
+                .map(|(entity, transform)| (entity, *transform)),
+        );
+        for (entity, transform) in self.poses.drain(..) {
+            world.insert(entity, PreviousTransform(transform));
+        }
     }
 
     fn run(&mut self, world: &mut World) {
@@ -119,6 +150,9 @@ impl Propagation {
                 continue;
             }
             self.stamp(entity, epoch);
+            if self.snap {
+                world.insert(entity, PreviousTransform(held));
+            }
             world.insert(entity, held);
             for child in world.tree.children(entity) {
                 if self.stamped(*child, epoch) {

@@ -265,7 +265,6 @@ impl Table {
         self.active.clear();
         for at in 0..self.bodies.len() {
             let swept = self.bodies[at].swept_aabb(delta);
-            self.bodies[at].bounds = swept.map(|(aabb, _)| aabb);
             match (swept, self.bodies[at].proxy) {
                 (Some((aabb, _)), Some(mut proxy)) => {
                     let grown = self.tree.refresh(&mut proxy, at as u32, aabb);
@@ -285,7 +284,7 @@ impl Table {
                 (None, None) => {}
             }
             if let Some((aabb, _)) = swept
-                && (self.bodies[at].active() || self.bodies[at].senses())
+                && (self.bodies[at].moving() || self.bodies[at].senses())
             {
                 self.active.push((at as u32, aabb));
             }

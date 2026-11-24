@@ -1,17 +1,18 @@
 use crate::ast::{
-    Access, AssignOp, BinaryOp, Block, BootDecl, ComponentDecl, Expr, ExprId, ExprKind, FieldDecl,
-    FunctionDecl, GlobalDecl, Ident, Item, ParamDecl, Phase, Program, Statement, StatementKind,
-    StmtId, SystemDecl, TypeExpr, TypeExprKind, UnaryOp,
+    Access, AssignOp, BinaryOp, Block, BootDecl, ComponentDecl, Expr, ExprKind, FieldDecl,
+    FunctionDecl, GlobalDecl, Ident, Item, Numbering, ParamDecl, Phase, Program, Statement,
+    StatementKind, SystemDecl, TypeExpr, TypeExprKind, UnaryOp,
 };
 use crate::span::{Diagnostic, Sources, Span};
 use crate::token::{Keyword, Punctuation, Token, TokenKind};
 
 impl Program {
     pub fn parse(sources: Sources) -> Result<Self, Diagnostic> {
+        let mut numbering = Numbering::default();
         let mut items = Vec::new();
         for source in 0..sources.len() as u32 {
             let tokens = crate::lexer::tokenize(&sources, source)?;
-            let parser = Parser::new(&sources, source, tokens);
+            let parser = Parser::new(&sources, source, tokens, &mut numbering);
             items.extend(parser.items()?);
         }
         Ok(Self { sources, items })
@@ -23,20 +24,23 @@ struct Parser<'a> {
     source: u32,
     tokens: Vec<Token>,
     at: usize,
-    exprs: u32,
-    statements: u32,
+    numbering: &'a mut Numbering,
     brace_ends_expression: bool,
 }
 
 impl<'a> Parser<'a> {
-    fn new(sources: &'a Sources, source: u32, tokens: Vec<Token>) -> Self {
+    fn new(
+        sources: &'a Sources,
+        source: u32,
+        tokens: Vec<Token>,
+        numbering: &'a mut Numbering,
+    ) -> Self {
         Self {
             sources,
             source,
             tokens,
             at: 0,
-            exprs: 0,
-            statements: 0,
+            numbering,
             brace_ends_expression: false,
         }
     }
@@ -649,18 +653,16 @@ impl<'a> Parser<'a> {
     }
 
     fn expr(&mut self, span: Span, kind: ExprKind) -> Expr {
-        self.exprs += 1;
         Expr {
-            id: ExprId(self.exprs - 1),
+            id: self.numbering.expr(),
             span,
             kind,
         }
     }
 
     fn statement_at(&mut self, span: Span, kind: StatementKind) -> Statement {
-        self.statements += 1;
         Statement {
-            id: StmtId(self.statements - 1),
+            id: self.numbering.statement(),
             span,
             kind,
         }

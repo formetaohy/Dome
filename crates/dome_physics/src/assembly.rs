@@ -64,7 +64,7 @@ pub(crate) fn wake(
         bodies
             .iter()
             .enumerate()
-            .filter(|(_, body)| body.active())
+            .filter(|(_, body)| body.moving())
             .map(|(index, _)| index),
     );
     while let Some(at) = pending.pop() {

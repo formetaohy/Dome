@@ -1,4 +1,7 @@
-use dome_ecs::{LocalTransform, World, children, propagate, set_parent};
+use dome_ecs::{
+    LocalTransform, PreviousTransform, World, children, propagate, propagate_step, set_parent,
+    snapshot,
+};
 use dome_math::{Quat, Transform, Vec3};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -100,4 +103,55 @@ fn a_settled_hierarchy_propagates_without_touching_the_heap() {
         .get::<Transform>(deepest)
         .expect("the deepest node holds its world transform");
     assert_eq!(held.translation, Vec3::new(2017.0, 1.0, 0.0));
+}
+
+#[test]
+fn a_stepped_pose_keeps_its_predecessor_and_an_immediate_pose_snaps_it() {
+    let mut world = World::new();
+    let entity = world.spawn();
+    world.insert(
+        entity,
+        LocalTransform(Transform::from_translation(Vec3::new(1.0, 0.0, 0.0))),
+    );
+    propagate(&mut world);
+    assert_eq!(
+        pose(&world, entity),
+        Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+    );
+
+    world.insert(
+        entity,
+        LocalTransform(Transform::from_translation(Vec3::new(2.0, 0.0, 0.0))),
+    );
+    snapshot(&mut world);
+    propagate_step(&mut world);
+    assert_eq!(
+        *world
+            .get::<Transform>(entity)
+            .expect("a stepped entity holds its world transform"),
+        Transform::from_translation(Vec3::new(2.0, 0.0, 0.0)),
+    );
+    assert_eq!(
+        pose(&world, entity),
+        Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+        "a stepped pose keeps the pose its step started from",
+    );
+
+    world.insert(
+        entity,
+        LocalTransform(Transform::from_translation(Vec3::new(3.0, 0.0, 0.0))),
+    );
+    propagate(&mut world);
+    assert_eq!(
+        pose(&world, entity),
+        Transform::from_translation(Vec3::new(3.0, 0.0, 0.0)),
+        "an immediate pose carries no pose to interpolate from",
+    );
+}
+
+fn pose(world: &World, entity: dome_ecs::Entity) -> Transform {
+    world
+        .get::<PreviousTransform>(entity)
+        .expect("a published entity holds the pose it came from")
+        .0
 }

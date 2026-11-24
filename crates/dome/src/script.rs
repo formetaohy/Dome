@@ -19,12 +19,15 @@ pub(crate) fn install(app: &mut App, root: &Path) {
     app.add_fixed(move |world: &mut World| fixed.borrow_mut().fixed(world));
     let reload = Rc::clone(&scripts);
     let folder = root.to_path_buf();
-    app.add_reload(move |_: &mut World, change: Change| {
+    app.add_reload(move |world: &mut World, change: Change| {
         if !change.script {
             return;
         }
         match Scripts::load(&folder, hosts()) {
-            Ok(fresh) => *reload.borrow_mut() = fresh,
+            Ok(mut fresh) => {
+                fresh.boot(world);
+                *reload.borrow_mut() = fresh;
+            }
             Err(error) => eprintln!(
                 "the lampas scripts of {} keep the version they checked: {error}",
                 folder.display(),

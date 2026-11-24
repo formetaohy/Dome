@@ -298,7 +298,6 @@ pub(crate) struct Body {
     pub inverse_mass: f32,
     pub inverse_inertia: Mat3,
     pub proxy: Option<usize>,
-    pub bounds: Option<Aabb>,
     local_inverse_inertia: Mat3,
 }
 
@@ -338,7 +337,6 @@ impl Body {
             inverse_mass: 0.0,
             inverse_inertia: Mat3::from_diagonal(Vec3::ZERO),
             proxy: None,
-            bounds: None,
             local_inverse_inertia: Mat3::from_diagonal(Vec3::ZERO),
         };
         body.rebuild(world);
@@ -620,6 +618,14 @@ impl Body {
             BodyKind::Dynamic => !self.rigid.sleeping,
             BodyKind::Kinematic => self.velocity().moves(),
         }
+    }
+
+    pub(crate) fn moved(&self) -> bool {
+        self.carried.moves()
+    }
+
+    pub(crate) fn moving(&self) -> bool {
+        self.active() || self.moved()
     }
 
     pub(crate) fn pushable(&self) -> bool {

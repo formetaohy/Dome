@@ -11,7 +11,8 @@ pub use column::{Column, Iter, IterMut};
 pub use component::Component;
 pub use entity::{Entity, EntityAllocator};
 pub use hierarchy::{
-    LocalTransform, Parent, children, clear_parent, propagate, set_parent, world_transform,
+    LocalTransform, Parent, PreviousTransform, children, clear_parent, propagate, propagate_step,
+    set_parent, snapshot, world_transform,
 };
 pub use resource::Resource;
 pub use schedule::Schedule;

@@ -37,6 +37,7 @@ pub(crate) struct Simulation {
     contacts: Vec<Contact>,
     manifolds: Vec<Manifold>,
     touched: Vec<(Entity, Entity, bool)>,
+    kept: Vec<(Entity, Entity, bool)>,
     jointed: Vec<(Entity, Entity)>,
     pairs: Vec<(usize, usize)>,
     motors: Vec<bool>,
@@ -113,29 +114,27 @@ impl Simulation {
         for at in self.wakes.drain(..) {
             self.table.bodies_mut()[at].wake();
         }
-        self.touched
-            .sort_unstable_by_key(|(first, second, _)| (*first, *second));
+        self.kept.clear();
         for index in 0..collisions.touching().len() {
             let (first, second, sensor) = collisions.touching()[index];
-            if self
-                .touched
-                .binary_search_by_key(&(first, second), |(a, b, _)| (*a, *b))
-                .is_ok()
-            {
-                continue;
-            }
             let (Some(one), Some(two)) = (self.table.index(first), self.table.index(second)) else {
                 continue;
             };
             let bodies = self.table.bodies();
-            if let (Some(one), Some(two)) = (bodies[one].bounds, bodies[two].bounds)
-                && one.intersects(two)
+            if bodies[one].moving()
+                || bodies[one].senses()
+                || bodies[two].moving()
+                || bodies[two].senses()
             {
-                self.touched.push((first, second, sensor));
+                continue;
             }
+            self.kept.push((first, second, sensor));
         }
+        self.touched.append(&mut self.kept);
         self.touched
             .sort_unstable_by_key(|(first, second, _)| (*first, *second));
+        self.touched
+            .dedup_by_key(|(first, second, _)| (*first, *second));
         assembly::wake(
             self.table.bodies_mut(),
             &self.pairs,
@@ -158,7 +157,7 @@ impl Simulation {
             let first = self.locate(*entity);
             let second = self.locate(joint.other());
             let bodies = self.table.bodies();
-            if bodies[first].active() || bodies[second].active() {
+            if bodies[first].moving() || bodies[second].moving() {
                 self.constraints
                     .push(joint_solver::prepare(first, second, *joint, bodies, delta));
                 self.joints.push((*entity, *joint));

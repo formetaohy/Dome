@@ -6,6 +6,26 @@ pub struct ExprId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StmtId(pub u32);
 
+#[derive(Default)]
+pub struct Numbering {
+    exprs: u32,
+    statements: u32,
+}
+
+impl Numbering {
+    pub fn expr(&mut self) -> ExprId {
+        let id = ExprId(self.exprs);
+        self.exprs += 1;
+        id
+    }
+
+    pub fn statement(&mut self) -> StmtId {
+        let id = StmtId(self.statements);
+        self.statements += 1;
+        id
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Ident {
     pub span: Span,

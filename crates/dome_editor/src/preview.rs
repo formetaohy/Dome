@@ -2,7 +2,7 @@ use crate::action::Action;
 use crate::camera;
 use crate::debug;
 use dome_asset::{Library, Refresh};
-use dome_ecs::{Entity, World, propagate};
+use dome_ecs::{Entity, LocalTransform, World, propagate, propagate_step, snapshot};
 use dome_gpu::{AddressMode, FilterMode, Gpu, SamplerDesc, Texture, TextureFormat, TextureUsages};
 use dome_math::{Quat, Transform, Vec3};
 use dome_render::{Camera, DirectionalLight, PointLight, Renderer, Target};
@@ -79,7 +79,9 @@ impl Preview {
         preview.wanted = Some(scene.clone());
         preview.requested = Some(scene.clone());
         preview.settle();
-        preview.world.insert(camera, Transform::IDENTITY);
+        preview
+            .world
+            .insert(camera, LocalTransform(Transform::IDENTITY));
         preview.world.insert(camera, camera::editor());
         preview
     }
@@ -244,7 +246,8 @@ impl Preview {
     }
 
     pub(crate) fn set_camera(&mut self, transform: Transform) {
-        self.world.insert(self.camera, transform);
+        self.world.insert(self.camera, LocalTransform(transform));
+        propagate(&mut self.world);
     }
 
     pub(crate) fn advance(&mut self, real: Duration) {
@@ -256,9 +259,10 @@ impl Preview {
         }
         for _ in 0..steps {
             self.accumulator -= self.fixed;
+            snapshot(&mut self.world);
             dome_animation::advance(&mut self.world, self.fixed.as_secs_f32());
+            propagate_step(&mut self.world);
         }
-        propagate(&mut self.world);
         self.pose = self.pose.wrapping_add(1);
     }
 
@@ -296,6 +300,8 @@ impl Preview {
     pub(crate) fn render(&mut self, target: &Texture, clear: [f32; 4], highlight: Option<Entity>) {
         let lines = debug::viewport(&self.world, self.debug);
         self.world.insert_resource(lines);
+        let phase = (self.accumulator.as_secs_f64() / self.fixed.as_secs_f64()) as f32;
+        self.renderer.set_interpolation(phase);
         self.renderer
             .render(&mut self.world, Target::Texture(target), clear, highlight);
         let captures = self.renderer.take_captures();

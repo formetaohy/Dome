@@ -64,6 +64,45 @@ fn a_fixed_joint_holds_its_bodies_together() {
 }
 
 #[test]
+fn a_moved_static_anchor_drags_its_sleeping_body() {
+    let mut world = world();
+    let anchor = node(&mut world, Vec3::new(0.0, 3.0, 0.0));
+    let body = ball(&mut world, Vec3::new(0.0, 1.0, 0.0));
+    world.insert(
+        anchor,
+        Joint::fixed(
+            body,
+            Vec3::ZERO,
+            Vec3::new(0.0, 2.0, 0.0),
+            Quat::IDENTITY,
+            Quat::IDENTITY,
+        ),
+    );
+    settle(&mut world, 300);
+    assert!(
+        world
+            .get::<RigidBody>(body)
+            .expect("the hanging body holds its body")
+            .is_sleeping(),
+        "a body hanging from a still anchor falls asleep",
+    );
+    let mut moved = 0.0;
+    for round in 1..=30 {
+        moved = 0.05 * round as f32;
+        world.insert(
+            anchor,
+            LocalTransform(Transform::from_translation(Vec3::new(moved, 3.0, 0.0))),
+        );
+        step(&mut world, DELTA);
+    }
+    let held = position(&world, body);
+    assert!(
+        (held.x - moved).abs() < 0.1 && (held.y - 1.0).abs() < 0.1,
+        "a sleeping body follows its static anchor to {moved} with the body at {held:?}",
+    );
+}
+
+#[test]
 fn a_hinge_swings_its_body_around_its_axis() {
     let mut world = world();
     let anchor = node(&mut world, Vec3::new(0.0, 3.0, 0.0));

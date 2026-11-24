@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn joint_transform(world: &World, entity: Entity) -> Transform {
-    *world.get::<Transform>(entity).unwrap_or_else(|| {
+pub(super) fn joint_transform(world: &World, entity: Entity, phase: f32) -> Transform {
+    pose_of(world, entity, phase).unwrap_or_else(|| {
         panic!(
             "a skin joint names entity {}, which holds no world transform",
             entity.index(),

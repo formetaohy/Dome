@@ -21,7 +21,12 @@ pub(super) struct Collection {
 }
 
 impl Renderer {
-    pub(super) fn collect(&mut self, world: &World, highlight: Option<Entity>) -> Collection {
+    pub(super) fn collect(
+        &mut self,
+        world: &World,
+        highlight: Option<Entity>,
+        phase: f32,
+    ) -> Collection {
         let Renderer {
             instances,
             meshes,
@@ -34,9 +39,10 @@ impl Renderer {
             if world.contains::<Hidden>(entity) {
                 return;
             }
+            let transform = pose_of(world, entity, phase).unwrap_or(*transform);
             gathered.push((
                 entity,
-                *transform,
+                transform,
                 *instance,
                 materials.mode(instance.material) == AlphaMode::Blend,
             ));
@@ -88,7 +94,7 @@ impl Renderer {
                 .point(geometry.center)
                 .reach(geometry.radius);
             for (joint, bind) in skin.joints().iter().zip(skin.inverse_binds()) {
-                let held = joint_transform(world, *joint);
+                let held = joint_transform(world, *joint, phase);
                 stamp = stamp.transform(held).matrix(*bind);
                 joints.push(held);
             }

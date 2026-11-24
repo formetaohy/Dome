@@ -1,6 +1,7 @@
 use dome_ecs::{Entity, World};
-use lampas::{Hosts, Scripts, Type, Value, compile};
+use lampas::{Hosts, Scripts, Type, Value, compile, compile_folder};
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 fn hosts() -> (Hosts, Rc<RefCell<Vec<String>>>) {
@@ -293,4 +294,49 @@ fn the_checker_places_the_type_a_script_holds_wrong() {
     assert_eq!(error.source(), "wrong.lampas");
     assert_eq!(error.line(), 7);
     assert_eq!(error.message(), "int stands where float belongs");
+}
+
+fn folder(name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("dome_lampas_{name}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("the lampas scripts folder makes");
+    for (file, text) in files {
+        std::fs::write(root.join(file), text).expect("the lampas script writes");
+    }
+    root
+}
+
+const ANSWER: &str = r#"
+fn margin() -> int {
+    let factor = 3;
+    let boost = 10;
+    return boost - factor;
+}
+"#;
+
+const TOTAL: &str = r#"
+fn shifted() -> int {
+    let step = 1;
+    let spare = 2;
+    return step + spare;
+}
+
+boot {
+    log(text(margin() + shifted()));
+}
+"#;
+
+#[test]
+fn a_script_holds_one_numbering_across_the_files_it_splits() {
+    let (hosts, messages) = hosts();
+    let root = folder(
+        "split",
+        &[("answer.lampas", ANSWER), ("total.lampas", TOTAL)],
+    );
+    let module = compile_folder(&root, &hosts).expect("the split script checks");
+    let _ = std::fs::remove_dir_all(&root);
+    let mut scripts = Scripts::new(module, hosts);
+    let mut world = World::new();
+    scripts.boot(&mut world);
+    assert_eq!(messages.borrow().as_slice(), ["10"]);
 }

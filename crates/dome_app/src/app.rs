@@ -1,7 +1,7 @@
 use crate::time::Time;
 use dome_asset::{Change, Library, Watch};
 use dome_audio::Audio;
-use dome_ecs::{Entity, Schedule, System, World, propagate};
+use dome_ecs::{Entity, Schedule, System, World, propagate, propagate_step, snapshot};
 use dome_gpu::{Gpu, GpuRequest, Surface, Texture, TextureFormat, TextureUsages, WindowHandle};
 use dome_math::{Transform, Vec3};
 use dome_render::{Camera, Lines, Renderer, Target};
@@ -282,6 +282,10 @@ fn joined(messages: &[String]) -> Option<String> {
     (!messages.is_empty()).then(|| messages.join("; "))
 }
 
+fn phase_of(world: &World) -> f32 {
+    world.resource::<Time>().map_or(1.0, |time| time.alpha())
+}
+
 fn panic_text(payload: Box<dyn Any + Send>) -> String {
     match payload.downcast::<String>() {
         Ok(message) => *message,
@@ -419,6 +423,7 @@ impl Session {
         };
         self.width = surface.width();
         self.height = surface.height();
+        self.renderer.set_interpolation(phase_of(world));
         self.renderer
             .render(world, Target::Surface(Box::new(surface)), clear, None);
     }
@@ -437,12 +442,14 @@ impl Session {
                 .shot
                 .as_ref()
                 .expect("a captured frame holds its target");
+            self.renderer.set_interpolation(phase_of(world));
             self.renderer
                 .render(world, Target::Texture(shot), clear, None);
             let rgba = shot.read_rgba(&self.context.queue());
             return Some(dome_image::encode(width, height, &rgba));
         }
         if let Presentation::Offscreen(texture) = &self.presentation {
+            self.renderer.set_interpolation(phase_of(world));
             self.renderer
                 .render(world, Target::Texture(texture.as_ref()), clear, None);
         }
@@ -674,8 +681,9 @@ impl App {
                 .enter_fixed();
         }
         for _ in 0..steps {
+            snapshot(&mut self.world);
             self.fixed.run(&mut self.world);
-            propagate(&mut self.world);
+            propagate_step(&mut self.world);
             self.world
                 .resource_mut::<Time>()
                 .expect("an application keeps its time")
