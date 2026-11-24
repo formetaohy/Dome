@@ -4,6 +4,7 @@ mod control;
 mod debug;
 mod default;
 mod dialog;
+mod document;
 mod editor;
 mod gizmo;
 mod graph;

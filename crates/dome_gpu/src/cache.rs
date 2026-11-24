@@ -4,7 +4,8 @@ use crate::shader::BindingSpec;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-const WARM_BIND_GROUPS: usize = 8192;
+const WARM_BIND_GROUPS: usize = 4096;
+const STALE_FRAMES: u64 = 8;
 
 struct Held {
     group: BindGroup,
@@ -89,13 +90,11 @@ impl Cache {
     }
 
     pub(crate) fn group(&self, key: GroupKey, build: impl FnOnce() -> BindGroup) -> BindGroup {
-        self.bury();
         let mut groups = self
             .groups
             .lock()
             .expect("a bind group cache is never poisoned");
-        let clock = groups.clock + 1;
-        groups.clock = clock;
+        let clock = groups.clock;
         if let Some(held) = groups.entries.get_mut(&key) {
             held.used = clock;
             return held.group.clone();
@@ -106,31 +105,30 @@ impl Cache {
             .groups
             .lock()
             .expect("a bind group cache is never poisoned");
-        groups.clock += 1;
-        let used = groups.clock;
         groups.entries.insert(
             key,
             Held {
                 group: group.clone(),
-                used,
+                used: clock,
             },
         );
-        if groups.entries.len() > WARM_BIND_GROUPS {
-            let oldest = groups.clock - WARM_BIND_GROUPS as u64;
-            groups.entries.retain(|_, held| held.used > oldest);
-        }
         group
     }
 
-    pub(crate) fn bury(&self) {
+    pub(crate) fn begin_frame(&self) {
         let retired = self.retirements.drain();
-        if retired.is_empty() {
-            return;
-        }
-        self.groups
+        let mut groups = self
+            .groups
             .lock()
-            .expect("a bind group cache is never poisoned")
-            .entries
-            .retain(|key, _| !key.retired(&retired));
+            .expect("a bind group cache is never poisoned");
+        groups.clock += 1;
+        let clock = groups.clock;
+        if !retired.is_empty() {
+            groups.entries.retain(|key, _| !key.retired(&retired));
+        }
+        if groups.entries.len() > WARM_BIND_GROUPS {
+            let oldest = clock.saturating_sub(STALE_FRAMES);
+            groups.entries.retain(|_, held| held.used >= oldest);
+        }
     }
 }

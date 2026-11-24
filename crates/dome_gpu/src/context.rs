@@ -224,6 +224,10 @@ impl Device {
         self.state.cache.len()
     }
 
+    pub fn begin_frame(&self) {
+        self.state.cache.begin_frame();
+    }
+
     pub fn features(&self) -> wgpu::Features {
         self.state.features
     }

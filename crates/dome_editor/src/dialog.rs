@@ -4,11 +4,12 @@ use dome_ui::{
     State as UiState, Surface, TextStyle, place, widget,
 };
 
-use crate::action::{Action, PathDialog, PathKind};
+use crate::action::{Action, Confirm, PathDialog, PathKind};
 use crate::stage::label;
 
 const DIALOG_WIDTH: f32 = 360.0;
 const DIALOG_HEIGHT: f32 = 166.0;
+const CONFIRM_HEIGHT: f32 = 196.0;
 
 pub(crate) fn toast(
     ctx: &mut BuildContext<'_, Action>,
@@ -56,6 +57,88 @@ pub(crate) fn toast(
     )
     .key(Key::new("toast"))
     .layer(Layer::Hud)
+}
+
+pub(crate) fn confirm(
+    ctx: &BuildContext<'_, Action>,
+    screen: Vec2,
+    confirm: Confirm,
+) -> Element<'static, Action> {
+    let theme = *ctx.theme();
+    let palette = theme.palette;
+    let heading = Element::row()
+        .width(Length::Fill)
+        .gap(12.0)
+        .align(Align::Center)
+        .children([
+            Element::column()
+                .width(Length::Fixed(36.0))
+                .height(Length::Fixed(36.0))
+                .align(Align::Center)
+                .justify(Align::Center)
+                .background(Surface::fill(palette.error_container).with_corners(Corners::all(12.0)))
+                .children([widget::icon(
+                    Icon::Warning,
+                    18.0,
+                    palette.on_error_container,
+                    IconStyle::FILLED,
+                )]),
+            label(
+                confirm.title(),
+                TextStyle::new(theme.font(Level::Headline), palette.on_surface),
+            ),
+        ]);
+    let body = label(
+        confirm.body(),
+        TextStyle::new(theme.font(Level::Body), palette.on_surface_variant),
+    )
+    .width(Length::Fill);
+    let actions = Element::row()
+        .width(Length::Fill)
+        .justify(Align::End)
+        .align(Align::Center)
+        .gap(8.0)
+        .children([
+            widget::button(&theme, "Cancel", Role::Standard)
+                .key(Key::new("confirm.cancel"))
+                .press(Action::DismissConfirm),
+            widget::button(
+                &theme,
+                confirm.confirm_label(),
+                if confirm.loses_edits() {
+                    Role::Standard
+                } else {
+                    Role::Filled
+                },
+            )
+            .key(Key::new("confirm.accept"))
+            .press(Action::ResolveConfirm),
+        ]);
+    let card_rect = Rect::from_center_size(
+        screen * 0.5,
+        Vec2::new(
+            DIALOG_WIDTH.min((screen.x - 24.0).max(220.0)),
+            CONFIRM_HEIGHT,
+        ),
+    );
+    let card = place(
+        card_rect,
+        [Element::column()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Edges::all(20.0))
+            .gap(14.0)
+            .background(theme.surface(Role::Dialog, UiState::Rest))
+            .blocks_pointer()
+            .children([heading, body, actions])],
+    )
+    .key(Key::new("confirm.card"));
+    place(Rect::from_min_size(Vec2::ZERO, screen), [card])
+        .key(Key::new("confirm"))
+        .layer(Layer::Hud)
+        .background(Surface::fill(palette.scrim))
+        .blocks_pointer()
+        .modal()
 }
 
 pub(crate) fn modal(

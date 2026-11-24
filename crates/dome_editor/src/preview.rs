@@ -14,6 +14,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const ASSET_UPLOAD_BYTES: u64 = 8 << 20;
+const SIMULATION_HZ: f64 = 60.0;
+const MAX_STEPS: u32 = 8;
+const MAX_FRAME: Duration = Duration::from_millis(250);
 pub(crate) const PREVIEW_SAMPLER: SamplerDesc = SamplerDesc {
     min_filter: FilterMode::Linear,
     mag_filter: FilterMode::Linear,
@@ -35,6 +38,9 @@ pub(crate) struct Preview {
     wanted: Option<Scene>,
     requested: Option<Scene>,
     revision: u64,
+    pose: u64,
+    accumulator: Duration,
+    fixed: Duration,
 }
 
 impl Preview {
@@ -63,6 +69,9 @@ impl Preview {
             wanted: None,
             requested: None,
             revision: 0,
+            pose: 0,
+            accumulator: Duration::ZERO,
+            fixed: Duration::from_secs_f64(1.0 / SIMULATION_HZ),
         };
         let mut library = Library::new();
         assert!(library.request(scene), "a new preview loads its scene");
@@ -83,6 +92,10 @@ impl Preview {
 
     pub(crate) fn revision(&self) -> u64 {
         self.revision
+    }
+
+    pub(crate) fn pose(&self) -> u64 {
+        self.pose
     }
 
     pub(crate) fn poll(&mut self) -> Option<Refresh> {
@@ -235,8 +248,18 @@ impl Preview {
     }
 
     pub(crate) fn advance(&mut self, real: Duration) {
-        dome_animation::advance(&mut self.world, real.as_secs_f32());
+        self.accumulator = (self.accumulator + real.min(MAX_FRAME)).min(self.fixed * MAX_STEPS);
+        let steps = u32::try_from(self.accumulator.as_nanos() / self.fixed.as_nanos())
+            .expect("a clamped preview clock spans its step budget");
+        if steps == 0 {
+            return;
+        }
+        for _ in 0..steps {
+            self.accumulator -= self.fixed;
+            dome_animation::advance(&mut self.world, self.fixed.as_secs_f32());
+        }
         propagate(&mut self.world);
+        self.pose = self.pose.wrapping_add(1);
     }
 
     pub(crate) fn pick(&mut self, point: dome_math::Vec2) -> Option<String> {
@@ -275,6 +298,10 @@ impl Preview {
         self.world.insert_resource(lines);
         self.renderer
             .render(&mut self.world, Target::Texture(target), clear, highlight);
-        dome_render::install_captures(&mut self.world, self.renderer.take_captures());
+        let captures = self.renderer.take_captures();
+        if !captures.is_empty() {
+            dome_render::install_captures(&mut self.world, captures);
+            self.revision = self.revision.wrapping_add(1);
+        }
     }
 }

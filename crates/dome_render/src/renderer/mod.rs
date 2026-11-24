@@ -25,8 +25,8 @@ use crate::environment::{
     Environment,
 };
 use crate::frame::{
-    Batch, Placement, Screen, ambient_of, arguments_of, bases_of, camera_of, direction_record,
-    light_of, record_of, record_of_cascade, record_of_main_view, record_of_view, vector,
+    Batch, Placement, Screen, ambient_of, arguments_of, camera_of, direction_record, light_of,
+    record_of, record_of_cascade, record_of_main_view, record_of_view, vector,
 };
 use crate::growing::Growing;
 use crate::hidden::Hidden;
@@ -146,6 +146,7 @@ pub struct Renderer {
     main_drawn: Growing,
     main_arguments: Growing,
     main_batches: u32,
+    batches: crate::batches::Batches,
     shadow_drawn: Growing,
     shadow_arguments: Growing,
     shadow_span: u64,
@@ -372,6 +373,7 @@ impl Renderer {
             main_drawn,
             main_arguments,
             main_batches: 0,
+            batches: crate::batches::Batches::new(),
             shadow_drawn,
             shadow_arguments,
             shadow_span: 0,

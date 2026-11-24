@@ -100,6 +100,9 @@ pub(crate) struct Palettes {
     used: u32,
     at: usize,
     posed: u32,
+    stale: Vec<Entity>,
+    merged: Vec<Range>,
+    records: Vec<JointRecord>,
 }
 
 impl Palettes {
@@ -114,6 +117,9 @@ impl Palettes {
             used: 0,
             at: 0,
             posed: 0,
+            stale: Vec::new(),
+            merged: Vec::new(),
+            records: Vec::new(),
         }
     }
 
@@ -187,7 +193,8 @@ impl Palettes {
             .pool
             .as_ref()
             .expect("a committed frame holds the buffer its poses write");
-        for entity in std::mem::take(&mut self.staged) {
+        for index in 0..self.staged.len() {
+            let entity = self.staged[index];
             let held = self
                 .held
                 .get_mut(&entity)
@@ -198,41 +205,39 @@ impl Palettes {
             if !held.fresh && held.halves[at] == Some(stamp) {
                 continue;
             }
-            let records = held
-                .matrices
-                .iter()
-                .copied()
-                .map(joint_record)
-                .collect::<Vec<_>>();
-            let bytes = bytemuck::cast_slice(&records);
+            self.records.clear();
+            self.records
+                .extend(held.matrices.iter().copied().map(joint_record));
+            let bytes = bytemuck::cast_slice(&self.records);
             let palette = u64::from(held.range.palette) * JOINT_BYTES;
             if held.fresh {
                 held.fresh = false;
-                for (half, base) in bases.iter().enumerate() {
+                for (side, base) in bases.iter().enumerate() {
                     pool.write_at(queue, *base + palette, bytes);
-                    held.halves[half] = Some(stamp);
+                    held.halves[side] = Some(stamp);
                 }
             } else {
                 pool.write_at(queue, bases[at] + palette, bytes);
                 held.halves[at] = Some(stamp);
             }
         }
+        self.staged.clear();
     }
 
     fn release_stale(&mut self) {
-        let held = std::mem::take(&mut self.posed_entities);
-        let stale = self
-            .held
-            .keys()
-            .filter(|entity| !held.contains(entity))
-            .copied()
-            .collect::<Vec<_>>();
-        for entity in stale {
+        let mut stale = std::mem::take(&mut self.stale);
+        stale.clear();
+        for entity in self.held.keys() {
+            if !self.posed_entities.contains(entity) {
+                stale.push(*entity);
+            }
+        }
+        for entity in stale.drain(..) {
             if let Some(released) = self.held.remove(&entity) {
                 self.release(released.range);
             }
         }
-        self.posed_entities = held;
+        self.stale = stale;
         self.coalesce();
     }
 
@@ -241,7 +246,8 @@ impl Palettes {
             return;
         }
         self.free.sort_unstable_by_key(|range| range.palette);
-        let mut merged: Vec<Range> = Vec::with_capacity(self.free.len());
+        let mut merged = std::mem::take(&mut self.merged);
+        merged.clear();
         for range in self.free.drain(..) {
             match merged.last_mut() {
                 Some(last) if last.palette + last.joints == range.palette => {
@@ -250,7 +256,9 @@ impl Palettes {
                 _ => merged.push(range),
             }
         }
-        self.free = merged;
+        self.merged = merged;
+        std::mem::swap(&mut self.free, &mut self.merged);
+        self.merged.clear();
     }
 
     pub(crate) fn finish(&mut self) {

@@ -111,33 +111,11 @@ impl Renderer {
         palettes.commit(&self.device, &self.queue);
         let alignment = self.device.binding_alignment().max(WORD_BYTES);
         let blocks = span::blocks(alignment, DRAW_BYTES);
-        let mut counted = HashMap::new();
+        self.batches.begin();
         for (_, _, instance, blended) in &gathered {
-            let held = counted
-                .entry((instance.mesh, *blended))
-                .or_insert((instance.mesh, 0u32));
-            held.1 += 1;
+            self.batches.claim(instance.mesh, *blended);
         }
-        let mut pairs = counted.into_iter().collect::<Vec<_>>();
-        pairs.sort_unstable_by_key(|((mesh, blended), _)| (*blended, mesh.index()));
-        let counts = pairs
-            .iter()
-            .map(|(_, (_, count))| *count)
-            .collect::<Vec<_>>();
-        let (bases, slots) = bases_of(&counts, blocks);
-        let depth_batches = pairs.iter().filter(|(key, _)| !key.1).count() as u32;
-        let batches = pairs
-            .iter()
-            .map(|(_, (mesh, count))| Batch {
-                mesh: *mesh,
-                count: *count,
-            })
-            .collect::<Vec<_>>();
-        let batch_of = pairs
-            .iter()
-            .enumerate()
-            .map(|(index, (key, _))| (*key, index as u32))
-            .collect::<HashMap<_, _>>();
+        self.batches.settle(blocks);
         let total = instances.len() as u32;
         if self
             .instance_buffer
@@ -148,7 +126,7 @@ impl Renderer {
         for index in 0..instances.len() {
             let slot = instances.at(index);
             let source = slot.source();
-            let batch = batch_of[&(source.mesh, source.blended)];
+            let batch = self.batches.batch_of(source.mesh, source.blended);
             let model = source.transform.matrix();
             let previous = slot.model.unwrap_or(model);
             let bounds = slot
@@ -166,7 +144,7 @@ impl Renderer {
                 bounds,
                 Placement {
                     batch,
-                    base: bases[batch as usize],
+                    base: self.batches.bases()[batch as usize],
                     skinning: slot.skinning,
                     hzb: !source.blended,
                 },
@@ -206,10 +184,10 @@ impl Renderer {
             })
             .collect::<Vec<_>>();
         Collection {
-            batches,
-            bases,
-            slots,
-            depth_batches,
+            batches: self.batches.table().to_vec(),
+            bases: self.batches.bases().to_vec(),
+            slots: self.batches.slots(),
+            depth_batches: self.batches.depth(),
             total,
             spheres,
             highlight: highlight

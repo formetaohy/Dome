@@ -59,6 +59,43 @@ pub struct PathDialog {
     pub invalid: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Confirm {
+    Close,
+    Reload,
+    Overwrite,
+}
+
+impl Confirm {
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::Close => "Close without saving?",
+            Self::Reload => "Reload without saving?",
+            Self::Overwrite => "Overwrite the file on disk?",
+        }
+    }
+
+    pub(crate) fn body(self) -> &'static str {
+        match self {
+            Self::Close => "The scene holds edits that are not written yet.",
+            Self::Reload => "Reloading drops the edits this scene holds.",
+            Self::Overwrite => "The scene holds edits the file on disk does not.",
+        }
+    }
+
+    pub(crate) fn confirm_label(self) -> &'static str {
+        match self {
+            Self::Close => "Save and close",
+            Self::Reload => "Discard edits",
+            Self::Overwrite => "Overwrite",
+        }
+    }
+
+    pub(crate) fn loses_edits(self) -> bool {
+        self != Self::Close
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Tab {
     #[default]
@@ -101,6 +138,8 @@ pub enum Action {
     SubmitPath(String),
     SubmitDialog,
     CloseDialog,
+    ResolveConfirm,
+    DismissConfirm,
     DismissError,
     RemoveTarget(Target),
     RemoveSelected,

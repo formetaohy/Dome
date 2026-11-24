@@ -1,5 +1,6 @@
 mod abi;
 mod batch;
+mod batches;
 mod camera;
 mod capture;
 mod damage;

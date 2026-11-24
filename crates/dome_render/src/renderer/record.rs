@@ -124,27 +124,21 @@ impl Renderer {
         };
         self.views
             .write(&self.queue, bytemuck::cast_slice(&[main_view, depth_view]));
-        self.shadow_views.write(
-            &self.queue,
-            bytemuck::cast_slice(
-                &cascades
-                    .iter()
-                    .map(|cascade| {
-                        record_of_view(
-                            &View::of(cascade.clip),
-                            total,
-                            Vec3::ZERO,
-                            Vec3::Z,
-                            palette_base,
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-        );
-        self.cascades.write(
-            &self.queue,
-            bytemuck::cast_slice(&cascades.iter().map(record_of_cascade).collect::<Vec<_>>()),
-        );
+        let shadow_views: [ViewRecord; CASCADE_COUNT as usize] = std::array::from_fn(|at| {
+            record_of_view(
+                &View::of(cascades[at].clip),
+                total,
+                Vec3::ZERO,
+                Vec3::Z,
+                palette_base,
+            )
+        });
+        self.shadow_views
+            .write(&self.queue, bytemuck::cast_slice(&shadow_views));
+        let cascade_records: [CascadeRecord; CASCADE_COUNT as usize] =
+            std::array::from_fn(|at| record_of_cascade(&cascades[at]));
+        self.cascades
+            .write(&self.queue, bytemuck::cast_slice(&cascade_records));
         let irradiance = environment.map_or([Vec3::ZERO; 9], |held| held.irradiance);
         let intensity = environment.map_or(0.0, |held| held.intensity);
         let levels = environment.map_or(0.0, |held| (held.levels - 1) as f32);

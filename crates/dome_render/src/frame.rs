@@ -12,8 +12,10 @@ use crate::view::View;
 use dome_ecs::{Entity, World};
 use dome_math::{Mat4, Transform, Vec3, Vec4};
 
+#[derive(Clone, Copy)]
 pub(crate) struct Batch {
     pub(crate) mesh: Mesh,
+    pub(crate) blended: bool,
     pub(crate) count: u32,
 }
 
@@ -236,19 +238,6 @@ pub(crate) fn record_of(
         hzb: u32::from(placement.hzb),
         pad0: 0,
     }
-}
-
-pub(crate) fn bases_of(counts: &[u32], blocks: u32) -> (Vec<u32>, u32) {
-    let mut slot = 0;
-    let bases = counts
-        .iter()
-        .map(|count| {
-            let held = slot;
-            slot = (slot + count).div_ceil(blocks) * blocks;
-            held
-        })
-        .collect();
-    (bases, slot)
 }
 
 pub(crate) fn arguments_of(geometry: &Geometry) -> [u32; 4] {

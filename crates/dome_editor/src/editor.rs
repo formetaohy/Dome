@@ -19,8 +19,11 @@ use dome_window::{
     run as run_window,
 };
 
-use crate::action::{Action, AssetKind, NodeKind, ParameterKind, PathDialog, PathKind, Sheet, Tab};
+use crate::action::{
+    Action, AssetKind, Confirm, NodeKind, ParameterKind, PathDialog, PathKind, Sheet, Tab,
+};
 use crate::camera::{self, Orbit};
+use crate::document::{Document, State as DocumentState};
 use crate::gizmo::{self, Grip, Mode, Space};
 use crate::history::History;
 use crate::preview::Preview;
@@ -75,7 +78,7 @@ struct Viewport {
     debug: bool,
     scene: u64,
     assets: u64,
-    animating: bool,
+    pose: u64,
 }
 
 pub struct Editor {
@@ -83,9 +86,10 @@ pub struct Editor {
     project: Project,
     registry: Arc<Registry>,
     path: PathBuf,
+    document: Document,
     selected: Option<Target>,
-    dirty: bool,
-    conflict: bool,
+    confirm: Option<Confirm>,
+    exiting: bool,
     titled_dirty: Option<bool>,
     error: Option<String>,
     child: Option<Player>,
@@ -136,10 +140,11 @@ impl Editor {
             scene,
             project: config.project,
             registry,
+            document: Document::open(path.clone()),
             path,
             selected,
-            dirty: false,
-            conflict: false,
+            confirm: None,
+            exiting: false,
             titled_dirty: None,
             error: None,
             child: None,
@@ -200,16 +205,16 @@ impl Editor {
     }
 
     fn sync_title(&mut self, window: &Window) {
-        if self.titled_dirty == Some(self.dirty) {
+        if self.titled_dirty == Some(self.document.dirty()) {
             return;
         }
-        self.titled_dirty = Some(self.dirty);
+        self.titled_dirty = Some(self.document.dirty());
         let name = self
             .path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("main.scene.toml");
-        if self.dirty {
+        if self.document.dirty() {
             window.set_title(&format!("Dome — {} — {name} •", self.project.name()));
         } else {
             window.set_title(&format!("Dome — {} — {name}", self.project.name()));
@@ -247,26 +252,30 @@ impl Editor {
     }
 
     fn save(&mut self) -> bool {
-        if self.conflict {
+        if self.document.conflicted() {
             self.error = Some(format!(
                 "{} changed on disk: reload it or save over it",
                 self.path.display(),
             ));
             return false;
         }
-        self.write()
+        self.write(false)
     }
 
     fn overwrite(&mut self) -> bool {
-        self.conflict = false;
-        self.write()
+        self.write(true)
     }
 
-    fn write(&mut self) -> bool {
+    fn write(&mut self, over: bool) -> bool {
         self.finish_drag();
         self.commit();
         self.finish_property();
-        if let Err(error) = self.scene.save(&self.path) {
+        let written = if over {
+            self.document.write_over(&self.scene)
+        } else {
+            self.document.write(&self.scene)
+        };
+        if let Err(error) = written {
             self.error = Some(error);
             return false;
         }
@@ -274,7 +283,6 @@ impl Editor {
             watch.adopt(&self.path);
         }
         self.rewatch();
-        self.dirty = false;
         true
     }
 
@@ -299,8 +307,7 @@ impl Editor {
                 self.scene = scene;
                 self.viewport_rendered = None;
                 self.history.reset();
-                self.dirty = false;
-                self.conflict = false;
+                self.document.adopted();
                 self.rewatch();
                 self.clamp();
                 self.refresh_preview();
@@ -322,8 +329,8 @@ impl Editor {
         }
         let change = report.change;
         if change.scene {
-            if self.dirty {
-                self.conflict = true;
+            if self.document.dirty() {
+                self.document.mark_foreign();
                 self.refresh_preview();
                 return true;
             }
@@ -340,8 +347,7 @@ impl Editor {
                     self.drag = None;
                     self.property = None;
                     self.history.reset();
-                    self.dirty = false;
-                    self.conflict = false;
+                    self.document.adopted();
                     self.clamp();
                     self.refresh_preview();
                 }
@@ -359,6 +365,41 @@ impl Editor {
     fn rewatch(&mut self) {
         if let Some(watch) = &mut self.watch {
             watch.renew(&self.scene);
+        }
+    }
+
+    fn request_reload(&mut self) {
+        if self.document.dirty() {
+            self.confirm = Some(Confirm::Reload);
+            return;
+        }
+        self.reload();
+    }
+
+    fn resolve_confirm(&mut self) {
+        match self.confirm {
+            Some(Confirm::Close) => {
+                let written = if self.document.conflicted() {
+                    self.overwrite()
+                } else {
+                    self.save()
+                };
+                if written {
+                    self.confirm = None;
+                    self.exiting = true;
+                }
+            }
+            Some(Confirm::Reload) => {
+                self.confirm = None;
+                self.reload();
+            }
+            Some(Confirm::Overwrite) => {
+                if !self.overwrite() {
+                    return;
+                }
+                self.confirm = None;
+            }
+            None => {}
         }
     }
 
@@ -401,14 +442,14 @@ impl Editor {
             return;
         }
         self.history.record(delta);
-        self.dirty = true;
+        self.document.edited();
     }
 
     fn undo(&mut self) {
         self.finish_drag();
         self.finish_property();
         if self.history.undo(&mut self.scene) {
-            self.dirty = true;
+            self.document.edited();
             self.clamp();
             self.refresh_preview();
         }
@@ -418,7 +459,7 @@ impl Editor {
         self.finish_drag();
         self.finish_property();
         if self.history.redo(&mut self.scene) {
-            self.dirty = true;
+            self.document.edited();
             self.clamp();
             self.refresh_preview();
         }
@@ -457,7 +498,7 @@ impl Editor {
         {
             Ok((_, delta)) => {
                 if !delta.is_empty() {
-                    self.dirty = true;
+                    self.document.edited();
                 }
                 self.property = Some(PropertyState {
                     target: target.clone(),
@@ -856,9 +897,11 @@ impl Editor {
                 self.save();
             }
             Action::Overwrite => {
-                self.overwrite();
+                self.confirm = Some(Confirm::Overwrite);
             }
-            Action::Reload => self.reload(),
+            Action::Reload => self.request_reload(),
+            Action::ResolveConfirm => self.resolve_confirm(),
+            Action::DismissConfirm => self.confirm = None,
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
             Action::Play => self.play(),
@@ -1016,6 +1059,9 @@ impl Editor {
     }
 
     fn frame(&mut self, window: &Window, real: Duration) -> Flow {
+        if self.exiting {
+            return Flow::Exit;
+        }
         let now = Instant::now();
         let mut redraw = std::mem::take(&mut self.redraw) || self.ui_at.is_some_and(|at| at <= now);
         redraw |= self.reload_if_changed();
@@ -1073,8 +1119,8 @@ impl Editor {
         let state = State {
             scene: &self.scene,
             selected: self.selected.as_ref(),
-            dirty: self.dirty,
-            conflict: self.conflict,
+            dirty: self.document.dirty(),
+            conflict: self.document.conflicted(),
             playing: self.child.is_some(),
             can_undo: self.history.can_undo(),
             can_redo: self.history.can_redo(),
@@ -1087,6 +1133,7 @@ impl Editor {
             collapsed_branches: &self.collapsed_branches,
             collapsed_sections: &self.collapsed_sections,
             dialog: self.dialog.as_ref(),
+            confirm: self.confirm,
             error: self.error.as_deref(),
             camera,
             origin,
@@ -1154,7 +1201,7 @@ impl Editor {
             debug: self.debug,
             scene: self.scene.revision(),
             assets: session.preview.revision(),
-            animating: session.preview.playing() || session.preview.capturing(),
+            pose: session.preview.pose(),
         };
         if self.viewport_rendered != Some(viewport) {
             session.preview.set_camera(camera);
@@ -1261,7 +1308,7 @@ impl Editor {
         {
             Ok(((), delta)) => {
                 state.delta = Some(delta);
-                self.dirty = true;
+                self.document.edited();
                 if let Some(session) = &mut self.session {
                     session.preview.apply(&self.scene, state.node);
                 }
@@ -1358,6 +1405,12 @@ impl Editor {
 
     fn key(&mut self, key: Key, repeat: bool) {
         if repeat {
+            return;
+        }
+        if self.confirm.is_some() {
+            if key == Key::Escape {
+                self.apply(Action::DismissConfirm);
+            }
             return;
         }
         if self.dialog.is_some() {
@@ -1509,6 +1562,14 @@ impl Handler for Editor {
 
     fn suspended(&mut self, _window: &Window) -> Flow {
         Flow::Exit
+    }
+
+    fn closing(&mut self, _window: &Window) -> bool {
+        if self.document.state() == DocumentState::Clean {
+            return true;
+        }
+        self.confirm = Some(Confirm::Close);
+        false
     }
 
     fn closed(&mut self, _window: &Window) {

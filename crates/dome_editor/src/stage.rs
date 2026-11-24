@@ -7,7 +7,7 @@ use dome_ui::{
     Role, Size, State as UiState, TextStyle, place,
 };
 
-use crate::action::{Action, PathDialog, Tab};
+use crate::action::{Action, Confirm, PathDialog, Tab};
 use crate::gizmo::{self, Grip, Mode, Space};
 
 const MARGIN: f32 = 12.0;
@@ -35,6 +35,7 @@ pub(crate) struct State<'a> {
     pub(crate) collapsed_branches: &'a HashSet<String>,
     pub(crate) collapsed_sections: &'a HashSet<String>,
     pub(crate) dialog: Option<&'a PathDialog>,
+    pub(crate) confirm: Option<Confirm>,
     pub(crate) error: Option<&'a str>,
     pub(crate) camera: Transform,
     pub(crate) origin: Vec3,
@@ -106,6 +107,10 @@ pub(crate) fn build(
 
     if let Some(dialog) = state.dialog {
         layers.push(crate::dialog::modal(ctx, screen, dialog));
+    }
+
+    if let Some(confirm) = state.confirm {
+        layers.push(crate::dialog::confirm(ctx, screen, confirm));
     }
 
     if let Some(error) = state.error {

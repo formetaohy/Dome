@@ -429,7 +429,7 @@ impl Session {
         clear: [f32; 4],
         screenshot: bool,
     ) -> Option<Vec<u8>> {
-        let png = if screenshot {
+        if screenshot {
             let width = self.width;
             let height = self.height;
             self.ensure_shot(width, height);
@@ -440,15 +440,13 @@ impl Session {
             self.renderer
                 .render(world, Target::Texture(shot), clear, None);
             let rgba = shot.read_rgba(&self.context.queue());
-            Some(dome_image::encode(width, height, &rgba))
-        } else {
-            None
-        };
+            return Some(dome_image::encode(width, height, &rgba));
+        }
         if let Presentation::Offscreen(texture) = &self.presentation {
             self.renderer
                 .render(world, Target::Texture(texture.as_ref()), clear, None);
         }
-        png
+        None
     }
 
     fn ensure_shot(&mut self, width: u32, height: u32) {
@@ -669,14 +667,24 @@ impl App {
             .resource_mut::<Time>()
             .expect("an application keeps its time")
             .advance(real, self.config.max_fixed_steps);
+        if steps > 0 {
+            self.world
+                .resource_mut::<Time>()
+                .expect("an application keeps its time")
+                .enter_fixed();
+        }
         for _ in 0..steps {
             self.fixed.run(&mut self.world);
             propagate(&mut self.world);
             self.world
                 .resource_mut::<Time>()
                 .expect("an application keeps its time")
-                .step();
+                .consume();
         }
+        self.world
+            .resource_mut::<Time>()
+            .expect("an application keeps its time")
+            .enter_update();
         self.update.run(&mut self.world);
         propagate(&mut self.world);
         dome_audio::sync(&mut self.world);

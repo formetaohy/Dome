@@ -23,6 +23,10 @@ pub trait Handler: 'static {
 
     fn event(&mut self, _window: &Window, _event: Event) {}
 
+    fn closing(&mut self, _window: &Window) -> bool {
+        true
+    }
+
     fn suspended(&mut self, _window: &Window) -> Flow {
         Flow::Exit
     }
@@ -150,7 +154,17 @@ impl<H: Handler> ApplicationHandler<Wake> for Host<H> {
         _window: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed) {
+        if let WindowEvent::CloseRequested = event {
+            if self
+                .window
+                .as_ref()
+                .is_none_or(|window| self.handler.closing(window))
+            {
+                self.close(event_loop);
+            }
+            return;
+        }
+        if let WindowEvent::Destroyed = event {
             self.close(event_loop);
             return;
         }
@@ -159,6 +173,7 @@ impl<H: Handler> ApplicationHandler<Wake> for Host<H> {
         }
         if let WindowEvent::RedrawRequested = event {
             if !self.accepts_frames() {
+                self.last = None;
                 self.hold(event_loop, Flow::Idle);
                 return;
             }
@@ -174,6 +189,9 @@ impl<H: Handler> ApplicationHandler<Wake> for Host<H> {
             self.hold(event_loop, flow);
             return;
         }
+        if matches!(event, WindowEvent::Focused(true)) {
+            self.last = None;
+        }
         let Some(event) = translate(&event) else {
             return;
         };
@@ -188,6 +206,7 @@ impl<H: Handler> ApplicationHandler<Wake> for Host<H> {
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        self.last = None;
         let Some(window) = self.window.take() else {
             return;
         };

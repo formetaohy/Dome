@@ -716,7 +716,7 @@ impl Submission {
         if let Some(surface) = surface {
             queue.native().present(surface);
         }
-        device.cache().bury();
+        device.cache().begin_frame();
         index
     }
 }

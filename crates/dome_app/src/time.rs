@@ -3,7 +3,8 @@ use std::time::Duration;
 const MAX_FRAME: Duration = Duration::from_millis(250);
 
 pub struct Time {
-    delta: Duration,
+    frame_delta: Duration,
+    running_delta: Duration,
     elapsed: Duration,
     fixed: Duration,
     accumulator: Duration,
@@ -23,7 +24,8 @@ impl Time {
             "a fixed timestep of {fixed_hz} hertz rounds to no time"
         );
         Self {
-            delta: Duration::ZERO,
+            frame_delta: Duration::ZERO,
+            running_delta: Duration::ZERO,
             elapsed: Duration::ZERO,
             fixed,
             accumulator: Duration::ZERO,
@@ -33,7 +35,11 @@ impl Time {
     }
 
     pub fn delta(&self) -> Duration {
-        self.delta
+        self.running_delta
+    }
+
+    pub fn frame_delta(&self) -> Duration {
+        self.frame_delta
     }
 
     pub fn fixed_delta(&self) -> Duration {
@@ -53,23 +59,31 @@ impl Time {
     }
 
     pub(crate) fn advance(&mut self, real: Duration, max_steps: u32) -> u32 {
-        let real = real.min(MAX_FRAME);
-        self.delta = real;
         self.elapsed += real;
-        self.accumulator += real;
-        let steps =
-            (self.accumulator.as_nanos() / self.fixed.as_nanos()).min(u128::from(max_steps));
-        if steps == u128::from(max_steps) {
-            self.accumulator = self
-                .fixed
-                .checked_mul(max_steps)
-                .expect("a fixed step budget spans the clock");
-        }
-        steps as u32
+        self.frame_delta = real.min(MAX_FRAME);
+        self.running_delta = self.frame_delta;
+        let budget = self
+            .fixed
+            .checked_mul(max_steps)
+            .expect("a fixed step budget spans the clock");
+        self.accumulator = (self.accumulator + self.frame_delta).min(budget);
+        let steps = self.accumulator.as_nanos() / self.fixed.as_nanos();
+        u32::try_from(steps).expect("a clamped accumulator spans its step budget")
     }
 
-    pub(crate) fn step(&mut self) {
-        self.accumulator = self.accumulator.saturating_sub(self.fixed);
+    pub(crate) fn enter_fixed(&mut self) {
+        self.running_delta = self.fixed;
+    }
+
+    pub(crate) fn enter_update(&mut self) {
+        self.running_delta = self.frame_delta;
+    }
+
+    pub(crate) fn consume(&mut self) {
+        self.accumulator = self
+            .accumulator
+            .checked_sub(self.fixed)
+            .expect("a stepped step draws on the accumulator it counted");
     }
 
     pub(crate) fn settle(&mut self) {

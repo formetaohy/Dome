@@ -127,10 +127,20 @@ impl SceneComponent for AnimationRef {
             .resource::<GraphLibrary>()
             .expect("a scene installs the animation graphs its players read")
             .source(self.graph.as_str());
-        world.insert(
-            entity,
-            AnimationMachine::new(graph, self.playing, self.fade),
-        );
+        let mut machine = match world
+            .get::<AnimationMachine>(entity)
+            .filter(|held| held.graph().name() == self.graph.as_str())
+        {
+            Some(held) => {
+                let mut held = held.clone();
+                held.rebase(graph);
+                held
+            }
+            None => AnimationMachine::new(graph, self.playing, self.fade),
+        };
+        machine.set_playing(self.playing);
+        machine.set_fade(self.fade);
+        world.insert(entity, machine);
     }
 
     fn validate(&self, scene: &Scene, node: &str) -> Result<(), String> {
