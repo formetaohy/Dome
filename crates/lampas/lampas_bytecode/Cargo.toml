@@ -1,0 +1,13 @@
+[package]
+name = "lampas_bytecode"
+version.workspace = true
+edition.workspace = true
+description = "The instructed Lampas module a compiler writes and the virtual machine runs"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_math = { workspace = true }

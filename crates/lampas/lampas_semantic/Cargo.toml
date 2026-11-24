@@ -1,0 +1,15 @@
+[package]
+name = "lampas_semantic"
+version.workspace = true
+edition.workspace = true
+description = "The Lampas checker: its types, names, symbols and the declarations it verifies"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_math = { workspace = true }
+lampas_bytecode = { workspace = true }
+lampas_syntax = { workspace = true }

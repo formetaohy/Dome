@@ -1,0 +1,22 @@
+[package]
+name = "lampas"
+version.workspace = true
+edition.workspace = true
+description = "The Lampas scripting runtime: its component store, queries, commands and the systems it runs on the engine"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_ecs = { workspace = true }
+dome_math = { workspace = true }
+lampas_bytecode = { workspace = true }
+lampas_compiler = { workspace = true }
+lampas_semantic = { workspace = true }
+lampas_syntax = { workspace = true }
+lampas_vm = { workspace = true }
+
+[dev-dependencies]
+dome_ecs = { workspace = true }

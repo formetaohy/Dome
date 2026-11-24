@@ -1,7 +1,10 @@
+mod script;
+
 use dome_app::{App, AppConfig, HeadlessConfig, SceneConfig};
 use dome_editor::{EditorConfig, run as run_editor};
 use dome_launcher::{LauncherConfig, run as run_launcher};
 use dome_project::{Catalog, Project};
+use dome_scene::Folder;
 use dome_window::WindowConfig;
 use std::path::PathBuf;
 
@@ -67,23 +70,27 @@ fn main() {
 fn play(project: Project, debug: bool) {
     let scene = project.entry();
     let root = project.root().to_path_buf();
-    App::with_config(AppConfig {
+    let scripts = project.folder(Folder::Script);
+    let mut app = App::with_config(AppConfig {
         window: WindowConfig::new(project.name(), 1280, 720),
         scene: Some(SceneConfig { path: scene, root }),
         debug,
         ..Default::default()
-    })
-    .run();
+    });
+    script::install(&mut app, &scripts);
+    app.run();
 }
 
 fn headless(project: Project, capture: Capture, debug: bool) {
     let scene = project.entry();
     let root = project.root().to_path_buf();
+    let scripts = project.folder(Folder::Script);
     let mut app = App::with_config(AppConfig {
         scene: Some(SceneConfig { path: scene, root }),
         debug,
         ..Default::default()
     });
+    script::install(&mut app, &scripts);
     let shot = app.run_headless(HeadlessConfig {
         width: capture.width,
         height: capture.height,

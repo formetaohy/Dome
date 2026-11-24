@@ -1,9 +1,18 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = [
+    "crates/*",
+    "crates/lampas/lampas_syntax",
+    "crates/lampas/lampas_bytecode",
+    "crates/lampas/lampas_semantic",
+    "crates/lampas/lampas_compiler",
+    "crates/lampas/lampas_vm",
+    "crates/lampas/lampas",
+]
+exclude = ["crates/lampas"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "An ECS-driven, GPU-driven game engine"
 license = "MIT"
@@ -30,27 +39,33 @@ unicode-segmentation = "1"
 wgpu = "30"
 windows = "0.62"
 winit = { version = "0.30.13", default-features = false }
-dome_animation = { version = "0.1.0", path = "crates/dome_animation" }
-dome_app = { version = "0.1.0", path = "crates/dome_app" }
-dome_asset = { version = "0.1.0", path = "crates/dome_asset" }
-dome_audio = { version = "0.1.0", path = "crates/dome_audio" }
-dome_ecs = { version = "0.1.0", path = "crates/dome_ecs" }
-dome_editor = { version = "0.1.0", path = "crates/dome_editor" }
-dome_gltf = { version = "0.1.0", path = "crates/dome_gltf" }
-dome_gpu = { version = "0.1.0", path = "crates/dome_gpu" }
-dome_image = { version = "0.1.0", path = "crates/dome_image" }
-dome_launcher = { version = "0.1.0", path = "crates/dome_launcher" }
-dome_math = { version = "0.1.0", path = "crates/dome_math" }
-dome_physics = { version = "0.1.0", path = "crates/dome_physics" }
-dome_project = { version = "0.1.0", path = "crates/dome_project" }
-dome_render = { version = "0.1.0", path = "crates/dome_render" }
-dome_scene = { version = "0.1.0", path = "crates/dome_scene" }
-dome_schema = { version = "0.1.0", path = "crates/dome_schema" }
-dome_schema_macro = { version = "0.1.0", path = "crates/dome_schema_macro" }
-dome_text = { version = "0.1.0", path = "crates/dome_text" }
-dome_toml = { version = "0.1.0", path = "crates/dome_toml" }
-dome_ui = { version = "0.1.0", path = "crates/dome_ui" }
-dome_window = { version = "0.1.0", path = "crates/dome_window" }
+dome_animation = { version = "0.1.1", path = "crates/dome_animation" }
+dome_app = { version = "0.1.1", path = "crates/dome_app" }
+dome_asset = { version = "0.1.1", path = "crates/dome_asset" }
+dome_audio = { version = "0.1.1", path = "crates/dome_audio" }
+dome_ecs = { version = "0.1.1", path = "crates/dome_ecs" }
+dome_editor = { version = "0.1.1", path = "crates/dome_editor" }
+dome_gltf = { version = "0.1.1", path = "crates/dome_gltf" }
+dome_gpu = { version = "0.1.1", path = "crates/dome_gpu" }
+dome_image = { version = "0.1.1", path = "crates/dome_image" }
+dome_launcher = { version = "0.1.1", path = "crates/dome_launcher" }
+dome_math = { version = "0.1.1", path = "crates/dome_math" }
+dome_physics = { version = "0.1.1", path = "crates/dome_physics" }
+dome_project = { version = "0.1.1", path = "crates/dome_project" }
+dome_render = { version = "0.1.1", path = "crates/dome_render" }
+dome_scene = { version = "0.1.1", path = "crates/dome_scene" }
+dome_schema = { version = "0.1.1", path = "crates/dome_schema" }
+dome_schema_macro = { version = "0.1.1", path = "crates/dome_schema_macro" }
+dome_text = { version = "0.1.1", path = "crates/dome_text" }
+dome_toml = { version = "0.1.1", path = "crates/dome_toml" }
+dome_ui = { version = "0.1.1", path = "crates/dome_ui" }
+dome_window = { version = "0.1.1", path = "crates/dome_window" }
+lampas = { version = "0.1.1", path = "crates/lampas/lampas" }
+lampas_bytecode = { version = "0.1.1", path = "crates/lampas/lampas_bytecode" }
+lampas_compiler = { version = "0.1.1", path = "crates/lampas/lampas_compiler" }
+lampas_semantic = { version = "0.1.1", path = "crates/lampas/lampas_semantic" }
+lampas_syntax = { version = "0.1.1", path = "crates/lampas/lampas_syntax" }
+lampas_vm = { version = "0.1.1", path = "crates/lampas/lampas_vm" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

@@ -1,0 +1,10 @@
+[package]
+name = "lampas_syntax"
+version.workspace = true
+edition.workspace = true
+description = "The Lampas sources, tokens, syntax tree, diagnostics and the parser that builds them"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true

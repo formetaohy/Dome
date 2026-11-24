@@ -1,0 +1,15 @@
+[package]
+name = "lampas_vm"
+version.workspace = true
+edition.workspace = true
+description = "The register machine that executes Lampas modules over reference counted values"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dome_ecs = { workspace = true }
+dome_math = { workspace = true }
+lampas_bytecode = { workspace = true }

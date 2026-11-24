@@ -6,6 +6,20 @@ use dome_schema::{AudioBusRef, AudioListenerRef, MeshRef, NodeComponents, Regist
 use std::path::Path;
 use std::sync::Arc;
 
+pub const STARTER_SCRIPT: &str = r#"component Spin {
+    speed: float = 1.0,
+}
+
+boot {
+    let cube = find("cube");
+    add(cube, Spin {});
+}
+
+system turn(spin: read Spin) {
+    rotate_y(self, spin.speed * delta());
+}
+"#;
+
 pub(crate) fn write(root: &Path) {
     let mut scene = Scene::with_schema(root.to_path_buf(), Arc::new(Registry::default()));
     scene
@@ -46,6 +60,14 @@ pub(crate) fn write(root: &Path) {
         })
         .expect("a new project builds its entry scene");
     scene.save(root.join(Folder::Scene.name()).join(ENTRY));
+    write_script(root);
+}
+
+fn write_script(root: &Path) {
+    let path = root.join(Folder::Script.name()).join("main.lampas");
+    std::fs::write(&path, STARTER_SCRIPT).unwrap_or_else(|error| {
+        panic!("the project writes {}: {error}", path.display());
+    });
 }
 
 fn placed(mut node: Node, transform: Transform) -> Node {
