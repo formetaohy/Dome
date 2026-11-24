@@ -298,7 +298,7 @@ impl Texture {
             .map(move |row| &row[..row_bytes])
     }
 
-    pub fn read(&self, queue: &crate::Queue) -> Vec<u8> {
+    pub fn read(&self, queue: &crate::Queue) -> Result<Vec<u8>, crate::GpuFailure> {
         assert!(
             self.usages.contains(TextureUsages::COPY_SRC),
             "reading texels requires a copy source texture"
@@ -315,8 +315,8 @@ impl Texture {
         queue.read(&buffer, submission, self.readback_bytes())
     }
 
-    pub fn read_rgba(&self, queue: &crate::Queue) -> Vec<u8> {
-        let bytes = self.read(queue);
+    pub fn read_rgba(&self, queue: &crate::Queue) -> Result<Vec<u8>, crate::GpuFailure> {
+        let bytes = self.read(queue)?;
         let mut rgba = Vec::with_capacity(self.width as usize * self.height as usize * 4);
         for row in self.rows(&bytes) {
             match self.format {
@@ -331,7 +331,7 @@ impl Texture {
                 other => panic!("a {other:?} texture holds no eight bit RGBA texels"),
             }
         }
-        rgba
+        Ok(rgba)
     }
 
     pub fn level(&self, level: u32) -> Self {

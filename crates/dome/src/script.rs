@@ -1,9 +1,9 @@
 use dome_app::{App, Time};
 use dome_asset::Change;
-use dome_ecs::{Entity, LocalTransform, World};
+use dome_ecs::{Entity, LocalTransform, Parent, World, children};
 use dome_math::Quat;
 use dome_schema::SceneNode;
-use lampas::{Hosts, Scripts, Trap, Type, Value};
+use lampas::{Hosts, Kind, Scripts, Trap, Type, Value};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
@@ -43,7 +43,7 @@ pub(crate) fn install(app: &mut App, root: &Path) -> Result<(), String> {
         }
         match Scripts::load(&folder, hosts()) {
             Ok(mut fresh) => {
-                reload.borrow_mut().reset(world);
+                lampas::reset(world);
                 *reload_report.borrow_mut() = None;
                 report(&reload_report, &folder, fresh.boot(world));
                 *reload.borrow_mut() = fresh;
@@ -123,6 +123,32 @@ fn hosts() -> Hosts {
                 let transform = transform(world, arguments[0].entity());
                 transform.0.rotation = rotation * transform.0.rotation;
                 Value::Unit
+            },
+        )
+        .function(
+            "parent",
+            &[Type::ENTITY],
+            Type::list(Kind::Entity),
+            |arguments, world| {
+                let parent = world.get::<Parent>(arguments[0].entity());
+                Value::from_list(
+                    parent
+                        .map(|held| Value::Entity(held.entity()))
+                        .into_iter()
+                        .collect(),
+                )
+            },
+        )
+        .function(
+            "children",
+            &[Type::ENTITY],
+            Type::list(Kind::Entity),
+            |arguments, world| {
+                let held = children(world, arguments[0].entity())
+                    .iter()
+                    .map(|child| Value::Entity(*child))
+                    .collect();
+                Value::from_list(held)
             },
         );
     hosts

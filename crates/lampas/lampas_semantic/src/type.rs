@@ -1,27 +1,27 @@
-use lampas_bytecode::FieldKind;
+use lampas_bytecode::Kind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
     Void,
-    Value(FieldKind),
-    List(FieldKind),
+    Value(Kind),
+    List(Kind),
     Component(u16),
 }
 
 impl Type {
     pub const VOID: Self = Self::Void;
-    pub const BOOL: Self = Self::Value(FieldKind::Bool);
-    pub const INT: Self = Self::Value(FieldKind::Int);
-    pub const FLOAT: Self = Self::Value(FieldKind::Float);
-    pub const TEXT: Self = Self::Value(FieldKind::Text);
-    pub const VECTOR: Self = Self::Value(FieldKind::Vector);
-    pub const ENTITY: Self = Self::Value(FieldKind::Entity);
+    pub const BOOL: Self = Self::Value(Kind::Bool);
+    pub const INT: Self = Self::Value(Kind::Int);
+    pub const FLOAT: Self = Self::Value(Kind::Float);
+    pub const TEXT: Self = Self::Value(Kind::Text);
+    pub const VECTOR: Self = Self::Value(Kind::Vector);
+    pub const ENTITY: Self = Self::Value(Kind::Entity);
 
-    pub const fn list(kind: FieldKind) -> Self {
+    pub const fn list(kind: Kind) -> Self {
         Self::List(kind)
     }
 
-    pub fn kind(self) -> Option<FieldKind> {
+    pub fn kind(self) -> Option<Kind> {
         match self {
             Self::Value(kind) => Some(kind),
             _ => None,

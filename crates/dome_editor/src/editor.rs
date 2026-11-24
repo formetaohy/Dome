@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use dome_animation::{Comparison, Parameter};
 use dome_asset::{Import, Watch};
 use dome_ecs::Entity;
-use dome_gpu::{Gpu, GpuRequest, Submission, WindowHandle};
+use dome_gpu::{Gpu, GpuRequest, Submission};
 use dome_math::{Quat, Rect, Transform, Vec2, Vec3};
 use dome_project::Project;
 use dome_scene::{Atmosphere, Delta, Node, ReferenceKind, Scene, Shape, Target, Value};
@@ -193,14 +193,7 @@ impl Editor {
     }
 
     fn open(&mut self, window: &Window) {
-        let request = GpuRequest {
-            surface: Some(WindowHandle::of(
-                window.window_handle(),
-                window.display_handle(),
-            )),
-            ..Default::default()
-        };
-        let context = Gpu::open(&request)
+        let context = Gpu::open_window(&GpuRequest::default(), window.target())
             .unwrap_or_else(|error| panic!("the editor opens its render device: {error}"));
         let (width, height) = window.size();
         assert!(
@@ -1070,6 +1063,14 @@ impl Editor {
         if self.exiting {
             return Flow::Exit;
         }
+        if let Some(failure) = self
+            .session
+            .as_ref()
+            .and_then(|session| session.context.failure())
+        {
+            eprintln!("{failure}");
+            return Flow::Exit;
+        }
         let now = Instant::now();
         let mut redraw = std::mem::take(&mut self.redraw) || self.ui_at.is_some_and(|at| at <= now);
         redraw |= self.reload_if_changed();
@@ -1098,6 +1099,12 @@ impl Editor {
             self.fail(error);
         }
         self.sync_title(window);
+        if let Some(session) = self.session.as_mut()
+            && !session.adopts()
+        {
+            session.renew(&self.scene);
+            redraw = true;
+        }
         let busy = self.session.as_ref().is_some_and(|session| {
             session.preview.loading() || session.preview.capturing() || session.preview.playing()
         });
@@ -1219,7 +1226,14 @@ impl Editor {
         if session.surface.width() != width || session.surface.height() != height {
             session.surface.resize(width, height);
         }
-        let Some(frame) = session.surface.acquire() else {
+        let frame = match session.surface.acquire() {
+            Ok(frame) => frame,
+            Err(failure) => {
+                eprintln!("{failure}");
+                return Flow::Exit;
+            }
+        };
+        let Some(frame) = frame else {
             let wake = session.ui.finish();
             return self.pace(wake, busy);
         };

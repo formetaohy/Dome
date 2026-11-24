@@ -10,12 +10,25 @@ pub(crate) struct Session {
 
 impl Session {
     pub(crate) fn new(context: Gpu, surface: Surface) -> Self {
-        let mut ui = Ui::new(context.device(), &context.queue(), surface.format());
-        ui.set_clipboard(Box::new(MemoryClipboard::default()));
+        let ui = ui_of(&context, &surface);
         Self {
             context,
             surface,
             ui,
         }
     }
+
+    pub(crate) fn renew(&mut self) {
+        self.ui = ui_of(&self.context, &self.surface);
+    }
+
+    pub(crate) fn adopts(&self) -> bool {
+        self.surface.format() == self.ui.format()
+    }
+}
+
+fn ui_of(context: &Gpu, surface: &Surface) -> Ui<Action> {
+    let mut ui = Ui::new(context.device(), &context.queue(), surface.format());
+    ui.set_clipboard(Box::new(MemoryClipboard::default()));
+    ui
 }

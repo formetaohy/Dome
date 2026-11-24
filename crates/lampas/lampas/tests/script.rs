@@ -41,15 +41,22 @@ fn field(scripts: &Scripts, component_name: &str, name: &str) -> u16 {
         as u16
 }
 
-fn value(scripts: &Scripts, entity: Entity, component_name: &str, name: &str) -> Value {
-    scripts
-        .store()
+fn value(
+    world: &World,
+    scripts: &Scripts,
+    entity: Entity,
+    component_name: &str,
+    name: &str,
+) -> Value {
+    let held = world
+        .dynamic()
         .read_entity(
             entity,
             component(scripts, component_name),
             field(scripts, component_name, name),
         )
-        .unwrap_or_else(|| panic!("the entity {} holds no {component_name}", entity.index()))
+        .unwrap_or_else(|| panic!("the entity {} holds no {component_name}", entity.index()));
+    Value::from(held)
 }
 
 fn fault_at(scripts: &Scripts, function: &str, op: Op) -> usize {
@@ -130,17 +137,17 @@ fn a_script_walks_the_components_its_systems_hold() {
     let mut scripts = Scripts::new(module, hosts);
     let mut world = World::new();
     scripts.boot(&mut world).expect("the script boots");
-    let entity = scripts
-        .store()
+    let entity = world
+        .dynamic()
         .entities(component(&scripts, "Motion"))
         .next()
         .expect("the boot spawns the entity its systems walk");
     assert_eq!(
-        value(&scripts, entity, "Motion", "distance"),
+        value(&world, &scripts, entity, "Motion", "distance"),
         Value::Float(0.0)
     );
     assert_eq!(
-        value(&scripts, entity, "Health", "value"),
+        value(&world, &scripts, entity, "Health", "value"),
         Value::Float(10.0)
     );
     for _ in 0..2 {
@@ -150,15 +157,15 @@ fn a_script_walks_the_components_its_systems_hold() {
         scripts.update(&mut world).expect("the script updates");
     }
     assert_eq!(
-        value(&scripts, entity, "Motion", "speed"),
+        value(&world, &scripts, entity, "Motion", "speed"),
         Value::Float(0.0)
     );
     assert_eq!(
-        value(&scripts, entity, "Motion", "distance"),
+        value(&world, &scripts, entity, "Motion", "distance"),
         Value::Float(6.0)
     );
     assert_eq!(
-        value(&scripts, entity, "Health", "value"),
+        value(&world, &scripts, entity, "Health", "value"),
         Value::Float(6.0)
     );
     assert_eq!(scripts.globals()[0], Value::Int(2));
@@ -218,16 +225,16 @@ fn a_system_breaks_and_continues_the_entities_it_walks() {
     scripts.update(&mut world).expect("the script updates");
     let mark = component(&scripts, "Mark");
     let tally = component(&scripts, "Tally");
-    let seen = scripts
-        .store()
+    let seen = world
+        .dynamic()
         .entities(mark)
-        .map(|entity| value(&scripts, entity, "Mark", "seen"))
+        .map(|entity| value(&world, &scripts, entity, "Mark", "seen"))
         .collect::<Vec<_>>();
     assert_eq!(seen, [Value::Int(1), Value::Int(0), Value::Int(0)]);
-    let hits = scripts
-        .store()
+    let hits = world
+        .dynamic()
         .entities(tally)
-        .map(|entity| value(&scripts, entity, "Tally", "hits"))
+        .map(|entity| value(&world, &scripts, entity, "Tally", "hits"))
         .collect::<Vec<_>>();
     assert_eq!(hits, [Value::Int(1), Value::Int(0), Value::Int(0)]);
     assert_eq!(scripts.globals()[0], Value::Int(2));
@@ -271,24 +278,36 @@ fn a_script_spawns_despawns_and_marks_the_entities_it_commands() {
     let mut scripts = Scripts::new(module, hosts);
     let mut world = World::new();
     scripts.boot(&mut world).expect("the script boots");
-    assert_eq!(scripts.store().len(component(&scripts, "Mark")), 1);
-    assert_eq!(scripts.store().len(component(&scripts, "Timer")), 0);
+    assert_eq!(world.dynamic().column(component(&scripts, "Mark")).len(), 1);
+    assert_eq!(
+        world.dynamic().column(component(&scripts, "Timer")).len(),
+        0
+    );
     scripts.update(&mut world).expect("the script updates");
-    assert_eq!(scripts.store().len(component(&scripts, "Mark")), 0);
-    assert_eq!(scripts.store().len(component(&scripts, "Timer")), 1);
-    let first = scripts
-        .store()
+    assert_eq!(world.dynamic().column(component(&scripts, "Mark")).len(), 0);
+    assert_eq!(
+        world.dynamic().column(component(&scripts, "Timer")).len(),
+        1
+    );
+    let first = world
+        .dynamic()
         .entities(component(&scripts, "Timer"))
         .next()
         .expect("the breeding system spawns its timer");
-    assert_eq!(value(&scripts, first, "Timer", "life"), Value::Float(2.0));
+    assert_eq!(
+        value(&world, &scripts, first, "Timer", "life"),
+        Value::Float(2.0)
+    );
     scripts.update(&mut world).expect("the script updates");
     scripts.update(&mut world).expect("the script updates");
     assert!(
         !world.is_alive(first),
         "the aging system despawns its timer",
     );
-    assert_eq!(scripts.store().len(component(&scripts, "Timer")), 2);
+    assert_eq!(
+        world.dynamic().column(component(&scripts, "Timer")).len(),
+        2
+    );
     assert_eq!(world.len(), 3);
 }
 
@@ -385,7 +404,7 @@ fn a_boot_fault_returns_the_trap_its_function_holds() {
         format!("the lampas function divide fails at instruction {at}: the int divides by zero"),
     );
     assert!(messages.borrow().is_empty());
-    assert_eq!(scripts.store().len(component(&scripts, "Mark")), 0);
+    assert_eq!(world.dynamic().column(component(&scripts, "Mark")).len(), 0);
     assert_eq!(
         scripts
             .boot(&mut world)
@@ -432,7 +451,7 @@ fn a_system_fault_discards_the_commands_its_run_recorded() {
     );
     let mark = component(&scripts, "Mark");
     assert_eq!(
-        scripts.store().len(mark),
+        world.dynamic().column(mark).len(),
         1,
         "the fault discards the commands of its run",
     );
@@ -488,7 +507,7 @@ fn a_reset_reclaims_the_entities_its_scripts_spawned() {
         .boot(&mut world)
         .expect("the boot spawns its entities");
     assert_eq!(world.len(), 2, "a boot spawns the entities it names");
-    scripts.reset(&mut world);
+    lampas::reset(&mut world);
     assert_eq!(
         world.len(),
         0,

@@ -1,6 +1,6 @@
 use crate::Type;
 use crate::symbol::{ExprInfo, StmtInfo};
-use lampas_bytecode::{ComponentParam, Constant, FieldKind, Phase};
+use lampas_bytecode::{ComponentParam, Constant, Kind, Phase};
 use lampas_syntax::{Expr, ExprId, Statement, StmtId};
 use std::collections::HashMap;
 
@@ -14,7 +14,7 @@ pub struct HostSignature {
 #[derive(Clone, Debug)]
 pub struct CheckedField {
     pub name: String,
-    pub kind: FieldKind,
+    pub kind: Kind,
     pub default: Option<Constant>,
 }
 

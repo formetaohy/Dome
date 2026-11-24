@@ -82,7 +82,9 @@ fn a_user_interface_paints_its_surfaces_glyphs_and_scene() {
     );
     submission.copy_texture(&target, &readback, 0);
     let index = submission.submit(&queue);
-    let bytes = readback.read(&queue, index, target.readback_bytes());
+    let bytes = readback
+        .read(&queue, index, target.readback_bytes())
+        .expect("a painted interface reads back");
     let pixel = |x: u32, y: u32| {
         let row = (u64::from(y) * target.row_bytes()) as usize;
         let at = row + (x * 4) as usize;
@@ -252,7 +254,9 @@ fn a_user_interface_recycles_the_texture_slots_of_removed_images() {
     );
     submission.copy_texture(&target, &readback, 0);
     let index = submission.submit(&queue);
-    let bytes = readback.read(&queue, index, target.readback_bytes());
+    let bytes = readback
+        .read(&queue, index, target.readback_bytes())
+        .expect("a painted interface reads back");
     let at = (32 * target.row_stride() + 32 * 4) as usize;
     let pixel = [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]];
     assert!(

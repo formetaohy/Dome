@@ -1,7 +1,7 @@
 use crate::action::Action;
 use crate::session::Session;
 use crate::stage::{self, State};
-use dome_gpu::{Gpu, GpuRequest, Submission, WindowHandle};
+use dome_gpu::{Gpu, GpuRequest, Submission};
 use dome_math::Vec2;
 use dome_project::{Catalog, Project};
 use dome_window::{Event, Flow, Handler, KeyCode, Waker, Window, WindowConfig, run as run_window};
@@ -62,14 +62,7 @@ impl Launcher {
     }
 
     fn open(&mut self, window: &Window) {
-        let request = GpuRequest {
-            surface: Some(WindowHandle::of(
-                window.window_handle(),
-                window.display_handle(),
-            )),
-            ..Default::default()
-        };
-        let context = Gpu::open(&request)
+        let context = Gpu::open_window(&GpuRequest::default(), window.target())
             .unwrap_or_else(|error| panic!("the launcher opens its render device: {error}"));
         let (width, height) = window.size();
         assert!(
@@ -184,6 +177,14 @@ impl Launcher {
     }
 
     fn frame(&mut self, window: &Window, _real: Duration) -> Flow {
+        if let Some(failure) = self
+            .session
+            .as_ref()
+            .and_then(|session| session.context.failure())
+        {
+            eprintln!("{failure}");
+            return Flow::Exit;
+        }
         let now = Instant::now();
         let mut redraw = std::mem::take(&mut self.redraw) || self.ui_at.is_some_and(|at| at <= now);
         let (width, height) = window.size();
@@ -224,12 +225,22 @@ impl Launcher {
         let Some(session) = self.session.as_mut() else {
             return Flow::Idle;
         };
+        if !session.adopts() {
+            session.renew();
+        }
         let element = {
             let mut ctx = session.ui.build();
             stage::build(&mut ctx, &state)
         };
         session.ui.present(element);
-        let Some(frame) = session.surface.acquire() else {
+        let frame = match session.surface.acquire() {
+            Ok(frame) => frame,
+            Err(failure) => {
+                eprintln!("{failure}");
+                return Flow::Exit;
+            }
+        };
+        let Some(frame) = frame else {
             let wake = session.ui.finish();
             return self.pace(wake);
         };

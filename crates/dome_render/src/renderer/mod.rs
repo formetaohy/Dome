@@ -465,7 +465,7 @@ impl Renderer {
         let mut waiting = false;
         for (submission, resource) in self.retired.drain(..) {
             if !waiting {
-                waiting = !self.queue.complete(submission.clone());
+                waiting = !self.queue.complete(submission.clone()).unwrap_or(false);
             }
             if waiting {
                 held.push((submission, resource));
@@ -953,7 +953,9 @@ impl Renderer {
         let mut submission = Submission::new(&self.device, "dome visibility");
         submission.copy(self.main_arguments.buffer(), 0, &readback, 0, bytes);
         let index = submission.submit(&self.queue);
-        let bytes = readback.read(&self.queue, index, bytes);
+        let bytes = readback
+            .read(&self.queue, index, bytes)
+            .unwrap_or_else(|failure| panic!("{failure}"));
         bytes
             .as_chunks::<ARGUMENT_USIZE>()
             .0
@@ -975,7 +977,9 @@ impl Renderer {
         let mut submission = Submission::new(&self.device, "dome dropped");
         submission.copy(fragments, 0, &readback, 0, WORD_BYTES);
         let index = submission.submit(&self.queue);
-        let bytes = readback.read(&self.queue, index, WORD_BYTES);
+        let bytes = readback
+            .read(&self.queue, index, WORD_BYTES)
+            .unwrap_or_else(|failure| panic!("{failure}"));
         u32::from_ne_bytes(bytes[..WORD_BYTES as usize].try_into().unwrap())
     }
 }

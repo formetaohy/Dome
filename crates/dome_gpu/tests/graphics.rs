@@ -217,7 +217,9 @@ fn render(gpu: &Gpu, albedo: &Texture, sampler: &Sampler, format: TextureFormat)
     );
     submission.copy_texture(&target, &readback, 0);
     let index = submission.submit(&queue);
-    let bytes = readback.read(&queue, index, target.readback_bytes());
+    let bytes = readback
+        .read(&queue, index, target.readback_bytes())
+        .expect("a rendered quad reads back");
     target
         .rows(&bytes)
         .flat_map(|row| row.as_chunks::<4>().0)

@@ -1,7 +1,7 @@
 use crate::Type;
 use crate::check::{Body, Checker, Local};
 use crate::symbol::{ExprInfo, Intrinsic, Symbol};
-use lampas_bytecode::{Access, FieldKind};
+use lampas_bytecode::{Access, Kind};
 use lampas_syntax::{BinaryOp, Diagnostic, Expr, ExprKind, Ident, Span, UnaryOp};
 
 impl Checker<'_> {
@@ -176,7 +176,7 @@ impl Checker<'_> {
             UnaryOp::Negate => {
                 let checked = self.expr(operand, None)?;
                 match checked {
-                    Type::Value(FieldKind::Int | FieldKind::Float | FieldKind::Vector) => {
+                    Type::Value(Kind::Int | Kind::Float | Kind::Vector) => {
                         Ok((checked, Symbol::None))
                     }
                     other => Err(self.error(
@@ -207,9 +207,9 @@ impl Checker<'_> {
         right: Type,
         span: Span,
     ) -> Result<Type, Diagnostic> {
-        use FieldKind::{Bool, Entity, Float, Int, Text, Vector};
+        use Kind::{Bool, Entity, Float, Int, Text, Vector};
         let value = Type::Value;
-        let both = |kind: FieldKind| {
+        let both = |kind: Kind| {
             if left == value(kind) && right == value(kind) {
                 Ok(value(kind))
             } else {

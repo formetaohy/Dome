@@ -2,7 +2,9 @@ use crate::time::Time;
 use dome_asset::{Change, Library, Watch};
 use dome_audio::Audio;
 use dome_ecs::{Entity, Schedule, System, World, propagate, propagate_step, snapshot};
-use dome_gpu::{Gpu, GpuRequest, Surface, Texture, TextureFormat, TextureUsages, WindowHandle};
+use dome_gpu::{
+    Gpu, GpuFailure, GpuRequest, Surface, SurfaceFrame, Texture, TextureFormat, TextureUsages,
+};
 use dome_math::{Transform, Vec3};
 use dome_render::{Camera, Lines, Renderer, Target};
 use dome_scene::{Changed, Scene};
@@ -281,14 +283,7 @@ fn phase_of(world: &World) -> f32 {
 
 impl Session {
     fn window(window: &Window, request: &GpuRequest) -> Self {
-        let request = GpuRequest {
-            surface: Some(WindowHandle::of(
-                window.window_handle(),
-                window.display_handle(),
-            )),
-            ..request.clone()
-        };
-        let context = Gpu::open(&request)
+        let context = Gpu::open_window(request, window.target())
             .unwrap_or_else(|error| panic!("the engine opens its render device: {error}"));
         let (width, height) = window.size();
         assert!(
@@ -314,10 +309,6 @@ impl Session {
         assert!(
             width > 0 && height > 0,
             "a headless frame of {width} by {height} spans no target"
-        );
-        assert!(
-            request.surface.is_none(),
-            "a headless session opens no window surface"
         );
         let context = Gpu::open(request)
             .unwrap_or_else(|error| panic!("the engine opens its render device: {error}"));
@@ -393,24 +384,41 @@ impl Session {
             .is_some_and(|live| live.sync.applied().is_some())
     }
 
-    fn draw_window(&mut self, world: &mut World, clear: [f32; 4], width: u32, height: u32) {
-        let surface = match &mut self.presentation {
-            Presentation::Window(surface) => {
-                if surface.width() != width || surface.height() != height {
-                    surface.resize(width, height);
-                }
-                surface.acquire()
+    fn draw_window(
+        &mut self,
+        world: &mut World,
+        clear: [f32; 4],
+        width: u32,
+        height: u32,
+    ) -> Result<(), GpuFailure> {
+        let frame = {
+            let Presentation::Window(surface) = &mut self.presentation else {
+                panic!("a windowed application presents its surface");
+            };
+            if surface.width() != width || surface.height() != height {
+                surface.resize(width, height);
             }
-            Presentation::Offscreen(_) => panic!("a windowed application presents its surface"),
+            surface.acquire()?
         };
-        let Some(surface) = surface else {
-            return;
+        let Some(frame) = frame else {
+            return Ok(());
         };
-        self.width = surface.width();
-        self.height = surface.height();
+        self.width = frame.width();
+        self.height = frame.height();
+        self.adopt(&frame);
         self.renderer.set_interpolation(phase_of(world));
         self.renderer
-            .render(world, Target::Surface(Box::new(surface)), clear, None);
+            .render(world, Target::Surface(Box::new(frame)), clear, None);
+        Ok(())
+    }
+
+    fn adopt(&mut self, frame: &SurfaceFrame) {
+        let format = frame.format();
+        if format == self.format {
+            return;
+        }
+        self.format = format;
+        self.renderer = Renderer::new(&self.context, format);
     }
 
     fn draw_headless(
@@ -430,7 +438,9 @@ impl Session {
             self.renderer.set_interpolation(phase_of(world));
             self.renderer
                 .render(world, Target::Texture(shot), clear, None);
-            let rgba = shot.read_rgba(&self.context.queue());
+            let rgba = shot
+                .read_rgba(&self.context.queue())
+                .unwrap_or_else(|failure| panic!("{failure}"));
             return Some(dome_image::encode(width, height, &rgba));
         }
         if let Presentation::Offscreen(texture) = &self.presentation {
@@ -467,10 +477,6 @@ impl App {
     }
 
     pub fn with_config(config: AppConfig) -> Self {
-        assert!(
-            config.gpu.surface.is_none(),
-            "the application opens the window surface its window names"
-        );
         assert!(
             config.max_fixed_steps > 0,
             "an application steps no fixed system"
@@ -558,6 +564,9 @@ impl App {
         let mut frame = 0u64;
         let mut screenshot = None;
         loop {
+            if let Some(failure) = session.context.failure() {
+                panic!("{failure}");
+            }
             self.reload_scene(&mut session);
             let loading = session
                 .live
@@ -587,6 +596,9 @@ impl App {
             }
             dome_render::install_captures(&mut self.world, session.renderer.take_captures());
             if last {
+                if let Some(failure) = session.context.failure() {
+                    panic!("{failure}");
+                }
                 break;
             }
             if config.realtime {
@@ -781,6 +793,10 @@ impl Handler for App {
 
 impl App {
     fn frame_session(&mut self, session: &mut Session, window: &Window, real: Duration) -> Flow {
+        if let Some(failure) = session.context.failure() {
+            eprintln!("{failure}");
+            return Flow::Exit;
+        }
         self.reload_scene(session);
         let (width, height) = window.size();
         if window.is_minimized() || width == 0 || height == 0 {
@@ -806,7 +822,10 @@ impl App {
             .expect("an application keeps its clear color")
             .0;
         self.sync_debug();
-        session.draw_window(&mut self.world, clear, width, height);
+        if let Err(failure) = session.draw_window(&mut self.world, clear, width, height) {
+            eprintln!("{failure}");
+            return Flow::Exit;
+        }
         dome_render::install_captures(&mut self.world, session.renderer.take_captures());
         if exit { Flow::Exit } else { Flow::Continuous }
     }

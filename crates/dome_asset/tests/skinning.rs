@@ -177,7 +177,9 @@ fn read(context: &Gpu, target: &Texture) -> Vec<[u8; 4]> {
     let mut submission = Submission::new(context.device(), "skinned readback");
     submission.copy_texture(target, &readback, 0);
     let index = submission.submit(&queue);
-    let bytes = readback.read(&queue, index, target.readback_bytes());
+    let bytes = readback
+        .read(&queue, index, target.readback_bytes())
+        .expect("a skinned frame reads back");
     target
         .rows(&bytes)
         .flat_map(|row| row.as_chunks::<4>().0)

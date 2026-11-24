@@ -4,7 +4,7 @@ use crate::checked::{
     CheckedSystem, HostSignature,
 };
 use crate::symbol::{ExprInfo, Intrinsic, StmtInfo};
-use lampas_bytecode::{Access, ComponentParam, FieldKind, Phase};
+use lampas_bytecode::{Access, ComponentParam, Kind, Phase};
 use lampas_syntax::{
     ComponentDecl, Diagnostic, ExprId, FunctionDecl, GlobalDecl, Item, ParamDecl, Program, Sources,
     Span, StmtId, SystemDecl, TypeExpr, TypeExprKind,
@@ -500,14 +500,14 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn scalar_kind(&self, ty: &TypeExpr, what: &str) -> Result<FieldKind, Diagnostic> {
+    fn scalar_kind(&self, ty: &TypeExpr, what: &str) -> Result<Kind, Diagnostic> {
         match &ty.kind {
-            TypeExprKind::Bool => Ok(FieldKind::Bool),
-            TypeExprKind::Int => Ok(FieldKind::Int),
-            TypeExprKind::Float => Ok(FieldKind::Float),
-            TypeExprKind::Text => Ok(FieldKind::Text),
-            TypeExprKind::Vector => Ok(FieldKind::Vector),
-            TypeExprKind::Entity => Ok(FieldKind::Entity),
+            TypeExprKind::Bool => Ok(Kind::Bool),
+            TypeExprKind::Int => Ok(Kind::Int),
+            TypeExprKind::Float => Ok(Kind::Float),
+            TypeExprKind::Text => Ok(Kind::Text),
+            TypeExprKind::Vector => Ok(Kind::Vector),
+            TypeExprKind::Entity => Ok(Kind::Entity),
             TypeExprKind::List(_) => Err(self.error(ty.span, format!("{what} holds no list"))),
             TypeExprKind::Named(ident) => match self.component_index.get(&ident.name) {
                 Some(_) => Err(self.error(

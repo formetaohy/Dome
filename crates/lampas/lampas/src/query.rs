@@ -1,5 +1,4 @@
-use crate::store::Store;
-use dome_ecs::Entity;
+use dome_ecs::{Entity, World};
 use lampas_bytecode::ComponentParam;
 
 #[derive(Default)]
@@ -14,22 +13,23 @@ impl Matches {
         Self::default()
     }
 
-    pub fn collect(&mut self, store: &Store, components: &[ComponentParam]) {
+    pub fn collect(&mut self, world: &World, components: &[ComponentParam]) {
         self.entities.clear();
         self.rows.clear();
         self.width = components.len();
         if components.is_empty() {
             return;
         }
+        let dynamic = world.dynamic();
         let smallest = components
             .iter()
             .map(|param| param.component)
-            .min_by_key(|component| store.len(*component))
+            .min_by_key(|component| dynamic.column(*component).len())
             .expect("a query walks one component");
-        'entity: for entity in store.entities(smallest) {
+        'entity: for entity in dynamic.entities(smallest) {
             let mark = self.rows.len();
             for param in components {
-                match store.row(param.component, entity) {
+                match dynamic.row(param.component, entity) {
                     Some(row) => self.rows.push(row),
                     None => {
                         self.rows.truncate(mark);

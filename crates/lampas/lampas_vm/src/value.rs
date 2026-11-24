@@ -3,6 +3,7 @@ use dome_math::Vec3;
 use lampas_bytecode::Constant;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -12,7 +13,7 @@ pub enum Value {
     Float(f64),
     Vector(Vec3),
     Entity(Entity),
-    Text(Rc<str>),
+    Text(Arc<str>),
     List(Rc<RefCell<Vec<Value>>>),
     Component(u32),
 }
@@ -29,6 +30,10 @@ impl Value {
                 items.iter().map(Self::constant).collect(),
             ))),
         }
+    }
+
+    pub fn from_list(items: Vec<Value>) -> Self {
+        Self::List(Rc::new(RefCell::new(items)))
     }
 
     pub fn kind(&self) -> &'static str {
@@ -134,5 +139,32 @@ impl Value {
 
     fn misuse(&self, expected: &str) -> ! {
         panic!("a lampas {} stands where {expected} belongs", self.kind(),)
+    }
+}
+
+impl From<&dome_ecs::Value> for Value {
+    fn from(field: &dome_ecs::Value) -> Self {
+        match field {
+            dome_ecs::Value::Bool(held) => Self::Bool(*held),
+            dome_ecs::Value::Int(held) => Self::Int(*held),
+            dome_ecs::Value::Float(held) => Self::Float(*held),
+            dome_ecs::Value::Text(held) => Self::Text(held.clone()),
+            dome_ecs::Value::Vector(held) => Self::Vector(*held),
+            dome_ecs::Value::Entity(held) => Self::Entity(*held),
+        }
+    }
+}
+
+impl From<&Value> for dome_ecs::Value {
+    fn from(value: &Value) -> Self {
+        match value {
+            Value::Bool(held) => Self::Bool(*held),
+            Value::Int(held) => Self::Int(*held),
+            Value::Float(held) => Self::Float(*held),
+            Value::Text(held) => Self::Text(held.clone()),
+            Value::Vector(held) => Self::Vector(*held),
+            Value::Entity(held) => Self::Entity(*held),
+            other => panic!("a lampas {} holds no component field", other.kind()),
+        }
     }
 }

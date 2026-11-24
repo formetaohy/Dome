@@ -1,6 +1,7 @@
 use crate::buffer::GpuBuffer;
 use crate::cache::Cache;
-use crate::surface::{Surface, WindowHandle};
+use crate::failure::{Failure, GpuFailure};
+use crate::surface::Surface;
 use std::fmt::{self, Display, Formatter};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::time::Duration;
@@ -15,14 +16,12 @@ pub const REQUIRED_FEATURES: wgpu::Features = wgpu::Features::TEXTURE_BINDING_AR
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct GpuRequest {
     pub power: PowerPreference,
-    pub surface: Option<WindowHandle>,
 }
 
 impl Default for GpuRequest {
     fn default() -> Self {
         Self {
             power: PowerPreference::HighPerformance,
-            surface: None,
         }
     }
 }
@@ -52,6 +51,7 @@ struct State {
     tables: crate::table::TableCapacity,
     features: wgpu::Features,
     cache: Cache,
+    failure: Failure,
 }
 
 #[derive(Clone)]
@@ -64,10 +64,12 @@ pub struct Queue {
     device: Device,
 }
 
+pub(crate) type Recreate = Box<dyn Fn() -> wgpu::Surface<'static>>;
+
 pub struct Gpu {
     device: Device,
     surface: Mutex<Option<wgpu::Surface<'static>>>,
-    window: Option<WindowHandle>,
+    recreate: Mutex<Option<Recreate>>,
 }
 
 static INSTANCE: LazyLock<wgpu::Instance> = LazyLock::new(|| {
@@ -90,41 +92,45 @@ pub(crate) fn instance() -> &'static wgpu::Instance {
 
 impl Gpu {
     pub fn open(request: &GpuRequest) -> Result<Self, GpuUnavailable> {
-        match request.surface {
-            Some(window) => {
-                let surface = crate::surface::create(instance(), window);
-                let device = Device::open(request, Some(&surface))?;
-                Ok(Self {
-                    device,
-                    surface: Mutex::new(Some(surface)),
-                    window: Some(window),
-                })
-            }
-            None => {
-                let mut registry = REGISTRY
-                    .lock()
-                    .expect("the shared device registry is never poisoned");
-                registry.retain(|(_, state)| state.strong_count() > 0);
-                if let Some(state) = registry
-                    .iter()
-                    .filter(|(origin, _)| origin == request)
-                    .find_map(|(_, state)| state.upgrade())
-                {
-                    return Ok(Self {
-                        device: Device { state },
-                        surface: Mutex::new(None),
-                        window: None,
-                    });
-                }
-                let device = Device::open(request, None)?;
-                registry.push((request.clone(), Arc::downgrade(&device.state)));
-                Ok(Self {
-                    device,
-                    surface: Mutex::new(None),
-                    window: None,
-                })
-            }
+        let mut registry = REGISTRY
+            .lock()
+            .expect("the shared device registry is never poisoned");
+        registry.retain(|(_, state)| state.strong_count() > 0);
+        if let Some(state) = registry
+            .iter()
+            .filter(|(origin, _)| origin == request)
+            .find_map(|(_, state)| state.upgrade())
+        {
+            return Ok(Self {
+                device: Device { state },
+                surface: Mutex::new(None),
+                recreate: Mutex::new(None),
+            });
         }
+        let device = Device::open(request, None)?;
+        registry.push((request.clone(), Arc::downgrade(&device.state)));
+        Ok(Self {
+            device,
+            surface: Mutex::new(None),
+            recreate: Mutex::new(None),
+        })
+    }
+
+    pub fn open_window<W>(request: &GpuRequest, target: W) -> Result<Self, GpuUnavailable>
+    where
+        W: Into<wgpu::SurfaceTarget<'static>> + Clone + 'static,
+    {
+        let instance = instance();
+        let held = target.clone();
+        let surface = crate::surface::create(instance, target);
+        let device = Device::open(request, Some(&surface))?;
+        Ok(Self {
+            device,
+            surface: Mutex::new(Some(surface)),
+            recreate: Mutex::new(Some(Box::new(move || {
+                crate::surface::create(instance, held.clone())
+            }))),
+        })
     }
 
     pub fn device(&self) -> &Device {
@@ -145,28 +151,24 @@ impl Gpu {
         self.device.features()
     }
 
-    pub fn has_surface(&self) -> bool {
-        self.window.is_some()
+    pub fn failure(&self) -> Option<GpuFailure> {
+        self.device.failure()
     }
 
     pub fn surface(&self, width: u32, height: u32) -> Surface {
-        assert!(
-            self.has_surface(),
-            "a swapchain needs a device opened for a window"
-        );
         let native = self
             .surface
             .lock()
             .expect("a present surface is never poisoned")
             .take()
             .expect("a device opens one swapchain for its window");
-        Surface::new(
-            &self.device,
-            native,
-            self.window.expect("a surface device names its window"),
-            width,
-            height,
-        )
+        let recreate = self
+            .recreate
+            .lock()
+            .expect("a present surface recreation is never poisoned")
+            .take()
+            .expect("a swapchain device recreates its surface");
+        Surface::new(self.device.clone(), native, recreate, width, height)
     }
 }
 
@@ -198,7 +200,15 @@ impl Device {
             ..Default::default()
         }))
         .map_err(|error| GpuUnavailable::NoDevice(error.to_string()))?;
-        device.on_uncaptured_error(Arc::new(|error| panic!("wgpu: {error}")));
+        let failure = Failure::new();
+        let lost = failure.clone();
+        device.set_device_lost_callback(move |reason, message| {
+            lost.raise(format!("the device is lost: {reason:?}: {message}"));
+        });
+        let raised = failure.clone();
+        device.on_uncaptured_error(Arc::new(move |error| {
+            raised.raise(format!("wgpu: {error}"));
+        }));
         Ok(Self {
             state: Arc::new(State {
                 adapter,
@@ -208,6 +218,7 @@ impl Device {
                 tables,
                 features: offered & REQUIRED_FEATURES,
                 cache: Cache::default(),
+                failure,
             }),
         })
     }
@@ -230,6 +241,14 @@ impl Device {
 
     pub fn features(&self) -> wgpu::Features {
         self.state.features
+    }
+
+    pub fn failure(&self) -> Option<GpuFailure> {
+        self.state.failure.take()
+    }
+
+    pub(crate) fn raise(&self, message: impl Into<String>) -> GpuFailure {
+        self.state.failure.raise(message)
     }
 
     pub fn binding_alignment(&self) -> u64 {
@@ -276,29 +295,32 @@ impl Queue {
         self.device.native().poll(poll)
     }
 
-    pub fn wait(&self, submission: SubmissionIndex, timeout: Duration) {
-        self.poll(wgpu::PollType::Wait {
+    pub fn wait(&self, submission: SubmissionIndex, timeout: Duration) -> Result<(), GpuFailure> {
+        match self.poll(wgpu::PollType::Wait {
             submission_index: Some(submission),
             timeout: Some(timeout),
-        })
-        .unwrap_or_else(|error| panic!("a submission completes: {error}"));
+        }) {
+            Ok(_) => Ok(()),
+            Err(wgpu::PollError::Timeout) => Err(self
+                .device
+                .raise(format!("a submission holds the queue for {timeout:?}"))),
+            Err(error) => Err(self
+                .device
+                .raise(format!("a submission completes: {error}"))),
+        }
     }
 
-    pub fn complete(&self, submission: SubmissionIndex) -> bool {
-        self.poll(wgpu::PollType::Wait {
+    pub fn complete(&self, submission: SubmissionIndex) -> Result<bool, GpuFailure> {
+        match self.poll(wgpu::PollType::Wait {
             submission_index: Some(submission),
             timeout: Some(Duration::ZERO),
-        })
-        .is_ok()
-    }
-
-    pub fn idle(&self) {
-        self.poll(wgpu::PollType::wait_indefinitely())
-            .unwrap_or_else(|error| panic!("the device idles: {error}"));
-    }
-
-    pub fn drain(&self) {
-        self.idle();
+        }) {
+            Ok(_) => Ok(true),
+            Err(wgpu::PollError::Timeout) => Ok(false),
+            Err(error) => Err(self
+                .device
+                .raise(format!("a submission completes: {error}"))),
+        }
     }
 
     pub(crate) fn native(&self) -> &wgpu::Queue {
@@ -310,8 +332,8 @@ impl Queue {
         buffer: &GpuBuffer,
         submission: SubmissionIndex,
         bytes: u64,
-    ) -> Vec<u8> {
-        self.wait(submission, crate::READBACK_TIMEOUT);
+    ) -> Result<Vec<u8>, GpuFailure> {
+        self.wait(submission, crate::READBACK_TIMEOUT)?;
         let slice = buffer.native().slice(0..bytes);
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -321,16 +343,19 @@ impl Queue {
             submission_index: None,
             timeout: Some(crate::READBACK_TIMEOUT),
         })
-        .unwrap_or_else(|error| panic!("a readback maps: {error}"));
+        .map_err(|error| self.device.raise(format!("a readback maps: {error}")))?;
         receiver
             .recv()
             .expect("a mapped readback answers its mapping")
-            .unwrap_or_else(|error| panic!("a readback maps: {error}"));
+            .map_err(|error| self.device.raise(format!("a readback maps: {error}")))?;
         let data = slice
             .get_mapped_range()
-            .unwrap_or_else(|error| panic!("a mapped readback yields its bytes: {error}"))
+            .map_err(|error| {
+                self.device
+                    .raise(format!("a mapped readback yields its bytes: {error}"))
+            })?
             .to_vec();
         buffer.native().unmap();
-        data
+        Ok(data)
     }
 }

@@ -359,78 +359,78 @@ pub(crate) fn operation(
     left: lampas_semantic::Type,
     right: lampas_semantic::Type,
 ) -> (Op, bool) {
-    use lampas_bytecode::FieldKind;
+    use lampas_bytecode::Kind;
     let kinds = (left.kind(), right.kind());
     match op {
         BinaryOp::Add => match kinds.0 {
-            Some(FieldKind::Int) => (Op::AddInt, false),
-            Some(FieldKind::Float) => (Op::AddFloat, false),
-            Some(FieldKind::Text) => (Op::Concat, false),
-            Some(FieldKind::Vector) => (Op::AddVector, false),
+            Some(Kind::Int) => (Op::AddInt, false),
+            Some(Kind::Float) => (Op::AddFloat, false),
+            Some(Kind::Text) => (Op::Concat, false),
+            Some(Kind::Vector) => (Op::AddVector, false),
             _ => panic!("the compiler adds values that hold no sum"),
         },
         BinaryOp::Subtract => match kinds.0 {
-            Some(FieldKind::Int) => (Op::SubtractInt, false),
-            Some(FieldKind::Float) => (Op::SubtractFloat, false),
-            Some(FieldKind::Vector) => (Op::SubtractVector, false),
+            Some(Kind::Int) => (Op::SubtractInt, false),
+            Some(Kind::Float) => (Op::SubtractFloat, false),
+            Some(Kind::Vector) => (Op::SubtractVector, false),
             _ => panic!("the compiler subtracts values that hold no difference"),
         },
         BinaryOp::Multiply => match kinds {
-            (Some(FieldKind::Vector), Some(FieldKind::Float)) => (Op::ScaleVector, false),
-            (Some(FieldKind::Float), Some(FieldKind::Vector)) => (Op::ScaleVector, true),
-            (Some(FieldKind::Int), _) => (Op::MultiplyInt, false),
-            (Some(FieldKind::Float), _) => (Op::MultiplyFloat, false),
+            (Some(Kind::Vector), Some(Kind::Float)) => (Op::ScaleVector, false),
+            (Some(Kind::Float), Some(Kind::Vector)) => (Op::ScaleVector, true),
+            (Some(Kind::Int), _) => (Op::MultiplyInt, false),
+            (Some(Kind::Float), _) => (Op::MultiplyFloat, false),
             _ => panic!("the compiler multiplies values that hold no product"),
         },
         BinaryOp::Divide => match kinds {
-            (Some(FieldKind::Vector), _) => (Op::DivideVector, false),
-            (Some(FieldKind::Int), _) => (Op::DivideInt, false),
-            (Some(FieldKind::Float), _) => (Op::DivideFloat, false),
+            (Some(Kind::Vector), _) => (Op::DivideVector, false),
+            (Some(Kind::Int), _) => (Op::DivideInt, false),
+            (Some(Kind::Float), _) => (Op::DivideFloat, false),
             _ => panic!("the compiler divides values that hold no quotient"),
         },
         BinaryOp::Remainder => match kinds.0 {
-            Some(FieldKind::Int) => (Op::RemainderInt, false),
+            Some(Kind::Int) => (Op::RemainderInt, false),
             _ => (Op::RemainderFloat, false),
         },
         BinaryOp::Equal | BinaryOp::NotEqual => {
             let equal = op == BinaryOp::Equal;
             let instruction = match kinds.0 {
-                Some(FieldKind::Bool) => {
+                Some(Kind::Bool) => {
                     if equal {
                         Op::EqualBool
                     } else {
                         Op::NotEqualBool
                     }
                 }
-                Some(FieldKind::Int) => {
+                Some(Kind::Int) => {
                     if equal {
                         Op::EqualInt
                     } else {
                         Op::NotEqualInt
                     }
                 }
-                Some(FieldKind::Float) => {
+                Some(Kind::Float) => {
                     if equal {
                         Op::EqualFloat
                     } else {
                         Op::NotEqualFloat
                     }
                 }
-                Some(FieldKind::Text) => {
+                Some(Kind::Text) => {
                     if equal {
                         Op::EqualText
                     } else {
                         Op::NotEqualText
                     }
                 }
-                Some(FieldKind::Vector) => {
+                Some(Kind::Vector) => {
                     if equal {
                         Op::EqualVector
                     } else {
                         Op::NotEqualVector
                     }
                 }
-                Some(FieldKind::Entity) => {
+                Some(Kind::Entity) => {
                     if equal {
                         Op::EqualEntity
                     } else {
@@ -449,10 +449,10 @@ pub(crate) fn operation(
                 _ => 3,
             };
             let instruction = match (kinds.0, order) {
-                (Some(FieldKind::Int), 0) => Op::LessInt,
-                (Some(FieldKind::Int), 1) => Op::LessEqualInt,
-                (Some(FieldKind::Int), 2) => Op::GreaterInt,
-                (Some(FieldKind::Int), _) => Op::GreaterEqualInt,
+                (Some(Kind::Int), 0) => Op::LessInt,
+                (Some(Kind::Int), 1) => Op::LessEqualInt,
+                (Some(Kind::Int), 2) => Op::GreaterInt,
+                (Some(Kind::Int), _) => Op::GreaterEqualInt,
                 (_, 0) => Op::LessFloat,
                 (_, 1) => Op::LessEqualFloat,
                 (_, 2) => Op::GreaterFloat,

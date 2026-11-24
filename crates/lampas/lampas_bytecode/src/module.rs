@@ -1,5 +1,6 @@
-use crate::constant::{Constant, FieldKind};
+use crate::constant::Constant;
 use crate::instruction::Instruction;
+use dome_ecs::Kind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
@@ -22,7 +23,7 @@ pub struct ComponentParam {
 #[derive(Clone, Debug)]
 pub struct Field {
     pub name: String,
-    pub kind: FieldKind,
+    pub kind: Kind,
     pub default: Option<Constant>,
 }
 

@@ -1,5 +1,5 @@
 use dome_ecs::World;
-use lampas_bytecode::FieldKind;
+use lampas_bytecode::Kind;
 use lampas_semantic::{HostSignature, Intrinsic, Type};
 use lampas_vm::Value;
 
@@ -27,23 +27,23 @@ impl Hosts {
         result: Type,
         call: impl FnMut(&[Value], &mut World) -> Value + 'static,
     ) -> &mut Self {
-        assert!(!name.is_empty(), "a host function holds a name");
+        self.holds_name(name);
         assert!(
             Intrinsic::named(name).is_none(),
             "the host function {name} holds the name of an intrinsic",
         );
-        assert!(
-            self.entries
-                .iter()
-                .all(|entry| entry.signature.name != name),
-            "the host holds the function {name} twice",
-        );
-        for ty in params.iter().chain(std::iter::once(&result)) {
+        for param in params {
             assert!(
-                !matches!(ty, Type::Component(_)),
-                "the host function {name} passes no component",
+                param.is_value(),
+                "the host function {name} takes {}",
+                describe(param),
             );
         }
+        assert!(
+            result.is_value() || result == Type::VOID,
+            "the host function {name} returns {}",
+            describe(&result),
+        );
         self.entries.push(Entry {
             signature: HostSignature {
                 name: String::from(name),
@@ -74,27 +74,48 @@ impl Hosts {
         );
         value
     }
+
+    fn holds_name(&self, name: &str) {
+        let mut held = name.chars();
+        assert!(
+            held.next().is_some_and(|first| first.is_ascii_lowercase()),
+            "the host function {name} starts with a small letter",
+        );
+        assert!(
+            held.all(|held| held.is_ascii_alphanumeric() || held == '_'),
+            "the host function {name} holds a letter, digit or _",
+        );
+        assert!(
+            !self
+                .entries
+                .iter()
+                .any(|entry| entry.signature.name == name),
+            "the host holds the function {name} twice",
+        );
+    }
 }
 
 fn holds(ty: &Type, value: &Value) -> bool {
     match (ty, value) {
         (Type::Void, Value::Unit) => true,
-        (Type::Value(kind), value) => kind_of(value) == Some(*kind),
-        (Type::List(_), Value::List(_)) => true,
+        (Type::Value(kind), value) => value_kind(value) == Some(*kind),
+        (Type::List(kind), Value::List(items)) => items
+            .borrow()
+            .iter()
+            .all(|item| value_kind(item) == Some(*kind)),
         _ => false,
     }
 }
 
-fn kind_of(value: &Value) -> Option<FieldKind> {
+fn value_kind(value: &Value) -> Option<Kind> {
     Some(match value {
-        Value::Unit => return None,
-        Value::Bool(_) => FieldKind::Bool,
-        Value::Int(_) => FieldKind::Int,
-        Value::Float(_) => FieldKind::Float,
-        Value::Vector(_) => FieldKind::Vector,
-        Value::Entity(_) => FieldKind::Entity,
-        Value::Text(_) => FieldKind::Text,
-        Value::List(_) | Value::Component(_) => return None,
+        Value::Unit | Value::List(_) | Value::Component(_) => return None,
+        Value::Bool(_) => Kind::Bool,
+        Value::Int(_) => Kind::Int,
+        Value::Float(_) => Kind::Float,
+        Value::Vector(_) => Kind::Vector,
+        Value::Entity(_) => Kind::Entity,
+        Value::Text(_) => Kind::Text,
     })
 }
 

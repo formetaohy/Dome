@@ -113,6 +113,10 @@ impl Renderer {
         }
     }
 
+    pub fn format(&self) -> TextureFormat {
+        self.format
+    }
+
     pub(crate) fn paint(
         &mut self,
         submission: &mut Submission,

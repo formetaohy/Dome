@@ -307,6 +307,10 @@ impl<A: Clone> Ui<A> {
         std::mem::take(&mut self.actions)
     }
 
+    pub fn format(&self) -> TextureFormat {
+        self.renderer.format()
+    }
+
     pub fn present(&mut self, element: Element<'_, A>) {
         let mut canvases: SecondaryMap<NodeId, CanvasPaint<'_>> = SecondaryMap::new();
         let removed = self.tree.apply(element, &mut canvases);

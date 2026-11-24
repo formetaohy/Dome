@@ -11,7 +11,7 @@ impl FunctionBuilder<'_> {
             ExprKind::Float(value) => self.load(Constant::Float(*value), dst),
             ExprKind::Bool(value) => self.load(Constant::Bool(*value), dst),
             ExprKind::Text(value) => {
-                self.load(Constant::Text(std::rc::Rc::from(value.as_str())), dst)
+                self.load(Constant::Text(std::sync::Arc::from(value.as_str())), dst)
             }
             ExprKind::Name(_) | ExprKind::SelfEntity => match self.checked.info(expr).symbol {
                 Symbol::Local(slot) => {
@@ -48,8 +48,8 @@ impl FunctionBuilder<'_> {
                 let instruction = match (op, self.checked.info(operand).ty) {
                     (UnaryOp::Not, _) => Op::Not,
                     (UnaryOp::Negate, Type::Value(kind)) => match kind {
-                        lampas_bytecode::FieldKind::Int => Op::NegateInt,
-                        lampas_bytecode::FieldKind::Float => Op::NegateFloat,
+                        lampas_bytecode::Kind::Int => Op::NegateInt,
+                        lampas_bytecode::Kind::Float => Op::NegateFloat,
                         _ => Op::NegateVector,
                     },
                     (UnaryOp::Negate, _) => {

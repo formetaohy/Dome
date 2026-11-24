@@ -10,4 +10,5 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+dome_ecs = { workspace = true }
 dome_math = { workspace = true }

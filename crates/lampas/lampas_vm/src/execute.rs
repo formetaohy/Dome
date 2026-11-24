@@ -7,6 +7,7 @@ use dome_math::Vec3;
 use lampas_bytecode::{Instruction, Module, Op};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 impl Vm {
     pub(crate) fn execute(
@@ -124,7 +125,7 @@ impl Vm {
                         let (left, right) = self.texts(base, instruction);
                         format!("{left}{right}")
                     };
-                    self.stack[dst] = Value::Text(Rc::from(text));
+                    self.stack[dst] = Value::Text(Arc::from(text));
                 }
                 Op::EqualInt => {
                     let (left, right) = self.integers(base, instruction);
@@ -384,7 +385,7 @@ impl Vm {
                     let value = self.stack[base + instruction.b as usize].clone();
                     let text = match value {
                         Value::Text(text) => text,
-                        other => Rc::from(other.describe()),
+                        other => Arc::from(other.describe()),
                     };
                     self.stack[dst] = Value::Text(text);
                 }

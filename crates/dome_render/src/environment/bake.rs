@@ -229,7 +229,7 @@ impl Baker {
     }
 
     pub(crate) fn take(&self, job: &BakeJob) -> Option<Baked> {
-        if !self.queue.complete(job.submission.clone()) {
+        if !self.queue.complete(job.submission.clone()).unwrap_or(false) {
             return None;
         }
         Some(self.collect(job))
@@ -237,14 +237,16 @@ impl Baker {
 
     pub(crate) fn wait(&self, job: &BakeJob) -> Baked {
         self.queue
-            .wait(job.submission.clone(), dome_gpu::READBACK_TIMEOUT);
+            .wait(job.submission.clone(), dome_gpu::READBACK_TIMEOUT)
+            .unwrap_or_else(|failure| panic!("{failure}"));
         self.collect(job)
     }
 
     fn collect(&self, job: &BakeJob) -> Baked {
         let bytes = job
             .readback
-            .read(&self.queue, job.submission.clone(), IRRADIANCE_TOTAL_BYTES);
+            .read(&self.queue, job.submission.clone(), IRRADIANCE_TOTAL_BYTES)
+            .unwrap_or_else(|failure| panic!("{failure}"));
         let mut irradiance = [Vec3::ZERO; 9];
         for (coefficient, held) in irradiance
             .iter_mut()

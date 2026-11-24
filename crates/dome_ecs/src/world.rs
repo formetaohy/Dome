@@ -1,5 +1,6 @@
 use crate::column::Column;
 use crate::component::Component;
+use crate::dynamic::{Dynamic, Layout};
 use crate::entity::{Entity, EntityAllocator};
 use crate::hierarchy::{LocalTransform, Parent, Propagation, Tree};
 use crate::resource::Resource;
@@ -32,6 +33,7 @@ pub struct World {
     columns: Vec<Box<dyn ErasedColumn>>,
     index: HashMap<TypeId, usize>,
     resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    dynamic: Dynamic,
     pub(crate) propagation: Propagation,
     pub(crate) tree: Tree,
 }
@@ -65,6 +67,7 @@ impl World {
             for column in &mut self.columns {
                 column.remove_entity(*dead);
             }
+            self.dynamic.remove_entity(*dead);
             self.entities.release(*dead);
         }
         self.propagation.restructure();
@@ -264,6 +267,18 @@ impl World {
                 each(entity, first, second);
             }
         }
+    }
+
+    pub fn reset_dynamic(&mut self, layout: &[Layout]) {
+        self.dynamic.reset(layout);
+    }
+
+    pub fn dynamic(&self) -> &Dynamic {
+        &self.dynamic
+    }
+
+    pub fn dynamic_mut(&mut self) -> &mut Dynamic {
+        &mut self.dynamic
     }
 
     fn column_or_insert<T: Component>(&mut self) -> &mut Column<T> {

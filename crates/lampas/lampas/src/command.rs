@@ -1,12 +1,10 @@
-use crate::store::Store;
 use dome_ecs::{Entity, World};
-use lampas_vm::Value;
 
 pub enum Command {
     Add {
         entity: Entity,
         component: u16,
-        fields: Vec<Value>,
+        fields: Vec<dome_ecs::Value>,
     },
     Remove {
         entity: Entity,
@@ -15,7 +13,7 @@ pub enum Command {
     Despawn(Entity),
 }
 
-pub fn apply(commands: &mut Vec<Command>, store: &mut Store, world: &mut World) {
+pub fn apply(commands: &mut Vec<Command>, world: &mut World) {
     for command in commands.drain(..) {
         match command {
             Command::Add {
@@ -25,20 +23,22 @@ pub fn apply(commands: &mut Vec<Command>, store: &mut Store, world: &mut World) 
             } => {
                 assert!(
                     world.is_alive(entity),
-                    "a lampas command adds {} to the dead entity {}",
-                    component,
+                    "a lampas command adds a component to the dead entity {}",
                     entity.index(),
                 );
-                store.insert(entity, component, &fields);
+                world.dynamic_mut().insert(entity, component, &fields);
             }
             Command::Remove { entity, component } => {
                 assert!(
                     world.is_alive(entity),
-                    "a lampas command removes {} from the dead entity {}",
-                    component,
+                    "a lampas command removes a component from the dead entity {}",
                     entity.index(),
                 );
-                store.remove(entity, component);
+                assert!(
+                    world.dynamic_mut().remove(entity, component),
+                    "a lampas command removes a component the entity {} holds none of",
+                    entity.index(),
+                );
             }
             Command::Despawn(entity) => {
                 assert!(

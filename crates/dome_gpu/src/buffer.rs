@@ -124,7 +124,7 @@ impl GpuBuffer {
         queue: &crate::Queue,
         submission: wgpu::SubmissionIndex,
         bytes: u64,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, crate::GpuFailure> {
         assert!(
             self.device.same(queue.device()),
             "a queue cannot read another device's buffer"

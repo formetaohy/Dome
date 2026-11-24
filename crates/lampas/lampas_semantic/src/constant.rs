@@ -1,25 +1,25 @@
 use crate::Type;
 use crate::check::Checker;
 use dome_math::Vec3;
-use lampas_bytecode::{Constant, FieldKind};
+use lampas_bytecode::{Constant, Kind};
 use lampas_syntax::{BinaryOp, Diagnostic, Expr, ExprKind, UnaryOp};
-use std::rc::Rc;
+use std::sync::Arc;
 
 impl Checker<'_> {
     pub(crate) fn constant(&self, expr: &Expr, expected: Type) -> Result<Constant, Diagnostic> {
         match (&expr.kind, expected) {
-            (ExprKind::Int(value), Type::Value(FieldKind::Int)) => Ok(Constant::Int(*value)),
-            (ExprKind::Float(value), Type::Value(FieldKind::Float)) => Ok(Constant::Float(*value)),
-            (ExprKind::Bool(value), Type::Value(FieldKind::Bool)) => Ok(Constant::Bool(*value)),
-            (ExprKind::Text(value), Type::Value(FieldKind::Text)) => {
-                Ok(Constant::Text(Rc::from(value.as_str())))
+            (ExprKind::Int(value), Type::Value(Kind::Int)) => Ok(Constant::Int(*value)),
+            (ExprKind::Float(value), Type::Value(Kind::Float)) => Ok(Constant::Float(*value)),
+            (ExprKind::Bool(value), Type::Value(Kind::Bool)) => Ok(Constant::Bool(*value)),
+            (ExprKind::Text(value), Type::Value(Kind::Text)) => {
+                Ok(Constant::Text(Arc::from(value.as_str())))
             }
             (
                 ExprKind::Unary {
                     op: UnaryOp::Negate,
                     operand,
                 },
-                Type::Value(kind @ (FieldKind::Int | FieldKind::Float)),
+                Type::Value(kind @ (Kind::Int | Kind::Float)),
             ) => Ok(match self.constant(operand, Type::Value(kind))? {
                 Constant::Int(value) => Constant::Int(-value),
                 Constant::Float(value) => Constant::Float(-value),
@@ -37,7 +37,7 @@ impl Checker<'_> {
                 }
                 Ok(Constant::List(values))
             }
-            (ExprKind::Call { callee, arguments }, Type::Value(FieldKind::Vector))
+            (ExprKind::Call { callee, arguments }, Type::Value(Kind::Vector))
                 if callee.name == "vec3" =>
             {
                 if arguments.len() != 3 {
@@ -99,7 +99,7 @@ impl Checker<'_> {
                 Ok(Constant::Float(value))
             }
             (Constant::Text(left), Constant::Text(right)) if op == BinaryOp::Add => {
-                Ok(Constant::Text(Rc::from(format!("{left}{right}"))))
+                Ok(Constant::Text(Arc::from(format!("{left}{right}"))))
             }
             _ => Err(self.error(span, format!("{} folds no constants", op.text()))),
         }

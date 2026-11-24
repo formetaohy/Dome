@@ -165,7 +165,10 @@ impl Picker {
             &draws,
         );
         submission.submit(queue);
-        let bytes = self.target.read(queue);
+        let bytes = self
+            .target
+            .read(queue)
+            .unwrap_or_else(|failure| panic!("{failure}"));
         let pixel = &bytes[..4];
         if pixel[3] == 0 {
             return None;

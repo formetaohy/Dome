@@ -139,7 +139,7 @@ struct Texels {
 }
 
 fn texels(texture: &Texture, queue: &Queue) -> Texels {
-    let bytes = texture.read(queue);
+    let bytes = texture.read(queue).expect("a baked environment reads back");
     let mut texels = Vec::with_capacity((texture.width() * texture.height()) as usize);
     for row in texture.rows(&bytes) {
         for texel in row.as_chunks::<8>().0 {

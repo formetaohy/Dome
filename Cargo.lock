@@ -1056,6 +1056,7 @@ dependencies = [
 name = "lampas_bytecode"
 version = "0.1.1"
 dependencies = [
+ "dome_ecs",
  "dome_math",
 ]
 
