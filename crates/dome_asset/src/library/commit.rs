@@ -181,33 +181,18 @@ impl Commit {
     }
 
     fn remove(&mut self, library: &mut Library, renderer: &mut Renderer) {
-        if self.prepared.gpu() || (library.synchronous && self.prepared.removed.gpu()) {
-            renderer.idle();
-        }
         for id in &self.prepared.removed.materials {
             if let Some(record) = library.materials.remove(id) {
-                if library.synchronous {
-                    renderer.remove_material(record.material);
-                } else {
-                    library.retired_materials.push(record.material);
-                }
+                renderer.retire_material(record.material);
             }
         }
         for id in &self.prepared.removed.meshes {
             if let Some(record) = library.meshes.remove(id) {
-                if library.synchronous {
-                    renderer.remove_mesh(record.mesh);
-                } else {
-                    library.retired_meshes.push(record.mesh);
-                }
+                renderer.retire_mesh(record.mesh);
             }
         }
         for id in &self.prepared.removed.images {
-            if let Some(record) = library.images.remove(id)
-                && !library.synchronous
-            {
-                library.retired_images.push(record.image);
-            }
+            library.images.remove(id);
             library.textures.retain(|(held, ..), _| held != id);
         }
         for id in &self.prepared.changed_images {

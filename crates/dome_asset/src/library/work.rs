@@ -121,15 +121,6 @@ pub(super) struct Removed {
     pub(super) environments: Vec<String>,
 }
 
-impl Removed {
-    pub(super) fn gpu(&self) -> bool {
-        !self.images.is_empty()
-            || !self.materials.is_empty()
-            || !self.meshes.is_empty()
-            || !self.environments.is_empty()
-    }
-}
-
 pub(super) struct ImageMips {
     pub(super) width: u32,
     pub(super) height: u32,
@@ -153,13 +144,6 @@ impl ImageMips {
 }
 
 impl Prepared {
-    pub(super) fn gpu(&self) -> bool {
-        !self.images.is_empty()
-            || !self.materials.is_empty()
-            || !self.meshes.is_empty()
-            || !self.environments.is_empty()
-    }
-
     pub(super) fn changed(&self) -> Changed {
         let mut changed = Changed::none();
         for item in &self.images {

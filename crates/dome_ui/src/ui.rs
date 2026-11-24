@@ -286,7 +286,7 @@ impl<A: Clone> Ui<A> {
             }
         }
         if self.text.begin(scale) {
-            self.invalidate();
+            self.repaint_all();
         }
         self.cursor = Cursor::Arrow;
         self.animating = false;
@@ -421,10 +421,14 @@ impl<A: Clone> Ui<A> {
     }
 
     fn invalidate(&mut self) {
+        self.repaint_all();
+        self.tree.mark_dirty();
+    }
+
+    fn repaint_all(&mut self) {
         for node in self.tree.nodes.values_mut() {
             node.paint_dirty = true;
         }
-        self.tree.mark_dirty();
     }
 }
 

@@ -912,20 +912,25 @@ impl<A: Clone> Ui<A> {
 
     fn keys(&mut self) {
         let modifiers = self.input.modifiers();
-        let keys = self
+        let fresh = self
             .input
             .keys()
             .iter()
             .filter(|event| event.pressed && !event.repeat)
             .filter_map(|event| event.key)
             .collect::<Vec<_>>();
-        if keys.contains(&InputKey::Tab) {
+        let held = self
+            .input
+            .keys()
+            .iter()
+            .filter(|event| event.pressed)
+            .filter_map(|event| event.key)
+            .collect::<Vec<_>>();
+        if fresh.contains(&InputKey::Tab) {
             if self.advance_focus(!modifiers.shift) {
                 self.focus_visible = true;
             }
-            return;
-        }
-        if keys.contains(&InputKey::Escape) {
+        } else if fresh.contains(&InputKey::Escape) {
             if self.modal.is_none() {
                 self.close_popups();
                 self.focus = None;
@@ -934,13 +939,9 @@ impl<A: Clone> Ui<A> {
             return;
         }
         let focused = self.focus.filter(|node| {
-            self.tree
-                .nodes
-                .get(*node)
-                .is_some_and(|node| node.on_screen && node.visible)
-                && self.inside_modal(*node)
+            self.tree.nodes.get(*node).is_some_and(|node| node.visible) && self.inside_modal(*node)
         });
-        for key in &keys {
+        for key in &held {
             if matches!(key, InputKey::PageUp | InputKey::PageDown) {
                 self.scroll_keys(focused, *key);
             }
@@ -948,7 +949,7 @@ impl<A: Clone> Ui<A> {
         let Some(node) = focused else {
             return;
         };
-        for key in keys {
+        for key in held {
             let Some(direction) = step(key) else {
                 continue;
             };
@@ -957,11 +958,9 @@ impl<A: Clone> Ui<A> {
             }
         }
         if self.focus_visible
-            && self.input.keys().iter().any(|event| {
-                event.pressed
-                    && !event.repeat
-                    && matches!(event.key, Some(InputKey::Enter | InputKey::Space))
-            })
+            && fresh
+                .iter()
+                .any(|key| matches!(key, InputKey::Enter | InputKey::Space))
         {
             self.activate(node, Source::Key);
         }

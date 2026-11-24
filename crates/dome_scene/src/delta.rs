@@ -31,11 +31,17 @@ impl Delta {
         for step in &self.steps {
             step.apply(scene);
         }
+        if !self.steps.is_empty() {
+            scene.touch();
+        }
     }
 
     pub fn revert(&self, scene: &mut Scene) {
         for step in self.steps.iter().rev() {
             step.revert(scene);
+        }
+        if !self.steps.is_empty() {
+            scene.touch();
         }
     }
 

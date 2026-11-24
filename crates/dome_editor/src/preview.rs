@@ -34,6 +34,7 @@ pub(crate) struct Preview {
     debug: bool,
     wanted: Option<Scene>,
     requested: Option<Scene>,
+    revision: u64,
 }
 
 impl Preview {
@@ -61,6 +62,7 @@ impl Preview {
             debug: false,
             wanted: None,
             requested: None,
+            revision: 0,
         };
         let mut library = Library::new();
         assert!(library.request(scene), "a new preview loads its scene");
@@ -75,7 +77,12 @@ impl Preview {
 
     pub(crate) fn refresh(&mut self, scene: &Scene) {
         self.wanted = Some(scene.clone());
+        self.revision = self.revision.wrapping_add(1);
         self.start();
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub(crate) fn poll(&mut self) -> Option<Refresh> {
@@ -106,11 +113,7 @@ impl Preview {
         if self.wanted.as_ref() == Some(&requested) {
             self.wanted = None;
         }
-        let library = self
-            .library
-            .as_mut()
-            .expect("a preview holds the assets its scene renders");
-        library.release(&mut self.renderer);
+        self.revision = self.revision.wrapping_add(1);
         self.settle();
         Some(refresh)
     }

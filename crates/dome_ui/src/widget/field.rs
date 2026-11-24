@@ -73,8 +73,10 @@ pub(crate) fn caret_at(
         return column(text, pointer.x - inner.min.x + shift, style, layout);
     }
     let line_height = style.font.leading.max(style.font.size * 1.28);
-    let row = ((pointer.y - inner.min.y) / line_height).floor().max(0.0) as usize;
     let lines = lines(text);
+    let caret_line = line_at(&lines, caret);
+    let row = ((pointer.y - inner.min.y) / line_height).floor().max(0.0) as usize
+        + scroll_rows(caret_line, inner.height(), line_height);
     let (_, line_x) = caret_x_of(text, &lines, caret, style, layout);
     let shift = shift(line_x, preedit_width, inner.width());
     let x = pointer.x - inner.min.x + shift;
@@ -87,6 +89,11 @@ pub(crate) fn caret_at(
 
 fn inner(rect: Rect) -> Rect {
     rect.shrink2(Vec2::new(FIELD_PAD, 4.0))
+}
+
+fn scroll_rows(line: usize, height: f32, line_height: f32) -> usize {
+    let visible = (height / line_height).floor().max(1.0);
+    ((line as f32 + 1.0) - visible).max(0.0).ceil() as usize
 }
 
 fn shift(caret_x: f32, preedit_width: f32, width: f32) -> f32 {
@@ -247,6 +254,8 @@ pub(super) fn paint_field(
             let lines = lines(text);
             let (caret_line, caret_x) = caret_xy(painter, style, text, &lines, caret);
             let offset = shift(caret_x, preedit_width, inner.width());
+            let rows = scroll_rows(caret_line, inner.height(), line_height);
+            let top = |index: usize| inner.min.y + (index as f32 - rows as f32) * line_height;
             let selection = anchor.min(caret).byte()..anchor.max(caret).byte();
             if selection.start != selection.end {
                 for (index, line) in lines.iter().enumerate() {
@@ -257,10 +266,7 @@ pub(super) fn paint_field(
                         let right = text_width(painter, style, &text[line.start..high]);
                         painter.rect(
                             Rect::from_min_size(
-                                Vec2::new(
-                                    inner.min.x + left - offset,
-                                    inner.min.y + index as f32 * line_height,
-                                ),
+                                Vec2::new(inner.min.x + left - offset, top(index)),
                                 Vec2::new(right - left, line_height),
                             ),
                             Corners::ZERO,
@@ -273,19 +279,13 @@ pub(super) fn paint_field(
                 let layout = painter.layout(&text[line.start..line.end], style, 0.0);
                 painter.text(
                     &layout,
-                    Vec2::new(
-                        inner.min.x - offset,
-                        inner.min.y + index as f32 * line_height,
-                    ),
+                    Vec2::new(inner.min.x - offset, top(index)),
                     style.color,
                 );
             }
             if let Some(composed) = preedit {
                 let layout = painter.layout(composed, style, 0.0);
-                let origin = Vec2::new(
-                    inner.min.x + caret_x - offset,
-                    inner.min.y + caret_line as f32 * line_height,
-                );
+                let origin = Vec2::new(inner.min.x + caret_x - offset, top(caret_line));
                 painter.text(&layout, origin, style.color);
                 painter.rect(
                     Rect::from_min_size(
@@ -299,7 +299,7 @@ pub(super) fn paint_field(
             let caret_rect = Rect::from_min_size(
                 Vec2::new(
                     inner.min.x + caret_x + preedit_width - offset,
-                    inner.min.y + caret_line as f32 * line_height + 1.0,
+                    top(caret_line) + 1.0,
                 ),
                 Vec2::new(1.6, (line_height - 2.0).max(1.0)),
             );

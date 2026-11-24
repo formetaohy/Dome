@@ -8,6 +8,7 @@ use crate::node::Node;
 use crate::nodes::Nodes;
 use crate::scene::Scene;
 use crate::skin::SkinEntry;
+use crate::target::Target;
 use crate::value::Value;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -79,6 +80,7 @@ impl Loader {
             ids,
             nodes: Vec::with_capacity(scene.nodes.len()),
         };
+        let mut repeated = Vec::new();
         for node in scene.nodes().iter().cloned().collect::<Vec<_>>() {
             let prefab = node.prefab.clone();
             materialization.nodes.push(node.clone());
@@ -88,6 +90,10 @@ impl Loader {
             let (template, key) = self
                 .load(&path, what)
                 .unwrap_or_else(|error| panic!("{what}: {error}"));
+            let keys = repeated_overrides(&node, &template);
+            if !keys.is_empty() {
+                repeated.push((node.id.clone(), keys));
+            }
             scene
                 .edit(|edit| {
                     import(edit, &template, &key, &node.id)?;
@@ -107,6 +113,9 @@ impl Loader {
         scene.nodes = Nodes::from(materialization.nodes);
         scene
             .edit(|edit| {
+                for (marker, keys) in &repeated {
+                    edit.drop_overrides(marker, keys);
+                }
                 let candidates = 0..edit.nodes().len();
                 apply_overrides(edit, candidates);
                 Ok(())
@@ -242,6 +251,19 @@ fn apply_removals(scene: &mut Scene, marker: &Node, nodes: &mut Vec<Node>, what:
         .retain(|addition| !ids.contains(&format!("{prefix}{}", addition.id)));
     held.overrides
         .retain(|entry| !ids.contains(&format!("{prefix}{}", entry.node)));
+}
+
+fn repeated_overrides(marker: &Node, template: &Scene) -> Vec<(String, String)> {
+    marker
+        .overrides()
+        .iter()
+        .filter(|entry| {
+            template
+                .property(&Target::Node(entry.node.clone()), &entry.path)
+                .is_some_and(|value| value == entry.value)
+        })
+        .map(|entry| (entry.node.clone(), entry.path.clone()))
+        .collect()
 }
 
 fn descendant(parent: &HashMap<&str, &str>, of: &str, ancestor: &str) -> bool {

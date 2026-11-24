@@ -50,7 +50,8 @@ impl<A: Clone> Ui<A> {
                 continue;
             }
             if !self.tree.nodes[id].on_screen {
-                self.tree.nodes[id].runtime.active = false;
+                self.tree.nodes[id].runtime.active = true;
+                next.push(id);
                 continue;
             }
             let frame = FrameAnimation {

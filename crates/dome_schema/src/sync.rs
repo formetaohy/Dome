@@ -139,7 +139,9 @@ impl SceneSync {
                     id: node.id.clone(),
                 },
             );
-            crate::runtime::transform::install(world, entity, node.transform());
+            if !reused || previous.is_none_or(|held| held.transform() != node.transform()) {
+                crate::runtime::transform::install(world, entity, node.transform());
+            }
             for registration in registry.registrations() {
                 let spec = registration.spec;
                 let authored = node.component_by_name(spec.name);
@@ -198,8 +200,8 @@ impl SceneSync {
                 .and_then(|at| applied.nodes().get(at))
         });
         let shared = previous.is_some_and(|held| std::ptr::eq(held, node));
-        let mut touched = previous.is_none_or(|held| held.transform() != node.transform())
-            || previous.is_some_and(|held| held.parent != node.parent);
+        let shifted = previous.is_none_or(|held| held.transform() != node.transform());
+        let mut touched = shifted || previous.is_some_and(|held| held.parent != node.parent);
         let mut sky = false;
         match node.parent.as_deref() {
             Some(parent) => {
@@ -212,7 +214,9 @@ impl SceneSync {
                 clear_parent(world, entity);
             }
         }
-        crate::runtime::transform::install(world, entity, node.transform());
+        if shifted {
+            crate::runtime::transform::install(world, entity, node.transform());
+        }
         for registration in registry.registrations() {
             let spec = registration.spec;
             let authored = node.component_by_name(spec.name);

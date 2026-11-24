@@ -247,7 +247,6 @@ impl LiveScene {
         if self.wanted.as_ref() == Some(&requested) {
             self.wanted = None;
         }
-        self.assets.release(renderer);
         Some(self.reloaded())
     }
 

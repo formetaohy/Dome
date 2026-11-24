@@ -50,7 +50,11 @@ impl<'a> Edit<'a> {
 
     fn settle(mut self) -> Delta {
         self.settled = true;
-        std::mem::take(&mut self.delta)
+        let delta = std::mem::take(&mut self.delta);
+        if !delta.is_empty() {
+            self.scene.touch();
+        }
+        delta
     }
 
     pub(crate) fn insert_nodes(&mut self, at: usize, nodes: Vec<Node>) {

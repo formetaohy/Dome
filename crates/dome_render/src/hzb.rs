@@ -28,28 +28,21 @@ impl Hzb {
         height: u32,
         vertical: f32,
     ) -> Self {
-        let mut dimensions = Vec::new();
-        let mut current = (
+        let base = (
             width.div_ceil(crate::abi::HZB_SCALE),
             height.div_ceil(crate::abi::HZB_SCALE),
         );
-        loop {
-            dimensions.push(current);
-            if current.0 == 1 && current.1 == 1 {
-                break;
-            }
-            current = (current.0.div_ceil(2), current.1.div_ceil(2));
-        }
+        let count = Texture::full_mip_levels(base.0, base.1);
         let texture = Texture::new(
             device,
             "dome depth pyramid",
-            dimensions[0].0,
-            dimensions[0].1,
-            dimensions.len() as u32,
+            base.0,
+            base.1,
+            count,
             TextureFormat::R32Float,
             TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         );
-        let levels = (0..dimensions.len() as u32)
+        let levels = (0..count)
             .map(|level| texture.level(level))
             .collect::<Vec<_>>();
         let orientation = GpuBuffer::new(

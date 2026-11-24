@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use dome_animation::{Comparison, Parameter};
 use dome_asset::{Import, Watch};
+use dome_ecs::Entity;
 use dome_gpu::{Gpu, GpuRequest, Submission, WindowHandle};
 use dome_math::{Quat, Rect, Transform, Vec2, Vec3};
 use dome_project::Project;
@@ -66,6 +67,17 @@ struct PropertyState {
     delta: Option<Delta>,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct Viewport {
+    camera: Transform,
+    highlight: Option<Entity>,
+    size: (u32, u32),
+    debug: bool,
+    scene: u64,
+    assets: u64,
+    animating: bool,
+}
+
 pub struct Editor {
     scene: Scene,
     project: Project,
@@ -101,6 +113,7 @@ pub struct Editor {
     origin: Instant,
     hover: Option<Grip>,
     viewport_texture: Option<dome_gpu::Texture>,
+    viewport_rendered: Option<Viewport>,
     ime: bool,
     redraw: bool,
     ui_at: Option<Instant>,
@@ -154,6 +167,7 @@ impl Editor {
             origin: Instant::now(),
             hover: None,
             viewport_texture: None,
+            viewport_rendered: None,
             ime: false,
             redraw: true,
             ui_at: None,
@@ -275,6 +289,7 @@ impl Editor {
         match loaded {
             Ok(scene) => {
                 self.scene = scene;
+                self.viewport_rendered = None;
                 self.history.reset();
                 self.dirty = false;
                 self.conflict = false;
@@ -307,6 +322,7 @@ impl Editor {
             })) {
                 Ok(scene) => {
                     self.scene = scene;
+                    self.viewport_rendered = None;
                     self.drag = None;
                     self.property = None;
                     self.history.reset();
@@ -1116,8 +1132,20 @@ impl Editor {
             Target::Node(id) => session.preview.entity(id),
             _ => None,
         });
-        session.preview.set_camera(camera);
-        session.preview.render(scene, SCENE_CLEAR, highlight);
+        let viewport = Viewport {
+            camera,
+            highlight,
+            size: (texture_width, texture_height),
+            debug: self.debug,
+            scene: self.scene.revision(),
+            assets: session.preview.revision(),
+            animating: session.preview.playing() || session.preview.capturing(),
+        };
+        if self.viewport_rendered != Some(viewport) {
+            session.preview.set_camera(camera);
+            session.preview.render(scene, SCENE_CLEAR, highlight);
+            self.viewport_rendered = Some(viewport);
+        }
         if session.surface.width() != width || session.surface.height() != height {
             session.surface.resize(width, height);
         }

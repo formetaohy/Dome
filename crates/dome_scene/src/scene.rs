@@ -38,6 +38,7 @@ pub struct Scene {
     pub(crate) animations: Arc<Vec<AnimationEntry>>,
     pub(crate) graphs: Arc<Vec<GraphEntry>>,
     pub(crate) nodes: Nodes,
+    pub(crate) revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -111,7 +112,16 @@ impl Scene {
             animations: Arc::new(Vec::new()),
             graphs: Arc::new(Vec::new()),
             nodes: Nodes::new(),
+            revision: 0,
         }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub(crate) fn touch(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
     }
 
     pub fn load(path: impl AsRef<Path>, root: impl Into<PathBuf>, schema: Arc<dyn Schema>) -> Self {

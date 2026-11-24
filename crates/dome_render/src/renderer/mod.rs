@@ -54,8 +54,8 @@ use dome_ecs::{Entity, World};
 use dome_gpu::{
     AddressMode, BindGroup, Binding, BufferUsages, CompareFunction, ComputePipeline, DepthOps,
     Device, Draw, FilterMode, Gpu, GpuBuffer, GraphicsPipeline, Pass, PipelineState, Queue,
-    ResourceId, Sampler, SamplerDesc, Submission, SurfaceFrame, Texture, TextureFormat,
-    TextureUsages, Viewport,
+    ResourceId, Sampler, SamplerDesc, Submission, SubmissionIndex, SurfaceFrame, Texture,
+    TextureFormat, TextureUsages, Viewport,
 };
 use dome_math::{Mat4, Transform, Vec2, Vec3};
 use std::collections::HashMap;
@@ -93,6 +93,11 @@ struct CaptureInputs<'a> {
 pub enum Target<'a> {
     Texture(&'a Texture),
     Surface(Box<SurfaceFrame>),
+}
+
+enum Retired {
+    Mesh(Mesh),
+    Material(Material),
 }
 
 pub struct Renderer {
@@ -158,6 +163,8 @@ pub struct Renderer {
     spheres: Vec<(Entity, (Vec3, f32))>,
     damage: Damage,
     probes: Probes,
+    submitted: Option<SubmissionIndex>,
+    retired: Vec<(SubmissionIndex, Retired)>,
 }
 
 impl Renderer {
@@ -397,6 +404,8 @@ impl Renderer {
             captures,
             queue,
             device,
+            submitted: None,
+            retired: Vec::new(),
         }
     }
 
@@ -433,13 +442,41 @@ impl Renderer {
         self.meshes.add_skinned(&self.queue, vertices, skin)
     }
 
-    pub fn idle(&self) {
-        self.queue.idle();
+    pub fn retire_mesh(&mut self, mesh: Mesh) {
+        match self.submitted.clone() {
+            Some(submission) => self.retired.push((submission, Retired::Mesh(mesh))),
+            None => self.meshes.remove(mesh),
+        }
+        self.pick_frame = None;
     }
 
-    pub fn remove_mesh(&mut self, mesh: Mesh) {
-        self.meshes.remove(mesh);
-        self.pick_frame = None;
+    pub fn retire_material(&mut self, material: Material) {
+        match self.submitted.clone() {
+            Some(submission) => self.retired.push((submission, Retired::Material(material))),
+            None => self.materials.remove(material),
+        }
+    }
+
+    fn release_retired(&mut self) {
+        if self.retired.is_empty() {
+            return;
+        }
+        let mut held = Vec::new();
+        let mut waiting = false;
+        for (submission, resource) in self.retired.drain(..) {
+            if !waiting {
+                waiting = !self.queue.complete(submission.clone());
+            }
+            if waiting {
+                held.push((submission, resource));
+                continue;
+            }
+            match resource {
+                Retired::Mesh(mesh) => self.meshes.remove(mesh),
+                Retired::Material(material) => self.materials.remove(material),
+            }
+        }
+        self.retired = held;
     }
 
     pub fn update_mesh(&mut self, mesh: Mesh, vertices: &[crate::abi::Vertex]) {
@@ -531,10 +568,6 @@ impl Renderer {
         self.materials.set(material, desc);
     }
 
-    pub fn remove_material(&mut self, material: Material) {
-        self.materials.remove(material);
-    }
-
     fn scene_depth(&mut self, width: u32, height: u32) -> Texture {
         if let Some(held) = &self.scene_depth
             && held.width() == width
@@ -590,6 +623,7 @@ impl Renderer {
             Target::Texture(texture) => (texture.clone(), None),
             Target::Surface(frame) => (frame.texture().clone(), Some(*frame)),
         };
+        self.release_retired();
         self.flush_materials();
         self.settle_captures();
         let collection = self.collect(world, highlight);
@@ -752,7 +786,7 @@ impl Renderer {
             if let Some(frame) = frame {
                 submission.present(frame);
             }
-            submission.submit(&self.queue);
+            self.submitted = Some(submission.submit(&self.queue));
             self.palettes.finish();
             self.temporality.finish(pose);
             self.capture(
@@ -837,7 +871,7 @@ impl Renderer {
         if let Some(frame) = frame {
             submission.present(frame);
         }
-        submission.submit(&self.queue);
+        self.submitted = Some(submission.submit(&self.queue));
         self.palettes.finish();
         self.temporality.finish(pose);
         self.capture(

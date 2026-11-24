@@ -303,7 +303,7 @@ impl Renderer {
             Pass::new(&panorama, [0.0, 0.0, 0.0, 1.0]),
             &[Draw::new(&self.captures.convert, &convert, 3)],
         );
-        submission.submit(&self.queue);
+        self.submitted = Some(submission.submit(&self.queue));
         let sampler = self.shading.sampler().clone();
         let request = self.bake(&panorama, &sampler);
         let mut marker = probe.probe;

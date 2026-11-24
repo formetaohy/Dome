@@ -22,7 +22,7 @@ impl<A: Clone> Ui<A> {
 
     fn collect_focus_in(&self, id: NodeId, out: &mut Vec<NodeId>) {
         let node = &self.tree.nodes[id];
-        if !node.on_screen || !node.visible || !node.enabled {
+        if !node.visible || !node.enabled {
             return;
         }
         if node.interaction.is_focusable() {
@@ -41,13 +41,24 @@ impl<A: Clone> Ui<A> {
         let current = self
             .focus
             .and_then(|focus| self.focus_order.iter().position(|key| *key == focus));
-        let next = match (current, forward) {
+        let mut index = match (current, forward) {
             (Some(index), true) => (index + 1) % count,
             (Some(index), false) => (index + count - 1) % count,
             (None, true) => 0,
             (None, false) => count - 1,
         };
-        self.focus = Some(self.focus_order[next]);
-        true
+        for _ in 0..count {
+            let candidate = self.focus_order[index];
+            if self.tree.nodes[candidate].on_screen {
+                self.focus = Some(candidate);
+                return true;
+            }
+            index = if forward {
+                (index + 1) % count
+            } else {
+                (index + count - 1) % count
+            };
+        }
+        false
     }
 }

@@ -84,6 +84,7 @@ pub(crate) fn document(text: &str, root: PathBuf, what: &str, schema: Arc<dyn Sc
         animations: Arc::new(animations),
         graphs: Arc::new(graphs),
         nodes: Nodes::from(nodes),
+        revision: 0,
     }
 }
 

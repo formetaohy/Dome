@@ -77,14 +77,15 @@ impl Text {
     pub fn begin(&mut self, pixels_per_point: f32) -> bool {
         self.pixels_per_point = pixels_per_point;
         self.frame += 1;
+        self.atlas.advance();
         if self.frame.is_multiple_of(120) {
             self.evict();
         }
+        let recycled = self.atlas.take_recycled();
         if !self.atlas.exhausted() {
-            return false;
+            return recycled;
         }
         self.atlas.reset();
-        self.entries.clear();
         true
     }
 

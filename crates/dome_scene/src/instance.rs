@@ -512,6 +512,24 @@ impl Edit<'_> {
         Ok(())
     }
 
+    pub(crate) fn drop_overrides(&mut self, marker: &str, keys: &[(String, String)]) {
+        let Some(index) = self.node_index(marker) else {
+            return;
+        };
+        if !self.nodes[index].overrides.iter().any(|entry| {
+            keys.iter()
+                .any(|key| key == &(entry.node.clone(), entry.path.clone()))
+        }) {
+            return;
+        }
+        self.change_node(index, |held, _| {
+            held.overrides
+                .retain(|entry| !keys.contains(&(entry.node.clone(), entry.path.clone())));
+            Ok(())
+        })
+        .expect("a prefab instance drops the overrides its prefab already holds");
+    }
+
     fn has_override(&self, marker: usize, node: &str, path: &str, value: &Value) -> bool {
         self.nodes[marker]
             .overrides

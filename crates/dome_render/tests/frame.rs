@@ -1853,3 +1853,62 @@ fn movement(context: &Gpu, target: &Texture) {
         "leaves {left:?} where the instance no longer stands: a temporal frame rejects the history of a disoccluded surface",
     );
 }
+
+#[test]
+fn a_frame_of_an_odd_extent_culls_against_the_depth_pyramid_it_builds() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device renders a frame: {error}"));
+    let device = context.device();
+    let (width, height) = (500, 320);
+    let target = Texture::new(
+        device,
+        "odd frame",
+        width,
+        height,
+        1,
+        TextureFormat::Rgba8Unorm,
+        TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+    );
+    let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
+    let quad = renderer.mesh(&QUAD);
+    let material = renderer.material(MaterialDesc::new(WHITE));
+    let mut world = World::new();
+    let eye = world.spawn();
+    world.insert(eye, Transform::from_translation(Vec3::new(0.0, 0.0, 4.0)));
+    world.insert(
+        eye,
+        Camera {
+            vertical_fov: std::f32::consts::FRAC_PI_2,
+            near: 0.1,
+            far: 100.0,
+        },
+    );
+    let sun = world.spawn();
+    world.insert(sun, Transform::IDENTITY);
+    world.insert(
+        sun,
+        DirectionalLight {
+            color: Vec3::ONE,
+            intensity: std::f32::consts::PI,
+            shadow_distance: 100.0,
+        },
+    );
+    let covered = world.spawn();
+    world.insert(covered, Transform::IDENTITY);
+    world.insert(
+        covered,
+        MeshInstance {
+            mesh: quad,
+            material,
+            tint: WHITE,
+        },
+    );
+    renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
+    let pixels = read(&context, &target);
+    let center = pixels[(height / 2 * width + width / 2) as usize];
+    let corner = pixels[0];
+    assert!(
+        center != corner,
+        "draws the quad at the center of an odd frame the depth pyramid sizes: {center:?}",
+    );
+}

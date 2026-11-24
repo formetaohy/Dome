@@ -209,6 +209,63 @@ fn an_override_of_a_node_the_instance_lacks_is_refused() {
     Scene::load(root.join("scene.toml"), &root, schema());
 }
 
+const REPEATING: &str = r#"format = "dome_scene"
+images = []
+meshes = []
+materials = []
+
+[[nodes]]
+id = "prop"
+prefab = "prefabs/prop.toml"
+
+[nodes.transform]
+translation = [0.0, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+scale = [1.0, 1.0, 1.0]
+
+[[nodes.overrides]]
+node = "body"
+path = "mesh.tint"
+value = [1.0, 1.0, 1.0]
+"#;
+
+#[test]
+fn an_instance_keeps_the_overrides_its_prefab_does_not_hold() {
+    let root = directory("edit_repeat");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
+    fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
+    fs::write(root.join("scene.toml"), REPEATING).expect("a test writes its scene");
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
+    assert_eq!(
+        scene.instance_changes("prop"),
+        0,
+        "the instance drops the override that repeats its prefab",
+    );
+    scene
+        .edit(|edit| {
+            edit.set_property(
+                &Target::Node(String::from("prop_body")),
+                "mesh.tint",
+                &dome_scene::Value::Vector(dome_math::Vec3::new(0.5, 0.5, 0.5)),
+            )
+        })
+        .expect("an instance node overrides the tint of its prefab");
+    assert_eq!(
+        scene.instance_changes("prop"),
+        1,
+        "the instance keeps the override that departs from its prefab",
+    );
+    assert_eq!(
+        scene.property(&Target::Node(String::from("prop_body")), "mesh.tint"),
+        Some(dome_scene::Value::Vector(dome_math::Vec3::new(
+            0.5, 0.5, 0.5
+        ))),
+        "the instance paints the tint its override writes",
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
 fn directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("dome_scene_{name}_{}", std::process::id()))
 }
