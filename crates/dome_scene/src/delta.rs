@@ -27,6 +27,10 @@ impl Delta {
         self.steps.len()
     }
 
+    pub fn weight(&self, schema: &dyn crate::component::Schema) -> usize {
+        self.steps.iter().map(|step| step.weight(schema)).sum()
+    }
+
     pub fn apply(&self, scene: &mut Scene) {
         for step in &self.steps {
             step.apply(scene);
@@ -168,6 +172,16 @@ impl<T: Clone> Splice<T> {
             self.at..self.at + self.inserted.len(),
             self.removed.iter().cloned(),
         );
+    }
+}
+
+impl<T> Splice<T> {
+    pub(crate) fn weight(&self, mut weigh: impl FnMut(&T) -> usize) -> usize {
+        self.removed
+            .iter()
+            .chain(self.inserted.iter())
+            .map(&mut weigh)
+            .sum()
     }
 }
 

@@ -37,20 +37,27 @@ impl Loader {
 
     pub(crate) fn document(&mut self, text: &str, what: &str) -> Result<Scene, String> {
         let mut scene =
-            crate::parse::document(text, self.root.clone(), what, Arc::clone(&self.schema));
-        self.expand(&mut scene, what);
+            crate::parse::document(text, self.root.clone(), what, Arc::clone(&self.schema))?;
+        self.expand(&mut scene, what)?;
         scene.validate(what)?;
         Ok(scene)
     }
 
     pub(crate) fn load(&mut self, path: &Path, what: &str) -> Result<(Scene, PathBuf), String> {
+        if !crate::folder::Folder::Prefab.holds(path) {
+            return Err(format!(
+                "the path {} leaves the prefabs folder",
+                path.display()
+            ));
+        }
         let file = crate::folder::Folder::Prefab.resolve(&self.root, path);
         let key = path.to_path_buf();
-        assert!(
-            !self.stack.iter().any(|held| held == &key),
-            "{what} includes the prefab {} into itself",
-            key.display(),
-        );
+        if self.stack.iter().any(|held| held == &key) {
+            return Err(format!(
+                "{what} includes the prefab {} into itself",
+                key.display(),
+            ));
+        }
         if let Some(cached) = self.cache.get(&key) {
             return Ok((cached.clone(), key));
         }
@@ -69,7 +76,7 @@ impl Loader {
         Ok((scene, key))
     }
 
-    fn expand(&mut self, scene: &mut Scene, what: &str) {
+    fn expand(&mut self, scene: &mut Scene, what: &str) -> Result<(), String> {
         let ids = scene
             .nodes
             .iter()
@@ -89,7 +96,7 @@ impl Loader {
             };
             let (template, key) = self
                 .load(&path, what)
-                .unwrap_or_else(|error| panic!("{what}: {error}"));
+                .map_err(|error| format!("{what}: {error}"))?;
             let keys = repeated_overrides(&node, &template);
             if !keys.is_empty() {
                 repeated.push((node.id.clone(), keys));
@@ -103,12 +110,12 @@ impl Loader {
                     }
                     Ok(())
                 })
-                .unwrap_or_else(|error| panic!("{what}: {error}"));
+                .map_err(|error| format!("{what}: {error}"))?;
             let generated = instantiate(&node, &template, &mut materialization.ids)
-                .unwrap_or_else(|error| panic!("{what}: {error}"));
+                .map_err(|error| format!("{what}: {error}"))?;
             materialization.nodes.extend(generated);
-            materialization.structure(self, scene, &node);
-            apply_removals(scene, &node, &mut materialization.nodes, what);
+            materialization.structure(self, scene, &node)?;
+            apply_removals(scene, &node, &mut materialization.nodes, what)?;
         }
         scene.nodes = Nodes::from(materialization.nodes);
         scene
@@ -117,10 +124,11 @@ impl Loader {
                     edit.drop_overrides(marker, keys);
                 }
                 let candidates = 0..edit.nodes().len();
-                apply_overrides(edit, candidates);
+                apply_overrides(edit, candidates)?;
                 Ok(())
             })
-            .unwrap_or_else(|error| panic!("{what}: {error}"));
+            .map_err(|error| format!("{what}: {error}"))?;
+        Ok(())
     }
 }
 
@@ -131,23 +139,34 @@ struct Materialization<'a> {
 }
 
 impl Materialization<'_> {
-    fn structure(&mut self, loader: &mut Loader, scene: &mut Scene, marker: &Node) {
+    fn structure(
+        &mut self,
+        loader: &mut Loader,
+        scene: &mut Scene,
+        marker: &Node,
+    ) -> Result<(), String> {
         for addition in marker.additions() {
-            self.addition(loader, scene, marker, addition);
+            self.addition(loader, scene, marker, addition)?;
         }
+        Ok(())
     }
 
-    fn addition(&mut self, loader: &mut Loader, scene: &mut Scene, marker: &Node, addition: &Node) {
+    fn addition(
+        &mut self,
+        loader: &mut Loader,
+        scene: &mut Scene,
+        marker: &Node,
+        addition: &Node,
+    ) -> Result<(), String> {
         let prefix = format!("{}_", marker.id);
         let mut held = addition.clone();
         held.id = format!("{prefix}{}", addition.id);
-        assert!(
-            self.ids.insert(held.id.clone()),
-            "{} materializes the addition {} of {}, which the document holds",
-            self.what,
-            addition.id,
-            marker.id,
-        );
+        if !self.ids.insert(held.id.clone()) {
+            return Err(format!(
+                "{} materializes the addition {} of {}, which the document holds",
+                self.what, addition.id, marker.id,
+            ));
+        }
         held.parent = Some(match &addition.parent {
             Some(parent) => format!("{prefix}{parent}"),
             None => marker.id.clone(),
@@ -156,11 +175,11 @@ impl Materialization<'_> {
         let prefab = held.prefab.clone();
         self.nodes.push(held.clone());
         let Some(path) = prefab else {
-            return;
+            return Ok(());
         };
         let (template, key) = loader
             .load(&path, self.what)
-            .unwrap_or_else(|error| panic!("{}: {error}", self.what));
+            .map_err(|error| format!("{}: {error}", self.what))?;
         let keys = owners(&template, &key);
         let marker_id = marker.id.clone();
         scene
@@ -177,16 +196,22 @@ impl Materialization<'_> {
                 }
                 Ok(())
             })
-            .unwrap_or_else(|error| panic!("{}: {error}", self.what));
+            .map_err(|error| format!("{}: {error}", self.what))?;
         let generated = instantiate(&held, &template, &mut self.ids)
-            .unwrap_or_else(|error| panic!("{}: {error}", self.what));
+            .map_err(|error| format!("{}: {error}", self.what))?;
         self.nodes.extend(generated);
+        Ok(())
     }
 }
 
-fn apply_removals(scene: &mut Scene, marker: &Node, nodes: &mut Vec<Node>, what: &str) {
+fn apply_removals(
+    scene: &mut Scene,
+    marker: &Node,
+    nodes: &mut Vec<Node>,
+    what: &str,
+) -> Result<(), String> {
     if marker.removals().is_empty() {
-        return;
+        return Ok(());
     }
     let prefix = format!("{}_", marker.id);
     let parent = nodes
@@ -219,7 +244,7 @@ fn apply_removals(scene: &mut Scene, marker: &Node, nodes: &mut Vec<Node>, what:
         }
     }
     if removed.is_empty() {
-        return;
+        return Ok(());
     }
     let mut kept = Vec::new();
     for removal in marker.removals() {
@@ -240,17 +265,18 @@ fn apply_removals(scene: &mut Scene, marker: &Node, nodes: &mut Vec<Node>, what:
             }
             Ok(())
         })
-        .unwrap_or_else(|error| panic!("{what}: {error}"));
+        .map_err(|error| format!("{what}: {error}"))?;
     let at = nodes
         .iter()
         .position(|node| node.id == marker.id)
-        .unwrap_or_else(|| panic!("{what} removes the prefab instance {}", marker.id));
+        .ok_or_else(|| format!("{what} removes the prefab instance {}", marker.id))?;
     let held = &mut nodes[at];
     held.removals = kept;
     held.additions
         .retain(|addition| !ids.contains(&format!("{prefix}{}", addition.id)));
     held.overrides
         .retain(|entry| !ids.contains(&format!("{prefix}{}", entry.node)));
+    Ok(())
 }
 
 fn repeated_overrides(marker: &Node, template: &Scene) -> Vec<(String, String)> {
@@ -277,7 +303,10 @@ fn descendant(parent: &HashMap<&str, &str>, of: &str, ancestor: &str) -> bool {
     false
 }
 
-pub(crate) fn apply_overrides(edit: &mut Edit<'_>, candidates: impl IntoIterator<Item = usize>) {
+pub(crate) fn apply_overrides(
+    edit: &mut Edit<'_>,
+    candidates: impl IntoIterator<Item = usize>,
+) -> Result<(), String> {
     let mut markers = candidates
         .into_iter()
         .filter(|index| {
@@ -293,21 +322,22 @@ pub(crate) fn apply_overrides(edit: &mut Edit<'_>, candidates: impl IntoIterator
         let overrides = edit.nodes()[marker].overrides().to_vec();
         for entry in overrides {
             let id = format!("{marker_id}_{}", entry.node);
-            let index = edit.node_index(&id).unwrap_or_else(|| {
-                panic!(
+            let index = edit.node_index(&id).ok_or_else(|| {
+                format!(
                     "the prefab instance {marker_id} overrides {} of {}, which it does not hold",
                     entry.path, entry.node,
                 )
-            });
+            })?;
             edit.apply_override(index, &entry.path, &entry.value)
-                .unwrap_or_else(|error| {
-                    panic!(
+                .map_err(|error| {
+                    format!(
                         "the prefab instance {marker_id} overrides {} of {}: {error}",
                         entry.path, entry.node,
                     )
-                });
+                })?;
         }
     }
+    Ok(())
 }
 
 fn depth(scene: &Scene, index: usize) -> usize {
@@ -562,10 +592,13 @@ fn import_entry<A: Asset>(edit: &mut Edit<'_>, import: Import<'_>, entry: A) -> 
         .unwrap_or_else(|| key.to_path_buf());
     match edit.asset_owner(kind, &id).map(Path::to_path_buf) {
         Some(held) if held == owner => {
-            let at = A::held(edit)
-                .iter()
-                .position(|held| held.id() == id)
-                .expect("an imported asset keeps the document entry it names");
+            let Some(at) = A::held(edit).iter().position(|held| held.id() == id) else {
+                return Err(format!(
+                    "the {} {id} of the prefab {} holds no document entry",
+                    kind.name(),
+                    owner.display(),
+                ));
+            };
             edit.set_asset(at, entry);
             edit.change_owner(kind, &id, |record| record.scope = scope.map(String::from));
         }
@@ -592,14 +625,4 @@ fn import_entry<A: Asset>(edit: &mut Edit<'_>, import: Import<'_>, entry: A) -> 
         }
     }
     Ok(())
-}
-
-pub(crate) fn describe(payload: &(dyn std::any::Any + Send)) -> String {
-    if let Some(text) = payload.downcast_ref::<&str>() {
-        return String::from(*text);
-    }
-    if let Some(text) = payload.downcast_ref::<String>() {
-        return text.clone();
-    }
-    String::from("an unknown panic")
 }

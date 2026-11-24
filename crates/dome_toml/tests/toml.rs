@@ -5,9 +5,23 @@ const DOCUMENT: &str =
 
 #[test]
 fn a_document_writes_back_the_text_it_parses() {
-    let parsed = Toml::parse(DOCUMENT, "the test");
+    let parsed = Toml::parse(DOCUMENT, "the test").expect("the test document parses");
     assert_eq!(parsed.write(), DOCUMENT);
-    assert_eq!(Toml::parse(&parsed.write(), "the test"), parsed);
-    assert_eq!(Toml::from(0.72f32).f32_value("the test"), 0.72);
-    assert_eq!(parsed.object_fields("the test").len(), 4);
+    assert_eq!(
+        Toml::parse(&parsed.write(), "the test").expect("the written document parses"),
+        parsed,
+    );
+    assert_eq!(
+        Toml::from(0.72f32)
+            .f32_value("the test")
+            .expect("a float reads"),
+        0.72,
+    );
+    assert_eq!(
+        parsed
+            .object_fields("the test")
+            .expect("a document holds a table")
+            .len(),
+        4,
+    );
 }

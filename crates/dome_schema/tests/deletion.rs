@@ -137,7 +137,7 @@ fn deleting_a_prefab_instance_prunes_the_assets_it_owns() {
     fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
     fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), INSTANCE).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema()).expect("the scene loads");
     assert_eq!(
         scene.meshes().len(),
         1,
@@ -182,7 +182,8 @@ fn deleting_a_prefab_instance_prunes_the_assets_it_owns() {
 
 #[test]
 fn a_refused_deletion_leaves_the_scene_as_it_stood() {
-    let mut scene = Scene::parse(REFERENCED, ".", "a referenced scene", schema());
+    let mut scene = Scene::parse(REFERENCED, ".", "a referenced scene", schema())
+        .expect("a referenced scene parses");
     let before = scene.write().expect("a scene writes its text");
     assert!(
         edit(&mut scene, |edit| edit
@@ -206,7 +207,8 @@ fn a_refused_deletion_leaves_the_scene_as_it_stood() {
         "a deletion that stands writes its own scene",
     );
 
-    let mut rigged = Scene::parse(ARMATURE, ".", "an armature scene", schema());
+    let mut rigged = Scene::parse(ARMATURE, ".", "an armature scene", schema())
+        .expect("an armature scene parses");
     let stood = rigged.write().expect("a rigged scene writes its text");
     assert!(
         edit(&mut rigged, |edit| edit

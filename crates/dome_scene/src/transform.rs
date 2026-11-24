@@ -103,33 +103,33 @@ pub fn observed(transform: &Transform) -> Toml {
     ])
 }
 
-pub fn parse(value: Toml, what: &str) -> Transform {
-    let mut fields = Fields::of(value, what);
+pub fn parse(value: Toml, what: &str) -> Result<Transform, String> {
+    let mut fields = Fields::of(value, what)?;
     let translation = Vec3::from_array(floats::<3>(
-        fields.need("translation"),
+        fields.need("translation")?,
         &format!("the translation of {what}"),
-    ));
-    let [x, y, z, w] = floats(fields.need("rotation"), &format!("the rotation of {what}"));
+    )?);
+    let [x, y, z, w] = floats(fields.need("rotation")?, &format!("the rotation of {what}"))?;
     let scale = Vec3::from_array(floats::<3>(
-        fields.need("scale"),
+        fields.need("scale")?,
         &format!("the scale of {what}"),
-    ));
-    fields.done();
-    assert!(
-        scale.x != 0.0 && scale.y != 0.0 && scale.z != 0.0,
-        "{what} holds the scale {scale:?}",
-    );
+    )?);
+    fields.done()?;
+    if scale.x == 0.0 || scale.y == 0.0 || scale.z == 0.0 {
+        return Err(format!("{what} holds the scale {scale:?}"));
+    }
     let rotation = Quat::new(x, y, z, w);
-    assert!(
-        (rotation.dot(rotation) - 1.0).abs() < 1e-3,
-        "{what} holds the rotation {rotation:?} of length {}",
-        rotation.dot(rotation).sqrt(),
-    );
-    Transform {
+    if (rotation.dot(rotation) - 1.0).abs() >= 1e-3 {
+        return Err(format!(
+            "{what} holds the rotation {rotation:?} of length {}",
+            rotation.dot(rotation).sqrt(),
+        ));
+    }
+    Ok(Transform {
         translation,
         rotation,
         scale,
-    }
+    })
 }
 
 pub fn validate(transform: &Transform) -> Result<(), String> {

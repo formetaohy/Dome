@@ -147,21 +147,21 @@ impl SceneComponent for MeshRef {
         })
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
-        let mesh = MeshId::parse(fields.need("mesh"), &format!("the mesh of {what}"));
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
+        let mesh = MeshId::parse(fields.need("mesh")?, &format!("the mesh of {what}"))?;
         let material =
-            MaterialId::parse(fields.need("material"), &format!("the material of {what}"));
+            MaterialId::parse(fields.need("material")?, &format!("the material of {what}"))?;
         let tint = Vec3::from_array(floats::<3>(
-            fields.need("tint"),
+            fields.need("tint")?,
             &format!("the tint of {what}"),
-        ));
-        fields.done();
-        Self {
+        )?);
+        fields.done()?;
+        Ok(Self {
             mesh,
             material,
             tint,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

@@ -215,35 +215,35 @@ impl SceneComponent for AudioCompressorRef {
         Ok(Self::default())
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
         let enabled = fields
-            .need("enabled")
-            .boolean_value(&format!("the enabled state of {what}"));
+            .need("enabled")?
+            .boolean_value(&format!("the enabled state of {what}"))?;
         let threshold_db = fields
-            .need("threshold_db")
-            .f32_value(&format!("the threshold of {what}"));
+            .need("threshold_db")?
+            .f32_value(&format!("the threshold of {what}"))?;
         let ratio = fields
-            .need("ratio")
-            .f32_value(&format!("the ratio of {what}"));
+            .need("ratio")?
+            .f32_value(&format!("the ratio of {what}"))?;
         let attack_ms = fields
-            .need("attack_ms")
-            .f32_value(&format!("the attack of {what}"));
+            .need("attack_ms")?
+            .f32_value(&format!("the attack of {what}"))?;
         let release_ms = fields
-            .need("release_ms")
-            .f32_value(&format!("the release of {what}"));
+            .need("release_ms")?
+            .f32_value(&format!("the release of {what}"))?;
         let makeup_db = fields
-            .need("makeup_db")
-            .f32_value(&format!("the makeup of {what}"));
-        fields.done();
-        Self {
+            .need("makeup_db")?
+            .f32_value(&format!("the makeup of {what}"))?;
+        fields.done()?;
+        Ok(Self {
             enabled,
             threshold_db,
             ratio,
             attack_ms,
             release_ms,
             makeup_db,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

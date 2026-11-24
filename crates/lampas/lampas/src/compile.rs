@@ -1,9 +1,47 @@
 use crate::host::Hosts;
 use lampas_bytecode::Module;
 use lampas_syntax::{Diagnostic, Program, Sources};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
-const EXTENSION: &str = "lampas";
+const EXTENSION: &str = "amp";
+
+pub enum ScriptError {
+    Read {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+    Check(Diagnostic),
+}
+
+impl fmt::Display for ScriptError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read { path, error } => {
+                write!(
+                    formatter,
+                    "the lampas script {} reads: {error}",
+                    path.display()
+                )
+            }
+            Self::Check(diagnostic) => diagnostic.fmt(formatter),
+        }
+    }
+}
+
+impl fmt::Debug for ScriptError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, formatter)
+    }
+}
+
+impl std::error::Error for ScriptError {}
+
+impl From<Diagnostic> for ScriptError {
+    fn from(diagnostic: Diagnostic) -> Self {
+        Self::Check(diagnostic)
+    }
+}
 
 pub fn compile(name: &str, source: &str, hosts: &Hosts) -> Result<Module, Diagnostic> {
     let mut sources = Sources::new();
@@ -11,11 +49,13 @@ pub fn compile(name: &str, source: &str, hosts: &Hosts) -> Result<Module, Diagno
     assemble(sources, hosts)
 }
 
-pub fn compile_folder(root: &Path, hosts: &Hosts) -> Result<Module, Diagnostic> {
+pub fn compile_folder(root: &Path, hosts: &Hosts) -> Result<Module, ScriptError> {
     let mut sources = Sources::new();
-    for path in files(root) {
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("the lampas script {} reads: {error}", path.display()));
+    for path in files(root)? {
+        let text = std::fs::read_to_string(&path).map_err(|error| ScriptError::Read {
+            path: path.clone(),
+            error,
+        })?;
         let name = path
             .strip_prefix(root)
             .unwrap_or(&path)
@@ -23,7 +63,7 @@ pub fn compile_folder(root: &Path, hosts: &Hosts) -> Result<Module, Diagnostic> 
             .replace('\\', "/");
         sources.add(name, text);
     }
-    assemble(sources, hosts)
+    assemble(sources, hosts).map_err(ScriptError::Check)
 }
 
 fn assemble(sources: Sources, hosts: &Hosts) -> Result<Module, Diagnostic> {
@@ -32,26 +72,18 @@ fn assemble(sources: Sources, hosts: &Hosts) -> Result<Module, Diagnostic> {
     lampas_compiler::compile(&program, &checked)
 }
 
-fn files(root: &Path) -> Vec<PathBuf> {
+fn files(root: &Path) -> Result<Vec<PathBuf>, ScriptError> {
+    let read = |error: std::io::Error| ScriptError::Read {
+        path: root.to_path_buf(),
+        error,
+    };
     let mut files = std::fs::read_dir(root)
-        .unwrap_or_else(|error| {
-            panic!(
-                "the lampas scripts folder {} reads: {error}",
-                root.display()
-            )
-        })
-        .map(|entry| {
-            entry
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "the lampas scripts folder {} reads: {error}",
-                        root.display(),
-                    )
-                })
-                .path()
-        })
+        .map_err(read)?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(read))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|path| path.is_file() && path.extension().is_some_and(|kind| kind == EXTENSION))
         .collect::<Vec<_>>();
     files.sort();
-    files
+    Ok(files)
 }

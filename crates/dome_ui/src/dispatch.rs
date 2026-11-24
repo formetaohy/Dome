@@ -146,7 +146,13 @@ impl<A: Clone> Ui<A> {
                         self.tree.nodes[press].content,
                         Content::Segment(_) | Content::Tabs(_)
                     );
-                let clicked = self.drag.is_none() && released == Some(press) && !self.edit_drag;
+                let clicked = released == Some(press)
+                    && !self.edit_drag
+                    && (!dragged
+                        || matches!(
+                            self.tree.nodes[press].interaction,
+                            Interaction::Press(_) | Interaction::Field { .. }
+                        ));
                 if dragged && switch {
                     self.commit_toggle(press);
                 } else if segment {
@@ -716,6 +722,7 @@ impl<A: Clone> Ui<A> {
         self.focus = Some(node);
         self.focus_visible = false;
         self.input.clear_preedit();
+        self.preedit = None;
         self.touch(node);
     }
 
@@ -773,6 +780,7 @@ impl<A: Clone> Ui<A> {
         self.edit_drag = clicks == 1;
         self.focus = Some(node);
         self.focus_visible = false;
+        self.tree.nodes[node].paint_dirty = true;
     }
 
     fn edit_drag_to(&mut self, pointer: Vec2) {
@@ -803,6 +811,7 @@ impl<A: Clone> Ui<A> {
             &mut self.text,
         );
         edit.place(caret, true, time);
+        self.tree.nodes[node].paint_dirty = true;
     }
 
     fn field_keys(&mut self) {
@@ -817,12 +826,13 @@ impl<A: Clone> Ui<A> {
                 ..
             }
         );
-        let finish = {
+        let (before, finish) = {
             let Some(edit) = self.tree.nodes[node].runtime.edit.as_mut() else {
                 self.edit = None;
                 return;
             };
-            match edit.poll(&self.input, self.clipboard.as_mut(), self.time) {
+            let before = edit.version();
+            let finish = match edit.poll(&self.input, self.clipboard.as_mut(), self.time) {
                 Some(Outcome::Commit) => Some(Finish::Submit),
                 Some(Outcome::Advance) => Some(Finish::Write),
                 Some(Outcome::Cancel) => Some(Finish::Cancel),
@@ -837,9 +847,20 @@ impl<A: Clone> Ui<A> {
                         None
                     }
                 }
-            }
+            };
+            (before, finish)
         };
+        if self
+            .tree
+            .nodes
+            .get(node)
+            .and_then(|held| held.runtime.edit.as_ref())
+            .is_some_and(|edit| edit.version() != before)
+        {
+            self.tree.nodes[node].paint_dirty = true;
+        }
         let Some(finish) = finish else {
+            self.schedule_caret(node);
             return;
         };
         self.finish_edit(finish);
@@ -857,6 +878,24 @@ impl<A: Clone> Ui<A> {
         }
     }
 
+    fn schedule_caret(&mut self, node: NodeId) {
+        let Some(edit) = self
+            .tree
+            .nodes
+            .get(node)
+            .and_then(|held| held.runtime.edit.as_ref())
+        else {
+            return;
+        };
+        let lit = edit.caret_visible(self.time);
+        let remaining = edit.blink_remaining(self.time);
+        if lit != self.caret_lit {
+            self.caret_lit = lit;
+            self.tree.nodes[node].paint_dirty = true;
+        }
+        self.wake(remaining);
+    }
+
     pub fn commit(&mut self) -> Vec<A> {
         self.finish_edit(Finish::Write);
         std::mem::take(&mut self.actions)
@@ -866,14 +905,17 @@ impl<A: Clone> Ui<A> {
         let Some(node) = self.edit else {
             return;
         };
+        let preedit = self.preedit.take().unwrap_or_default();
         let text = self.tree.nodes[node]
             .runtime
             .edit
             .take()
-            .map_or_else(String::new, |edit| edit.text().to_string());
+            .map_or_else(String::new, |edit| match finish {
+                Finish::Cancel => edit.text().to_string(),
+                Finish::Submit | Finish::Write => edit.composed(&preedit),
+            });
         self.edit = None;
         self.input.clear_preedit();
-        self.preedit = None;
         self.touch(node);
         let current = match &self.tree.nodes[node].content {
             Content::DragValue(drag) => Some(drag.value),

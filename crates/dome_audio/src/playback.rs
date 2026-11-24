@@ -126,7 +126,9 @@ impl Playback {
         next: State,
         position: u64,
     ) {
-        let slot = &self.slots[slot];
+        let Some(slot) = self.slots.get(slot) else {
+            return;
+        };
         if slot.packed.load(Ordering::Acquire) >> 32 == u64::from(token) {
             slot.position.store(position, Ordering::Relaxed);
         }

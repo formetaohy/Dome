@@ -198,7 +198,8 @@ fn a_headless_run_renders_its_scene() {
         })
         .expect("a captured headless run holds its frame");
 
-    let image = Image::decode(&png, "the captured headless frame");
+    let image = Image::decode(&png, "the captured headless frame")
+        .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!((image.width(), image.height()), (64, 64));
     assert!(
         image

@@ -111,7 +111,8 @@ impl Assets for Mock {
 
 #[test]
 fn an_authored_audio_source_installs_and_edits() {
-    let mut scene = Scene::parse(SCENE, ".", "the audio scene", schema());
+    let mut scene =
+        Scene::parse(SCENE, ".", "the audio scene", schema()).expect("the audio scene parses");
     let mut world = World::new();
     let entities = install_scene(&scene, &mut world, &Mock);
     let speaker = entities[0];
@@ -299,12 +300,14 @@ fn an_authored_audio_source_installs_and_edits() {
 
 #[test]
 fn a_scene_that_differs_only_in_sound_is_not_equal() {
-    let scene = Scene::parse(SCENE, ".", "the audio scene", schema());
+    let scene =
+        Scene::parse(SCENE, ".", "the audio scene", schema()).expect("the audio scene parses");
     let streamed = SCENE.replace(
         "sounds = [{ id = \"tone\", path = \"assets/tone.wav\" }]",
         "sounds = [{ id = \"tone\", path = \"assets/tone.wav\", stream = true }]",
     );
-    let other = Scene::parse(&streamed, ".", "the streamed audio scene", schema());
+    let other = Scene::parse(&streamed, ".", "the streamed audio scene", schema())
+        .expect("the streamed audio scene parses");
     assert!(!scene.sounds()[0].stream);
     assert!(other.sounds()[0].stream);
     assert_ne!(
@@ -312,7 +315,8 @@ fn a_scene_that_differs_only_in_sound_is_not_equal() {
         "a scene differs from the scene of another sound alone",
     );
     assert_eq!(
-        Scene::parse(SCENE, ".", "the same audio scene", schema()),
+        Scene::parse(SCENE, ".", "the same audio scene", schema())
+            .expect("the same audio scene parses"),
         scene,
         "a scene equals the scene of its own sounds",
     );

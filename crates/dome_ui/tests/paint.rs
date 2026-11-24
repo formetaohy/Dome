@@ -3,7 +3,9 @@ use dome_gpu::{
     Texture, TextureFormat, TextureUsages,
 };
 use dome_math::Vec2;
-use dome_ui::{Color, Corners, Element, Key, Length, Level, TextStyle, Ui, canvas};
+use dome_ui::{
+    Color, Corners, Edges, Element, Event, Key, Length, Level, Surface, TextStyle, Ui, canvas,
+};
 
 const SIDE: u32 = 160;
 const BACKGROUND: Color = Color::rgb(0.1, 0.1, 0.1);
@@ -117,6 +119,58 @@ fn a_user_interface_paints_its_surfaces_glyphs_and_scene() {
 
 fn to_byte(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+#[test]
+fn a_focused_field_keeps_blinking_and_repaints_what_it_types() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device focuses a field: {error}"));
+    let device = context.device();
+    let queue = context.queue();
+    let format = TextureFormat::Rgba8Unorm;
+    let mut ui: Ui<String> = Ui::new(device, &queue, format);
+    let style = TextStyle::new(ui.theme().font(Level::Body), Color::WHITE);
+    let size = Vec2::splat(SIDE as f32);
+
+    let frame = |ui: &mut Ui<String>, time: f64| {
+        ui.update(size, 1.0, time);
+        let element = Element::column()
+            .key(Key::new("root"))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Edges::all(8.0))
+            .background(Surface::fill(BACKGROUND))
+            .children([dome_ui::widget::text_field("", style, 140.0, false)
+                .key(Key::new("field"))
+                .editing(true)
+                .on_commit(|next| String::from(next))]);
+        ui.present(element);
+        ui.edit_caret().is_some()
+    };
+
+    let mut painted = false;
+    for step in 0..=10 {
+        painted = frame(&mut ui, f64::from(step) * 0.2);
+    }
+    assert!(
+        !painted,
+        "a field at rest repaints nothing until its caret flips",
+    );
+    assert!(
+        ui.finish().is_some(),
+        "a focused field schedules the frame its caret flips in",
+    );
+
+    ui.input_mut().push(Event::Text(String::from("W")));
+    assert!(
+        frame(&mut ui, 2.02),
+        "a keystroke repaints the field it types into",
+    );
+    assert_eq!(
+        ui.commit().pop(),
+        Some(String::from("W")),
+        "the keystroke reaches the text the field commits",
+    );
 }
 
 #[test]

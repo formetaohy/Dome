@@ -2,11 +2,13 @@ use dome_scene::{Delta, Scene};
 use std::collections::VecDeque;
 
 const DEPTH: usize = 128;
+const BYTES: usize = 4 << 20;
 
 #[derive(Default)]
 pub(crate) struct History {
-    undo: VecDeque<Delta>,
-    redo: Vec<Delta>,
+    undo: VecDeque<(Delta, usize)>,
+    redo: Vec<(Delta, usize)>,
+    bytes: usize,
 }
 
 impl History {
@@ -21,34 +23,43 @@ impl History {
     pub(crate) fn reset(&mut self) {
         self.undo.clear();
         self.redo.clear();
+        self.bytes = 0;
     }
 
-    pub(crate) fn record(&mut self, delta: Delta) {
+    pub(crate) fn record(&mut self, delta: Delta, scene: &Scene) {
         if delta.is_empty() {
             return;
         }
-        self.redo.clear();
-        self.undo.push_back(delta);
-        while self.undo.len() > DEPTH {
-            self.undo.pop_front();
+        let weight = delta.weight(scene.schema());
+        for (_, held) in self.redo.drain(..) {
+            self.bytes = self.bytes.saturating_sub(held);
+        }
+        self.undo.push_back((delta, weight));
+        self.bytes += weight;
+        while self.undo.len() > DEPTH || self.bytes > BYTES {
+            let Some((_, held)) = self.undo.pop_front() else {
+                self.bytes = 0;
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(held);
         }
     }
 
     pub(crate) fn undo(&mut self, scene: &mut Scene) -> bool {
-        let Some(delta) = self.undo.pop_back() else {
+        let Some((delta, weight)) = self.undo.pop_back() else {
             return false;
         };
         delta.revert(scene);
-        self.redo.push(delta);
+        self.redo.push((delta, weight));
         true
     }
 
     pub(crate) fn redo(&mut self, scene: &mut Scene) -> bool {
-        let Some(delta) = self.redo.pop() else {
+        let Some((delta, weight)) = self.redo.pop() else {
             return false;
         };
         delta.apply(scene);
-        self.undo.push_back(delta);
+        self.undo.push_back((delta, weight));
         true
     }
 }
@@ -66,7 +77,7 @@ mod tests {
             let (_, delta) = scene
                 .edit(|edit| edit.add_node(&format!("node{index}")))
                 .expect("a scene adds its node");
-            history.record(delta);
+            history.record(delta, &scene);
         }
         let mut undone = 0;
         while history.undo(&mut scene) {

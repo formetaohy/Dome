@@ -3,21 +3,39 @@ use dome_asset::Change;
 use dome_ecs::{Entity, LocalTransform, World};
 use dome_math::Quat;
 use dome_schema::SceneNode;
-use lampas::{Hosts, Scripts, Type, Value};
+use lampas::{Hosts, Scripts, Trap, Type, Value};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
-pub(crate) fn install(app: &mut App, root: &Path) {
-    let scripts = Rc::new(RefCell::new(load(root)));
+pub(crate) fn install(app: &mut App, root: &Path) -> Result<(), String> {
+    let scripts = Rc::new(RefCell::new(load(root)?));
+    let reported = Rc::new(RefCell::new(None));
     let boot = Rc::clone(&scripts);
-    app.add_startup(move |world: &mut World, _| boot.borrow_mut().boot(world));
+    let boot_report = Rc::clone(&reported);
+    let boot_root = root.to_path_buf();
+    app.add_startup(move |world: &mut World, _| {
+        report(&boot_report, &boot_root, boot.borrow_mut().boot(world));
+    });
     let update = Rc::clone(&scripts);
-    app.add_system(move |world: &mut World| update.borrow_mut().update(world));
+    let update_report = Rc::clone(&reported);
+    let update_root = root.to_path_buf();
+    app.add_system(move |world: &mut World| {
+        report(
+            &update_report,
+            &update_root,
+            update.borrow_mut().update(world),
+        );
+    });
     let fixed = Rc::clone(&scripts);
-    app.add_fixed(move |world: &mut World| fixed.borrow_mut().fixed(world));
+    let fixed_report = Rc::clone(&reported);
+    let fixed_root = root.to_path_buf();
+    app.add_fixed(move |world: &mut World| {
+        report(&fixed_report, &fixed_root, fixed.borrow_mut().fixed(world));
+    });
     let reload = Rc::clone(&scripts);
+    let reload_report = Rc::clone(&reported);
     let folder = root.to_path_buf();
     app.add_reload(move |world: &mut World, change: Change| {
         if !change.script {
@@ -25,7 +43,9 @@ pub(crate) fn install(app: &mut App, root: &Path) {
         }
         match Scripts::load(&folder, hosts()) {
             Ok(mut fresh) => {
-                fresh.boot(world);
+                reload.borrow_mut().reset(world);
+                *reload_report.borrow_mut() = None;
+                report(&reload_report, &folder, fresh.boot(world));
                 *reload.borrow_mut() = fresh;
             }
             Err(error) => eprintln!(
@@ -34,11 +54,24 @@ pub(crate) fn install(app: &mut App, root: &Path) {
             ),
         }
     });
+    Ok(())
 }
 
-fn load(root: &Path) -> Scripts {
+fn report(reported: &RefCell<Option<String>>, root: &Path, outcome: Result<(), Trap>) {
+    let Err(trap) = outcome else {
+        return;
+    };
+    let message = format!("[lampas {}] {trap}", root.display());
+    if reported.borrow().as_deref() == Some(message.as_str()) {
+        return;
+    }
+    eprintln!("{message}");
+    *reported.borrow_mut() = Some(message);
+}
+
+fn load(root: &Path) -> Result<Scripts, String> {
     Scripts::load(root, hosts())
-        .unwrap_or_else(|error| panic!("the lampas scripts of {} check: {error}", root.display()))
+        .map_err(|error| format!("the lampas scripts of {} check: {error}", root.display()))
 }
 
 fn hosts() -> Hosts {
@@ -116,7 +149,7 @@ mod tests {
     #[test]
     fn the_starter_script_checks_against_the_engine_hosts() {
         let hosts = super::hosts();
-        lampas::compile("main.lampas", dome_project::STARTER_SCRIPT, &hosts)
+        lampas::compile("main.amp", dome_project::STARTER_SCRIPT, &hosts)
             .expect("the starter script checks");
     }
 }

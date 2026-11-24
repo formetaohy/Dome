@@ -199,30 +199,30 @@ impl SceneComponent for AudioFilterRef {
         Ok(Self::default())
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
         let enabled = fields
-            .need("enabled")
-            .boolean_value(&format!("the enabled state of {what}"));
+            .need("enabled")?
+            .boolean_value(&format!("the enabled state of {what}"))?;
         let kind = fields
-            .need("kind")
-            .string_value(&format!("the kind of {what}"));
-        let kind = FilterKind::of(&kind).unwrap_or_else(|| panic!("{what} holds the kind {kind}"));
+            .need("kind")?
+            .string_value(&format!("the kind of {what}"))?;
+        let kind = FilterKind::of(&kind).ok_or_else(|| format!("{what} holds the kind {kind}"))?;
         let frequency = fields
-            .need("frequency")
-            .f32_value(&format!("the frequency of {what}"));
-        let q = fields.need("q").f32_value(&format!("the q of {what}"));
+            .need("frequency")?
+            .f32_value(&format!("the frequency of {what}"))?;
+        let q = fields.need("q")?.f32_value(&format!("the q of {what}"))?;
         let gain_db = fields
-            .need("gain_db")
-            .f32_value(&format!("the gain of {what}"));
-        fields.done();
-        Self {
+            .need("gain_db")?
+            .f32_value(&format!("the gain of {what}"))?;
+        fields.done()?;
+        Ok(Self {
             enabled,
             kind,
             frequency,
             q,
             gain_db,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

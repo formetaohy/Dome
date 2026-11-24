@@ -38,11 +38,12 @@ use dome_scene::{Component, ComponentSpec, Schema};
 use dome_toml::Toml;
 
 type WorldWriter = fn(&mut World, Entity, &str, Option<Axis>, &Value) -> Result<(), String>;
+type ComponentParser = fn(Toml, &str) -> Result<Box<dyn Component>, String>;
 
 pub(crate) struct ComponentRegistration {
     pub(crate) spec: &'static ComponentSpec,
     create: fn(&Scene) -> Result<Box<dyn Component>, String>,
-    parse: fn(Toml, &str) -> Box<dyn Component>,
+    parse: ComponentParser,
     observe: fn(&World, Entity) -> Option<Box<dyn Component>>,
     remove: fn(&mut World, Entity),
     write_world: WorldWriter,
@@ -171,10 +172,10 @@ impl Schema for Registry {
             .map(|registration| registration.spec)
     }
 
-    fn parse(&self, name: &str, value: Toml, what: &str) -> Box<dyn Component> {
+    fn parse(&self, name: &str, value: Toml, what: &str) -> Result<Box<dyn Component>, String> {
         let registration = self
             .registration(name)
-            .unwrap_or_else(|| panic!("{what} holds the unknown component {name}"));
+            .ok_or_else(|| format!("{what} holds the unknown component {name}"))?;
         (registration.parse)(value, what)
     }
 
@@ -231,8 +232,8 @@ fn create<T: SceneComponent>(scene: &Scene) -> Result<Box<dyn Component>, String
     T::create(scene).map(|component| Box::new(Erased(component)) as Box<dyn Component>)
 }
 
-fn parse<T: SceneComponent>(value: Toml, what: &str) -> Box<dyn Component> {
-    Box::new(Erased(T::from_toml(value, what)))
+fn parse<T: SceneComponent>(value: Toml, what: &str) -> Result<Box<dyn Component>, String> {
+    Ok(Box::new(Erased(T::from_toml(value, what)?)))
 }
 
 fn observe<T: SceneComponent>(world: &World, entity: Entity) -> Option<Box<dyn Component>> {

@@ -1,6 +1,8 @@
 mod header;
 mod scanline;
 
+use crate::limit::DecodeLimit;
+
 pub struct Radiance {
     width: u32,
     height: u32,
@@ -8,15 +10,11 @@ pub struct Radiance {
 }
 
 impl Radiance {
-    pub fn decode(bytes: &[u8], what: &str) -> Self {
-        let (exposure, width, height, body) = header::header(bytes, what);
-        let texels = scanline::decode(body, width, height, what);
-        let scale = 1.0 / exposure as f32;
-        let mut rgb = Vec::with_capacity(texels.len() * 3);
-        for texel in texels {
-            rgb.extend_from_slice(&[texel[0] * scale, texel[1] * scale, texel[2] * scale]);
-        }
-        Self { width, height, rgb }
+    pub fn decode(bytes: &[u8], what: &str) -> Result<Self, String> {
+        let (exposure, width, height, body) = header::header(bytes, what)?;
+        let texels = DecodeLimit::DEFAULT.guard(width, height, what)?;
+        let rgb = scanline::decode(body, width, height, 1.0 / exposure as f32, texels, what)?;
+        Ok(Self { width, height, rgb })
     }
 
     pub fn width(&self) -> u32 {

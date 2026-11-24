@@ -124,10 +124,14 @@ impl Scene {
         self.revision = self.revision.wrapping_add(1);
     }
 
-    pub fn load(path: impl AsRef<Path>, root: impl Into<PathBuf>, schema: Arc<dyn Schema>) -> Self {
+    pub fn load(
+        path: impl AsRef<Path>,
+        root: impl Into<PathBuf>,
+        schema: Arc<dyn Schema>,
+    ) -> Result<Scene, String> {
         let path = path.as_ref();
         let text = fs::read_to_string(path)
-            .unwrap_or_else(|error| panic!("the scene {} reads no text: {error}", path.display()));
+            .map_err(|error| format!("the scene {} reads no text: {error}", path.display()))?;
         Self::parse(
             &text,
             root,
@@ -141,11 +145,8 @@ impl Scene {
         root: impl Into<PathBuf>,
         what: &str,
         schema: Arc<dyn Schema>,
-    ) -> Self {
-        let root = root.into();
-        crate::prefab::Loader::new(root.clone(), schema)
-            .document(text, what)
-            .unwrap_or_else(|error| panic!("{error}"))
+    ) -> Result<Scene, String> {
+        crate::prefab::Loader::new(root.into(), schema).document(text, what)
     }
 
     pub fn write(&self) -> Result<String, String> {
@@ -560,17 +561,13 @@ impl Scene {
         }
         unique(self.nodes.iter(), what, "node")?;
         for node in &self.nodes {
-            if node.prefab.is_some() {
+            if let Some(path) = node.prefab.as_deref() {
                 if node.components().next().is_some() {
                     return Err(format!(
                         "{what} holds the prefab instance {} holds its transform alone",
                         node.id,
                     ));
                 }
-                let path = node
-                    .prefab
-                    .as_deref()
-                    .expect("a prefab instance names its prefab");
                 if !Folder::Prefab.holds(path) {
                     return Err(format!(
                         "{what} holds the prefab instance {} holds the path {} outside the prefabs folder",

@@ -127,7 +127,8 @@ fade = 0.25
 
 #[test]
 fn a_self_transition_is_refused_while_the_graph_is_authored() {
-    let mut scene = Scene::parse(SCENE, ".", "the graph scene", schema());
+    let mut scene =
+        Scene::parse(SCENE, ".", "the graph scene", schema()).expect("the graph scene parses");
     let refused =
         scene.edit(|edit| edit.add_graph_transition("rig_graph", "idle", "idle", 0.0, 0.5));
     assert!(
@@ -145,19 +146,15 @@ fn a_self_transition_is_refused_while_the_graph_is_authored() {
         "a refused transition leaves the graph as it stood",
     );
     let self_transition = SCENE.replace("to = \"walk\"", "to = \"idle\"");
-    let parsed = std::panic::catch_unwind(|| {
-        Scene::parse(&self_transition, ".", "the self transition scene", schema())
-    });
-    let payload = parsed.expect_err("a self transition is refused while the graph parses");
-    let message = payload
-        .downcast_ref::<String>()
-        .expect("a refused transition names the state it leaves");
+    let message = Scene::parse(&self_transition, ".", "the self transition scene", schema())
+        .expect_err("a self transition is refused while the graph parses");
     assert!(message.contains("leaves idle for itself"), "{message}");
 }
 
 #[test]
 fn a_scene_resolves_its_skin_and_graph_into_runtime_components() {
-    let mut scene = Scene::parse(SCENE, ".", "the test scene", schema());
+    let mut scene =
+        Scene::parse(SCENE, ".", "the test scene", schema()).expect("the test scene parses");
     let mut world = World::new();
     let mut sync = SceneSync::new(schema());
     sync.sync(&scene, &mut world, &Mock, &Changed::none());
@@ -283,7 +280,8 @@ fn a_scene_resolves_its_skin_and_graph_into_runtime_components() {
         "an authored playback change replaces the machine an asset reload kept",
     );
     let written = scene.write().expect("a scene writes its text");
-    let parsed = Scene::parse(&written, ".", "the written scene", schema());
+    let parsed = Scene::parse(&written, ".", "the written scene", schema())
+        .expect("the written scene parses");
     assert_eq!(parsed, scene);
     assert!(parsed.graph("rig_graph").is_some());
     assert!(
@@ -295,7 +293,8 @@ fn a_scene_resolves_its_skin_and_graph_into_runtime_components() {
 
 #[test]
 fn a_graph_edited_in_the_document_reaches_the_machine_that_plays_it() {
-    let mut scene = Scene::parse(SCENE, ".", "the graph scene", schema());
+    let mut scene =
+        Scene::parse(SCENE, ".", "the graph scene", schema()).expect("the graph scene parses");
     let mut world = World::new();
     let mut sync = SceneSync::new(schema());
     sync.sync(&scene, &mut world, &Mock, &Changed::none());

@@ -1,9 +1,9 @@
 use std::ops::Range;
 use toml::Value;
 
-pub(crate) fn document(text: &str, what: &str) -> Value {
-    toml::from_str(text).unwrap_or_else(|error| {
-        panic!(
+pub(crate) fn document(text: &str, what: &str) -> Result<Value, String> {
+    toml::from_str(text).map_err(|error| {
+        format!(
             "{what} holds invalid TOML at {}: {}",
             place(text, error.span()),
             error.message(),

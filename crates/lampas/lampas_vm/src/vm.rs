@@ -1,4 +1,5 @@
 use crate::context::Context;
+use crate::trap::Trap;
 use crate::value::Value;
 use dome_ecs::Entity;
 use lampas_bytecode::Module;
@@ -15,6 +16,12 @@ pub(crate) struct Frame {
 
 pub(crate) enum Outcome {
     Returned(Value),
+    Stopped,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunOutcome {
+    Completed,
     Stopped,
 }
 
@@ -47,9 +54,9 @@ impl Vm {
         function: u32,
         arguments: &[Value],
         context: &mut dyn Context,
-    ) -> Value {
-        match self.invoke(module, function, arguments, context) {
-            Outcome::Returned(value) => value,
+    ) -> Result<Value, Trap> {
+        match self.invoke(module, function, arguments, context)? {
+            Outcome::Returned(value) => Ok(value),
             Outcome::Stopped => panic!(
                 "the lampas function {} stops",
                 module.functions[function as usize].name,
@@ -57,8 +64,13 @@ impl Vm {
         }
     }
 
-    pub fn boot(&mut self, module: &Module, function: u32, context: &mut dyn Context) {
-        self.call(module, function, &[], context);
+    pub fn boot(
+        &mut self,
+        module: &Module,
+        function: u32,
+        context: &mut dyn Context,
+    ) -> Result<(), Trap> {
+        self.call(module, function, &[], context).map(|_| ())
     }
 
     pub fn run(
@@ -68,7 +80,7 @@ impl Vm {
         entity: Option<Entity>,
         components: &[u32],
         context: &mut dyn Context,
-    ) -> bool {
+    ) -> Result<RunOutcome, Trap> {
         self.enter(module, function);
         if let Some(entity) = entity {
             self.stack.push(Value::Entity(entity));
@@ -77,9 +89,10 @@ impl Vm {
             self.stack.push(Value::Component(*row));
         }
         self.start(module, function);
-        match self.execute(module, context) {
-            Outcome::Returned(_) => true,
-            Outcome::Stopped => false,
+        let outcome = self.execute(module, context);
+        match self.clear_on_trap(outcome)? {
+            Outcome::Returned(_) => Ok(RunOutcome::Completed),
+            Outcome::Stopped => Ok(RunOutcome::Stopped),
         }
     }
 
@@ -89,11 +102,20 @@ impl Vm {
         function: u32,
         arguments: &[Value],
         context: &mut dyn Context,
-    ) -> Outcome {
+    ) -> Result<Outcome, Trap> {
         self.enter(module, function);
         self.stack.extend_from_slice(arguments);
         self.start(module, function);
-        self.execute(module, context)
+        let outcome = self.execute(module, context);
+        self.clear_on_trap(outcome)
+    }
+
+    fn clear_on_trap(&mut self, outcome: Result<Outcome, Trap>) -> Result<Outcome, Trap> {
+        if outcome.is_err() {
+            self.stack.clear();
+            self.frames.clear();
+        }
+        outcome
     }
 
     fn enter(&mut self, module: &Module, function: u32) {

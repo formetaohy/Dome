@@ -106,20 +106,20 @@ impl SceneComponent for DirectionalLight {
         Ok(Self::new(Vec3::ONE, std::f32::consts::PI, 100.0))
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
         let color = Vec3::from_array(floats::<3>(
-            fields.need("color"),
+            fields.need("color")?,
             &format!("the color of {what}"),
-        ));
+        )?);
         let intensity = fields
-            .need("intensity")
-            .f32_value(&format!("the intensity of {what}"));
+            .need("intensity")?
+            .f32_value(&format!("the intensity of {what}"))?;
         let shadow_distance = fields
-            .need("shadow_distance")
-            .f32_value(&format!("the shadow distance of {what}"));
-        fields.done();
-        Self::new(color, intensity, shadow_distance)
+            .need("shadow_distance")?
+            .f32_value(&format!("the shadow distance of {what}"))?;
+        fields.done()?;
+        Ok(Self::new(color, intensity, shadow_distance))
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

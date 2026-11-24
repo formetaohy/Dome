@@ -66,7 +66,7 @@ pub(crate) fn write(root: &Path) {
 }
 
 fn write_script(root: &Path) {
-    let path = root.join(Folder::Script.name()).join("main.lampas");
+    let path = root.join(Folder::Script.name()).join("main.amp");
     std::fs::write(&path, STARTER_SCRIPT).unwrap_or_else(|error| {
         panic!("the project writes {}: {error}", path.display());
     });

@@ -1,6 +1,5 @@
 use crate::png::header::{Color, Header};
-use crate::png::pass::Pass;
-use crate::png::pass::{self, Layout};
+use crate::png::pass::{self, Layout, Pass};
 
 struct Key {
     gray: Option<u16>,
@@ -13,85 +12,109 @@ pub(crate) fn expand(
     header: &Header,
     palette: Option<Vec<[u8; 3]>>,
     transparency: Option<Vec<u8>>,
-    raw: &[u8],
+    raw: &mut [u8],
     layout: &Layout,
+    texels: usize,
     what: &str,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, String> {
+    let key = key(header, palette, transparency, what)?;
+    let pixels = pass::unfilter(raw, layout, what)?;
+    let channels = header.color.channels();
+    let mut out = vec![0u8; texels * 4];
+    for (pass, data) in layout.passes.iter().zip(&pixels) {
+        paint(header, &key, pass, data, channels, &mut out, what)?;
+    }
+    Ok(out)
+}
+
+fn key(
+    header: &Header,
+    palette: Option<Vec<[u8; 3]>>,
+    transparency: Option<Vec<u8>>,
+    what: &str,
+) -> Result<Key, String> {
     let colors = match header.color {
         Color::Palette => {
-            palette.unwrap_or_else(|| panic!("{what} holds a palette image without a palette"))
+            palette.ok_or_else(|| format!("{what} holds a palette image without a palette"))?
         }
         _ => palette.unwrap_or_default(),
     };
-    let key = match header.color {
-        Color::Gray => Key {
-            gray: transparency.map(|bytes| {
-                assert_eq!(
-                    bytes.len(),
-                    2,
-                    "{what} holds {} transparency bytes for grey",
-                    bytes.len()
-                );
-                u16::from_be_bytes([bytes[0], bytes[1]])
-            }),
-            rgb: None,
-            alpha: Vec::new(),
-            colors,
-        },
-        Color::Rgb => Key {
-            gray: None,
-            rgb: transparency.map(|bytes| {
-                assert_eq!(
-                    bytes.len(),
-                    6,
-                    "{what} holds {} transparency bytes for colour",
-                    bytes.len()
-                );
-                [
-                    u16::from_be_bytes([bytes[0], bytes[1]]),
-                    u16::from_be_bytes([bytes[2], bytes[3]]),
-                    u16::from_be_bytes([bytes[4], bytes[5]]),
-                ]
-            }),
-            alpha: Vec::new(),
-            colors,
-        },
+    match header.color {
+        Color::Gray => {
+            let gray = match transparency {
+                Some(bytes) => {
+                    if bytes.len() != 2 {
+                        return Err(format!(
+                            "{what} holds {} transparency bytes for grey",
+                            bytes.len(),
+                        ));
+                    }
+                    Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+                }
+                None => None,
+            };
+            Ok(Key {
+                gray,
+                rgb: None,
+                alpha: Vec::new(),
+                colors,
+            })
+        }
+        Color::Rgb => {
+            let rgb = match transparency {
+                Some(bytes) => {
+                    if bytes.len() != 6 {
+                        return Err(format!(
+                            "{what} holds {} transparency bytes for colour",
+                            bytes.len(),
+                        ));
+                    }
+                    Some([
+                        u16::from_be_bytes([bytes[0], bytes[1]]),
+                        u16::from_be_bytes([bytes[2], bytes[3]]),
+                        u16::from_be_bytes([bytes[4], bytes[5]]),
+                    ])
+                }
+                None => None,
+            };
+            Ok(Key {
+                gray: None,
+                rgb,
+                alpha: Vec::new(),
+                colors,
+            })
+        }
         Color::Palette => {
-            if let Some(bytes) = &transparency {
-                assert!(
-                    bytes.len() <= colors.len(),
-                    "{what} holds {} transparency bytes for a palette of {}",
-                    bytes.len(),
-                    colors.len(),
-                );
-            }
-            Key {
+            let alpha = match &transparency {
+                Some(bytes) if bytes.len() > colors.len() => {
+                    return Err(format!(
+                        "{what} holds {} transparency bytes for a palette of {}",
+                        bytes.len(),
+                        colors.len(),
+                    ));
+                }
+                Some(bytes) => bytes.clone(),
+                None => Vec::new(),
+            };
+            Ok(Key {
                 gray: None,
                 rgb: None,
-                alpha: transparency.unwrap_or_default(),
+                alpha,
                 colors,
-            }
+            })
         }
         Color::GrayAlpha | Color::Rgba => {
-            assert!(
-                transparency.is_none(),
-                "{what} holds transparency beside an alpha channel",
-            );
-            Key {
+            if transparency.is_some() {
+                return Err(format!("{what} holds transparency beside an alpha channel"));
+            }
+            Ok(Key {
                 gray: None,
                 rgb: None,
                 alpha: Vec::new(),
                 colors,
-            }
+            })
         }
-    };
-    let pixels = pass::unfilter(raw, layout, what);
-    let channels = header.color.channels();
-    let mut out = vec![0u8; header.width as usize * header.height as usize * 4];
-    for (pass, data) in layout.passes.iter().zip(&pixels) {
-        paint(header, &key, pass, data, channels, &mut out, what);
     }
-    out
 }
 
 fn paint(
@@ -102,9 +125,10 @@ fn paint(
     channels: usize,
     out: &mut [u8],
     what: &str,
-) {
+) -> Result<(), String> {
     for row in 0..pass.height {
-        let line = &data[row * pass.row_bytes..(row + 1) * pass.row_bytes];
+        let start = row * (pass.row_bytes + 1) + 1;
+        let line = &data[start..start + pass.row_bytes];
         let y = pass.y0 as usize + row * pass.dy as usize;
         for column in 0..pass.width {
             let x = pass.x0 as usize + column * pass.dx as usize;
@@ -132,11 +156,12 @@ fn paint(
                 }
                 Color::Palette => {
                     let index = usize::from(sample(line, channels, column, 0, header.depth));
-                    assert!(
-                        index < key.colors.len(),
-                        "{what} holds palette index {index} of {} entries",
-                        key.colors.len(),
-                    );
+                    if index >= key.colors.len() {
+                        return Err(format!(
+                            "{what} holds palette index {index} of {} entries",
+                            key.colors.len(),
+                        ));
+                    }
                     let color = key.colors[index];
                     let alpha = key.alpha.get(index).copied().unwrap_or(255);
                     [color[0], color[1], color[2], alpha]
@@ -173,6 +198,7 @@ fn paint(
             out[at..at + 4].copy_from_slice(&rgba);
         }
     }
+    Ok(())
 }
 
 fn sample(line: &[u8], channels: usize, pixel: usize, channel: usize, depth: u8) -> u16 {

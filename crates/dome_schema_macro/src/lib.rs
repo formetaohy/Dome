@@ -115,9 +115,9 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             });
             parses.push(quote! {
                 let #local = <#ty as ::dome_scene::SceneValue>::parse(
-                    __fields.need(#field_name),
+                    __fields.need(#field_name)?,
                     &format!("the {} of {what}", #field_name),
-                );
+                )?;
             });
         }
         validates.push(quote! {
@@ -166,11 +166,11 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             if !options.skip {
                 checks.push(quote! {
                     if !matches!(__component.#ident.as_str(), #(#literals)|*) {
-                        panic!(
+                        return ::core::result::Result::Err(format!(
                             "{what} holds the {} {}",
                             #field_name,
                             __component.#ident,
-                        );
+                        ));
                     }
                 });
             }
@@ -316,21 +316,21 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         quote! {
             let __component = Self { #(#initializers)* };
             #(#checks)*
-            __component
+            ::core::result::Result::Ok(__component)
         }
     };
     let parse = if checks.is_empty() {
         quote! {
-            let mut __fields = ::dome_scene::__private::Fields::of(value, what);
+            let mut __fields = ::dome_scene::__private::Fields::of(value, what)?;
             #(#parses)*
-            __fields.done();
-            Self { #(#initializers)* }
+            __fields.done()?;
+            ::core::result::Result::Ok(Self { #(#initializers)* })
         }
     } else {
         quote! {
-            let mut __fields = ::dome_scene::__private::Fields::of(value, what);
+            let mut __fields = ::dome_scene::__private::Fields::of(value, what)?;
             #(#parses)*
-            __fields.done();
+            __fields.done()?;
             #validate_choice
         }
     };
@@ -395,7 +395,10 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 ::core::result::Result::Ok(component)
             }
 
-            fn from_toml(value: ::dome_scene::__private::Toml, what: &str) -> Self {
+            fn from_toml(
+                value: ::dome_scene::__private::Toml,
+                what: &str,
+            ) -> ::core::result::Result<Self, ::std::string::String> {
                 #parse
             }
 

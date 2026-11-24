@@ -7,21 +7,25 @@ pub(crate) struct Manifest {
 }
 
 impl Manifest {
-    pub(crate) fn parse(text: &str, what: &str) -> Self {
-        let mut fields = Fields::of(Toml::parse(text, what), what);
+    pub(crate) fn parse(text: &str, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(Toml::parse(text, what)?, what)?;
         let format = fields
-            .need("format")
-            .string_value(&format!("the format of {what}"));
-        assert!(format == FORMAT, "{what} holds the format {format}");
-        let name = fields
-            .need("name")
-            .string_value(&format!("the name of {what}"));
-        fields.done();
-        let name = name.trim();
-        assert!(!name.is_empty(), "{what} holds no name");
-        Self {
-            name: String::from(name),
+            .need("format")?
+            .string_value(&format!("the format of {what}"))?;
+        if format != FORMAT {
+            return Err(format!("{what} holds the format {format}"));
         }
+        let name = fields
+            .need("name")?
+            .string_value(&format!("the name of {what}"))?;
+        fields.done()?;
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(format!("{what} holds no name"));
+        }
+        Ok(Self {
+            name: String::from(name),
+        })
     }
 
     pub(crate) fn write(&self) -> String {

@@ -140,7 +140,7 @@ pub enum Action {
     CloseDialog,
     ResolveConfirm,
     DismissConfirm,
-    DismissError,
+    DismissMessage,
     RemoveTarget(Target),
     RemoveSelected,
     ToggleHidden(String),

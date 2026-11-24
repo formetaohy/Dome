@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 const QUIET: Duration = Duration::from_millis(60);
 const IDLE: Duration = Duration::from_secs(3600);
-const EXTENSION: &str = "lampas";
+const EXTENSION: &str = "amp";
 
 struct Dependencies {
     kind: Kind,

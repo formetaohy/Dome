@@ -1,11 +1,10 @@
 use crate::edit::Edit;
 use crate::node::{InstanceOverride, Node};
-use crate::prefab::{Loader, describe};
+use crate::prefab::Loader;
 use crate::scene::Scene;
 use crate::target::{Target, valid_id};
 use crate::value::{Effect, Value};
 use std::collections::{BTreeSet, HashSet};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 
 impl Scene {
     pub fn structurally_editable(&self, index: usize) -> bool {
@@ -213,7 +212,7 @@ impl Edit<'_> {
             Ok(())
         })?;
         let candidates = self.subtree(marker_index);
-        crate::prefab::apply_overrides(self, candidates);
+        crate::prefab::apply_overrides(self, candidates)?;
         Ok(Target::Node(id))
     }
 
@@ -250,15 +249,7 @@ impl Edit<'_> {
             .clone()
             .expect("a prefab instance names its prefab");
         let mut loader = Loader::new(self.root.clone(), self.schema_arc());
-        let loaded = catch_unwind(AssertUnwindSafe(|| loader.load(&path, "the instance")))
-            .map_err(|payload| {
-                format!(
-                    "the prefab {} loads: {}",
-                    path.display(),
-                    describe(payload.as_ref()),
-                )
-            })?;
-        let (template, key) = loaded?;
+        let (template, key) = loader.load(&path, "the instance")?;
         let mut ids = self
             .nodes
             .iter()
@@ -564,17 +555,8 @@ impl Edit<'_> {
             .prefab
             .clone()
             .expect("a prefab instance names its prefab");
-        let loaded = catch_unwind(AssertUnwindSafe(|| {
-            Loader::new(self.root.clone(), self.schema_arc()).load(&prefab, "the instance")
-        }))
-        .map_err(|payload| {
-            format!(
-                "the prefab {} loads: {}",
-                prefab.display(),
-                describe(payload.as_ref()),
-            )
-        })?;
-        let (template, _) = loaded?;
+        let (template, _) =
+            Loader::new(self.root.clone(), self.schema_arc()).load(&prefab, "the instance")?;
         let source = template
             .nodes()
             .iter()

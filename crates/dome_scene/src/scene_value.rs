@@ -20,7 +20,7 @@ pub trait SceneValue: Clone + PartialEq + Send + Sync + Default + 'static {
 
     fn authored(&self) -> Toml;
 
-    fn parse(value: Toml, what: &str) -> Self;
+    fn parse(value: Toml, what: &str) -> Result<Self, String>;
 
     fn validate(&self, scene: &Scene, what: &str) -> Result<(), String>;
 
@@ -53,10 +53,13 @@ impl SceneValue for f32 {
         Toml::from(*self)
     }
 
-    fn parse(value: Toml, what: &str) -> Self {
-        let value = value.f32_value(what);
-        assert!(value.is_finite(), "{what} holds {value}");
-        value
+    fn parse(value: Toml, what: &str) -> Result<Self, String> {
+        let value = value.f32_value(what)?;
+        if value.is_finite() {
+            Ok(value)
+        } else {
+            Err(format!("{what} holds {value}"))
+        }
     }
 
     fn validate(&self, _scene: &Scene, what: &str) -> Result<(), String> {
@@ -89,7 +92,7 @@ impl SceneValue for bool {
         Toml::from(*self)
     }
 
-    fn parse(value: Toml, what: &str) -> Self {
+    fn parse(value: Toml, what: &str) -> Result<Self, String> {
         value.boolean_value(what)
     }
 
@@ -119,7 +122,7 @@ impl SceneValue for String {
         Toml::string(self.as_str())
     }
 
-    fn parse(value: Toml, what: &str) -> Self {
+    fn parse(value: Toml, what: &str) -> Result<Self, String> {
         value.string_value(what)
     }
 
@@ -157,13 +160,13 @@ impl SceneValue for Vec3 {
         ])
     }
 
-    fn parse(value: Toml, what: &str) -> Self {
-        let vector = Vec3::from_array(floats::<3>(value, what));
-        assert!(
-            vector.x.is_finite() && vector.y.is_finite() && vector.z.is_finite(),
-            "{what} holds {vector:?}",
-        );
-        vector
+    fn parse(value: Toml, what: &str) -> Result<Self, String> {
+        let vector = Vec3::from_array(floats::<3>(value, what)?);
+        if vector.x.is_finite() && vector.y.is_finite() && vector.z.is_finite() {
+            Ok(vector)
+        } else {
+            Err(format!("{what} holds {vector:?}"))
+        }
     }
 
     fn validate(&self, _scene: &Scene, what: &str) -> Result<(), String> {

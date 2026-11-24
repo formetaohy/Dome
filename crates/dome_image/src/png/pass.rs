@@ -71,34 +71,55 @@ fn extent(size: u32, start: u32, step: u32) -> usize {
     ((size - start) as usize).div_ceil(step as usize)
 }
 
-pub(crate) fn unfilter(raw: &[u8], layout: &Layout, what: &str) -> Vec<Vec<u8>> {
-    let mut at = 0;
-    let mut held = Vec::with_capacity(layout.passes.len());
+pub(crate) fn unfilter<'a>(
+    raw: &'a mut [u8],
+    layout: &Layout,
+    what: &str,
+) -> Result<Vec<&'a [u8]>, String> {
+    let mut blocks = Vec::with_capacity(layout.passes.len());
+    let mut rest = raw;
     for pass in &layout.passes {
-        let mut pixels = vec![0u8; pass.height * pass.row_bytes];
-        let mut previous = vec![0u8; pass.row_bytes];
-        for row in 0..pass.height {
-            let filter = raw[at];
-            at += 1;
-            let start = row * pass.row_bytes;
-            let end = start + pass.row_bytes;
-            pixels[start..end].copy_from_slice(&raw[at..at + pass.row_bytes]);
-            at += pass.row_bytes;
-            unfilter_row(&mut pixels[start..end], &previous, filter, layout.bpp, what);
-            previous.copy_from_slice(&pixels[start..end]);
+        let span = pass.height * (pass.row_bytes + 1);
+        if span > rest.len() {
+            return Err(format!(
+                "{what} holds {} bytes where its scanlines span {span}",
+                rest.len(),
+            ));
         }
-        held.push(pixels);
+        let (block, tail) = rest.split_at_mut(span);
+        blocks.push(block);
+        rest = tail;
     }
-    assert_eq!(
-        at,
-        raw.len(),
-        "{what} holds {} bytes beyond its scanlines",
-        raw.len() - at,
-    );
-    held
+    if !rest.is_empty() {
+        return Err(format!(
+            "{what} holds {} bytes beyond its scanlines",
+            rest.len(),
+        ));
+    }
+    for (pass, block) in layout.passes.iter().zip(blocks.iter_mut()) {
+        for row in 0..pass.height {
+            let start = row * (pass.row_bytes + 1);
+            let filter = block[start];
+            let (before, after) = block.split_at_mut(start + 1);
+            let line = &mut after[..pass.row_bytes];
+            let previous = if row == 0 {
+                None
+            } else {
+                Some(&before[start - pass.row_bytes..start])
+            };
+            unfilter_row(line, previous, filter, layout.bpp, what)?;
+        }
+    }
+    Ok(blocks.into_iter().map(|block| &*block).collect())
 }
 
-fn unfilter_row(row: &mut [u8], previous: &[u8], filter: u8, bpp: usize, what: &str) {
+fn unfilter_row(
+    row: &mut [u8],
+    previous: Option<&[u8]>,
+    filter: u8,
+    bpp: usize,
+    what: &str,
+) -> Result<(), String> {
     match filter {
         0 => {}
         1 => {
@@ -107,27 +128,34 @@ fn unfilter_row(row: &mut [u8], previous: &[u8], filter: u8, bpp: usize, what: &
             }
         }
         2 => {
-            for at in 0..row.len() {
-                row[at] = row[at].wrapping_add(previous[at]);
+            if let Some(previous) = previous {
+                for at in 0..row.len() {
+                    row[at] = row[at].wrapping_add(previous[at]);
+                }
             }
         }
         3 => {
             for at in 0..row.len() {
                 let left = if at >= bpp { row[at - bpp] } else { 0 };
-                row[at] =
-                    row[at].wrapping_add(((u16::from(left) + u16::from(previous[at])) / 2) as u8);
+                let above = previous.map_or(0, |previous| previous[at]);
+                row[at] = row[at].wrapping_add(((u16::from(left) + u16::from(above)) / 2) as u8);
             }
         }
         4 => {
             for at in 0..row.len() {
                 let left = if at >= bpp { row[at - bpp] } else { 0 };
-                let above = previous[at];
-                let corner = if at >= bpp { previous[at - bpp] } else { 0 };
+                let above = previous.map_or(0, |previous| previous[at]);
+                let corner = if at >= bpp {
+                    previous.map_or(0, |previous| previous[at - bpp])
+                } else {
+                    0
+                };
                 row[at] = row[at].wrapping_add(paeth(left, above, corner));
             }
         }
-        other => panic!("{what} holds filter {other}"),
+        other => return Err(format!("{what} holds filter {other}")),
     }
+    Ok(())
 }
 
 fn paeth(left: u8, above: u8, corner: u8) -> u8 {

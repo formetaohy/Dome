@@ -46,4 +46,8 @@ fn an_atlas_that_fills_a_page_opens_another_instead_of_dropping_glyphs() {
         atlas.page_count() <= 2,
         "an atlas holds no more pages than the capacity it was made with",
     );
+    assert!(
+        atlas.drain().iter().any(|region| region.page == 1),
+        "an atlas dirties the page its new glyph lands on",
+    );
 }

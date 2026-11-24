@@ -207,27 +207,27 @@ impl SceneComponent for AudioBusRef {
         })
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
-        let parent = parse_optional(fields.take("parent"), &format!("the parent of {what}"));
-        let send = parse_optional(fields.take("send"), &format!("the send of {what}"));
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
+        let parent = parse_optional(fields.take("parent"), &format!("the parent of {what}"))?;
+        let send = parse_optional(fields.take("send"), &format!("the send of {what}"))?;
         let gain_db = fields
-            .need("gain_db")
-            .f32_value(&format!("the gain of {what}"));
+            .need("gain_db")?
+            .f32_value(&format!("the gain of {what}"))?;
         let mute = fields
-            .need("mute")
-            .boolean_value(&format!("the mute of {what}"));
+            .need("mute")?
+            .boolean_value(&format!("the mute of {what}"))?;
         let send_db = fields
-            .need("send_db")
-            .f32_value(&format!("the send of {what}"));
-        fields.done();
-        Self {
+            .need("send_db")?
+            .f32_value(&format!("the send of {what}"))?;
+        fields.done()?;
+        Ok(Self {
             parent,
             send,
             gain_db,
             mute,
             send_db,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {
@@ -316,13 +316,18 @@ fn optional(id: &str, what: &str) -> Result<Option<AudioBusId>, String> {
     Ok(Some(AudioBusId::new(id)))
 }
 
-fn parse_optional(value: Option<Toml>, what: &str) -> Option<AudioBusId> {
-    let id = value?.string_value(what);
+fn parse_optional(value: Option<Toml>, what: &str) -> Result<Option<AudioBusId>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let id = value.string_value(what)?;
     if id.is_empty() {
-        return None;
+        return Ok(None);
     }
-    assert!(dome_scene::valid_id(&id), "{what} holds the id {id}");
-    Some(AudioBusId::new(id))
+    if !dome_scene::valid_id(&id) {
+        return Err(format!("{what} holds the id {id}"));
+    }
+    Ok(Some(AudioBusId::new(id)))
 }
 
 fn check_gain(gain: f32) -> Result<(), String> {

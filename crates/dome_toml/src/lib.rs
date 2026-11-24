@@ -11,8 +11,8 @@ use toml::Value;
 pub struct Toml(Value);
 
 impl Toml {
-    pub fn parse(text: &str, what: &str) -> Self {
-        Self(parse::document(text, what))
+    pub fn parse(text: &str, what: &str) -> Result<Self, String> {
+        Ok(Self(parse::document(text, what)?))
     }
 
     pub fn string(value: impl Into<String>) -> Self {
@@ -79,72 +79,75 @@ impl Toml {
         matches!(self.0, Value::Table(_))
     }
 
-    pub fn object_fields(self, what: &str) -> Vec<(String, Toml)> {
+    pub fn object_fields(self, what: &str) -> Result<Vec<(String, Toml)>, String> {
         match self.0 {
-            Value::Table(fields) => fields
+            Value::Table(fields) => Ok(fields
                 .into_iter()
                 .map(|(key, value)| (key, Self(value)))
-                .collect(),
-            other => panic!("{what} holds {} where it holds a table", Self(other).kind()),
+                .collect()),
+            other => Err(format!(
+                "{what} holds {} where it holds a table",
+                Self(other).kind()
+            )),
         }
     }
 
-    pub fn array_items(self, what: &str) -> Vec<Toml> {
+    pub fn array_items(self, what: &str) -> Result<Vec<Toml>, String> {
         match self.0 {
-            Value::Array(items) => items.into_iter().map(Self).collect(),
-            other => panic!(
+            Value::Array(items) => Ok(items.into_iter().map(Self).collect()),
+            other => Err(format!(
                 "{what} holds {} where it holds an array",
                 Self(other).kind()
-            ),
+            )),
         }
     }
 
-    pub fn string_value(self, what: &str) -> String {
+    pub fn string_value(self, what: &str) -> Result<String, String> {
         match self.0 {
-            Value::String(value) => value,
-            other => panic!(
+            Value::String(value) => Ok(value),
+            other => Err(format!(
                 "{what} holds {} where it holds a string",
                 Self(other).kind()
-            ),
+            )),
         }
     }
 
-    pub fn boolean_value(self, what: &str) -> bool {
+    pub fn boolean_value(self, what: &str) -> Result<bool, String> {
         match self.0 {
-            Value::Boolean(value) => value,
-            other => panic!(
+            Value::Boolean(value) => Ok(value),
+            other => Err(format!(
                 "{what} holds {} where it holds a boolean",
                 Self(other).kind()
-            ),
+            )),
         }
     }
 
-    pub fn f32_value(self, what: &str) -> f32 {
+    pub fn f32_value(self, what: &str) -> Result<f32, String> {
         match self.0 {
             Value::Float(value) => number::narrow(value, what),
             Value::Integer(value) => number::narrow(value as f64, what),
-            other => panic!(
+            other => Err(format!(
                 "{what} holds {} where it holds a number",
                 Self(other).kind()
-            ),
+            )),
         }
     }
 
-    pub fn u64_value(self, what: &str) -> u64 {
+    pub fn u64_value(self, what: &str) -> Result<u64, String> {
         match self.0 {
             Value::Integer(value) => u64::try_from(value)
-                .unwrap_or_else(|_| panic!("{what} holds {value}, which is not a count")),
-            other => panic!(
+                .map_err(|_| format!("{what} holds {value}, which is not a count")),
+            other => Err(format!(
                 "{what} holds {} where it holds a whole number",
                 Self(other).kind(),
-            ),
+            )),
         }
     }
 
-    pub fn usize_value(self, what: &str) -> usize {
-        let value = self.u64_value(what);
+    pub fn usize_value(self, what: &str) -> Result<usize, String> {
+        let value = self.u64_value(what)?;
         usize::try_from(value)
-            .unwrap_or_else(|_| panic!("{what} holds {value}, which outruns this machine"))
+            .map_err(|_| format!("{what} holds {value}, which outruns this machine"))
     }
 
     pub fn write(&self) -> String {

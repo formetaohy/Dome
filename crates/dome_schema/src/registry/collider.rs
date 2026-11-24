@@ -383,62 +383,64 @@ impl SceneComponent for ColliderRef {
         Ok(Self::new())
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
         let shape = fields
-            .need("shape")
-            .string_value(&format!("the shape of {what}"));
+            .need("shape")?
+            .string_value(&format!("the shape of {what}"))?;
         let shape =
-            ShapeKind::of(&shape).unwrap_or_else(|| panic!("{what} holds the shape {shape}"));
-        let mesh = fields
-            .take("mesh")
-            .map(|value| {
-                let id = value.string_value(&format!("the mesh of {what}"));
+            ShapeKind::of(&shape).ok_or_else(|| format!("{what} holds the shape {shape}"))?;
+        let mesh = match fields.take("mesh") {
+            Some(value) => {
+                let id = value.string_value(&format!("the mesh of {what}"))?;
                 if id.is_empty() {
                     None
                 } else {
-                    assert!(valid_id(&id), "{what} holds the mesh id {id}");
+                    if !valid_id(&id) {
+                        return Err(format!("{what} holds the mesh id {id}"));
+                    }
                     Some(MeshId::new(id))
                 }
-            })
-            .unwrap_or(None);
+            }
+            None => None,
+        };
         let radius = fields
-            .need("radius")
-            .f32_value(&format!("the radius of {what}"));
+            .need("radius")?
+            .f32_value(&format!("the radius of {what}"))?;
         let half_extents = Vec3::from_array(floats::<3>(
-            fields.need("half_extents"),
+            fields.need("half_extents")?,
             &format!("the half extents of {what}"),
-        ));
+        )?);
         let half_height = fields
-            .need("half_height")
-            .f32_value(&format!("the half height of {what}"));
+            .need("half_height")?
+            .f32_value(&format!("the half height of {what}"))?;
         let center = Vec3::from_array(floats::<3>(
-            fields.need("center"),
+            fields.need("center")?,
             &format!("the center of {what}"),
-        ));
+        )?);
         let friction = fields
-            .need("friction")
-            .f32_value(&format!("the friction of {what}"));
+            .need("friction")?
+            .f32_value(&format!("the friction of {what}"))?;
         let restitution = fields
-            .need("restitution")
-            .f32_value(&format!("the restitution of {what}"));
+            .need("restitution")?
+            .f32_value(&format!("the restitution of {what}"))?;
         let sensor = fields
-            .need("sensor")
-            .boolean_value(&format!("the sensor of {what}"));
+            .need("sensor")?
+            .boolean_value(&format!("the sensor of {what}"))?;
         let layer = u16::try_from(
             fields
-                .need("layer")
-                .u64_value(&format!("the layer of {what}")),
+                .need("layer")?
+                .u64_value(&format!("the layer of {what}"))?,
         )
-        .unwrap_or_else(|_| panic!("{what} holds a layer beyond {LAYER_COUNT}"));
+        .map_err(|_| format!("{what} holds a layer beyond {LAYER_COUNT}"))?;
         let mask = u16::try_from(
             fields
-                .need("mask")
-                .u64_value(&format!("the mask of {what}")),
+                .need("mask")?
+                .u64_value(&format!("the mask of {what}"))?,
         )
-        .unwrap_or_else(|_| panic!("{what} holds a mask beyond {ALL_LAYERS}"));
-        fields.done();
-        Self {
+        .map_err(|_| format!("{what} holds a mask beyond {ALL_LAYERS}"))?;
+        fields.done()?;
+        Ok(Self {
             shape,
             mesh,
             radius,
@@ -450,7 +452,7 @@ impl SceneComponent for ColliderRef {
             sensor,
             layer,
             mask,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

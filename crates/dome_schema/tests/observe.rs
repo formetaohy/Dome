@@ -89,13 +89,16 @@ fn an_observed_scene_holds_every_asset_and_every_node_it_installed() {
     fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
     fs::write(root.join("prefabs/prop.toml"), PREFAB).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), SCENE).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema()).expect("the scene loads");
     edit(&mut scene, |edit| {
         edit.insert_child("prop", dome_scene::Node::new("antenna"))
     })
     .expect("an instance takes an addition");
 
-    let fields = scene.observe().object_fields("an observed scene");
+    let fields = scene
+        .observe()
+        .object_fields("an observed scene")
+        .expect("an observed scene holds a table");
     for name in [
         "models",
         "images",
@@ -116,27 +119,38 @@ fn an_observed_scene_holds_every_asset_and_every_node_it_installed() {
     assert_eq!(
         field(&fields, "skins")
             .array_items("the skins of an observed scene")
+            .expect("the observed skins hold items")
             .len(),
         1,
     );
     assert_eq!(
         field(&fields, "animations")
             .array_items("the animations of an observed scene")
+            .expect("the observed animations hold items")
             .len(),
         1,
     );
 
     let mut instance = None;
     let mut materialized = 0;
-    for node in field(&fields, "nodes").array_items("the nodes of an observed scene") {
-        let node = node.object_fields("an observed node");
-        let id = field(&node, "id").string_value("the id of an observed node");
+    for node in field(&fields, "nodes")
+        .array_items("the nodes of an observed scene")
+        .expect("the observed nodes hold items")
+    {
+        let node = node
+            .object_fields("an observed node")
+            .expect("an observed node holds a table");
+        let id = field(&node, "id")
+            .string_value("the id of an observed node")
+            .expect("an observed node holds an id");
         if id == "prop" {
             instance = Some(node);
         } else if id.starts_with("prop_") {
             materialized += 1;
             assert_eq!(
-                field(&node, "owner").string_value("the owner of an observed node"),
+                field(&node, "owner")
+                    .string_value("the owner of an observed node")
+                    .expect("an observed instance node holds an owner"),
                 "prop",
             );
         }
@@ -146,15 +160,20 @@ fn an_observed_scene_holds_every_asset_and_every_node_it_installed() {
         "an observed scene holds the nodes its instance materialized",
     );
     let instance = instance.expect("an observed scene holds the prefab instance");
-    let additions = field(&instance, "additions").array_items("the additions of an instance");
+    let additions = field(&instance, "additions")
+        .array_items("the additions of an instance")
+        .expect("an observed instance holds additions");
     assert_eq!(additions.len(), 1);
     let addition = additions
         .into_iter()
         .next()
         .expect("an observed instance holds one addition")
-        .object_fields("an observed addition");
+        .object_fields("an observed addition")
+        .expect("an observed addition holds a table");
     assert_eq!(
-        field(&addition, "id").string_value("the id of an observed addition"),
+        field(&addition, "id")
+            .string_value("the id of an observed addition")
+            .expect("an observed addition holds an id"),
         "antenna",
     );
     assert!(

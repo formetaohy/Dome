@@ -111,17 +111,19 @@ impl SceneComponent for Camera {
         Ok(Self::new(1.0, 0.1, 1000.0))
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
         let vertical_fov = fields
-            .need("vertical_fov")
-            .f32_value(&format!("the vertical fov of {what}"));
+            .need("vertical_fov")?
+            .f32_value(&format!("the vertical fov of {what}"))?;
         let near = fields
-            .need("near")
-            .f32_value(&format!("the near of {what}"));
-        let far = fields.need("far").f32_value(&format!("the far of {what}"));
-        fields.done();
-        Self::new(vertical_fov, near, far)
+            .need("near")?
+            .f32_value(&format!("the near of {what}"))?;
+        let far = fields
+            .need("far")?
+            .f32_value(&format!("the far of {what}"))?;
+        fields.done()?;
+        Ok(Self::new(vertical_fov, near, far))
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

@@ -9,7 +9,7 @@ fn a_radiance_picture_decodes_flat_and_run_length_scanlines() {
     flat.extend_from_slice(&[
         128, 64, 32, 128, 128, 64, 32, 128, 128, 64, 32, 128, 128, 64, 32, 128,
     ]);
-    let decoded = Radiance::decode(&flat, "a flat picture");
+    let decoded = Radiance::decode(&flat, "a flat picture").unwrap();
     assert_eq!((decoded.width(), decoded.height()), (4, 1));
     assert_eq!(decoded.rgb()[..3], [0.5, 0.25, 0.125]);
 
@@ -21,7 +21,7 @@ fn a_radiance_picture_decodes_flat_and_run_length_scanlines() {
             runs.extend_from_slice(&[128 + 16, channel]);
         }
     }
-    let decoded = Radiance::decode(&runs, "a run picture");
+    let decoded = Radiance::decode(&runs, "a run picture").unwrap();
     assert_eq!((decoded.width(), decoded.height()), (16, 2));
     assert_eq!(decoded.rgb()[..3], [160.0, 128.0, 96.0]);
     assert_eq!(decoded.rgb().len(), 16 * 2 * 3);
@@ -29,7 +29,7 @@ fn a_radiance_picture_decodes_flat_and_run_length_scanlines() {
     let mut repeats = HEADER.as_bytes().to_vec();
     repeats.extend_from_slice(b"-Y 1 +X 4\n");
     repeats.extend_from_slice(&[128, 64, 32, 128, 1, 1, 1, 3]);
-    let decoded = Radiance::decode(&repeats, "a repeated picture");
+    let decoded = Radiance::decode(&repeats, "a repeated picture").unwrap();
     assert_eq!(decoded.rgb(), [0.5, 0.25, 0.125].repeat(4));
 
     let mut exposed = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\nEXPOSURE=2\nEXPOSURE=2\n\n"
@@ -39,7 +39,7 @@ fn a_radiance_picture_decodes_flat_and_run_length_scanlines() {
     exposed.extend_from_slice(&[
         128, 64, 32, 128, 128, 64, 32, 128, 128, 64, 32, 128, 128, 64, 32, 128,
     ]);
-    let decoded = Radiance::decode(&exposed, "an exposed picture");
+    let decoded = Radiance::decode(&exposed, "an exposed picture").unwrap();
     assert_eq!(decoded.rgb()[..3], [0.125, 0.0625, 0.03125]);
 
     let mut ambiguous = HEADER.as_bytes().to_vec();
@@ -47,6 +47,6 @@ fn a_radiance_picture_decodes_flat_and_run_length_scanlines() {
     ambiguous.extend_from_slice(&[
         2, 2, 200, 128, 128, 64, 32, 128, 128, 64, 32, 128, 128, 64, 32, 128,
     ]);
-    let decoded = Radiance::decode(&ambiguous, "an ambiguous picture");
+    let decoded = Radiance::decode(&ambiguous, "an ambiguous picture").unwrap();
     assert_eq!(decoded.rgb()[9..], [0.5, 0.25, 0.125]);
 }

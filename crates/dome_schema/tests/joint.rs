@@ -69,9 +69,11 @@ mask = 65535
 
 #[test]
 fn a_scene_installs_and_steps_the_joints_it_authors() {
-    let scene = Scene::parse(SCENE, ".", "the joint scene", schema());
+    let scene =
+        Scene::parse(SCENE, ".", "the joint scene", schema()).expect("the joint scene parses");
     let written = scene.write().expect("a scene writes its text");
-    let reloaded = Scene::parse(&written, ".", "the written joint scene", schema());
+    let reloaded = Scene::parse(&written, ".", "the written joint scene", schema())
+        .expect("the written joint scene parses");
     assert_eq!(scene, reloaded);
     let mut world = World::new();
     world.insert_resource(Gravity::default());
@@ -143,7 +145,8 @@ fn a_scene_installs_and_steps_the_joints_it_authors() {
         .replace("limit = true", "limit = false")
         .replace("motor = true", "motor = false")
         .replace("cone = 0.0", "cone = 0.5");
-    let scene = Scene::parse(&spherical, ".", "the spherical scene", schema());
+    let scene = Scene::parse(&spherical, ".", "the spherical scene", schema())
+        .expect("the spherical scene parses");
     let mut world = World::new();
     world.insert_resource(Gravity::default());
     let anchor = install_scene(&scene, &mut world, &Mock)[0];

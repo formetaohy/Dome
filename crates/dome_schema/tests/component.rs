@@ -85,8 +85,8 @@ impl SceneValue for Distance {
         <f32 as SceneValue>::authored(&self.0)
     }
 
-    fn parse(value: Toml, what: &str) -> Self {
-        Self(<f32 as SceneValue>::parse(value, what))
+    fn parse(value: Toml, what: &str) -> Result<Self, String> {
+        <f32 as SceneValue>::parse(value, what).map(Self)
     }
 
     fn validate(&self, scene: &Scene, what: &str) -> Result<(), String> {
@@ -210,7 +210,8 @@ fn a_derived_component_travels_through_every_layer() {
         FieldKind::Choice(&["red", "blue"])
     ));
     let registry = Arc::new(registry);
-    let mut scene = Scene::parse(SCENE, ".", "the test scene", registry.clone());
+    let mut scene = Scene::parse(SCENE, ".", "the test scene", registry.clone())
+        .expect("the test scene parses");
     let player = Target::Node(String::from("player"));
     assert_eq!(scene.property(&player, "health"), Some(Value::Bool(true)));
     assert_eq!(
@@ -275,7 +276,8 @@ fn a_derived_component_travels_through_every_layer() {
     assert!(written.contains("team = \"blue\""));
     assert!(!written.contains("cooldown"));
     assert!(written.contains("[nodes.player]"));
-    let again = Scene::parse(&written, ".", "the written scene", registry.clone());
+    let again = Scene::parse(&written, ".", "the written scene", registry.clone())
+        .expect("the written scene parses");
     assert_eq!(again, scene);
     assert!(scene.observe().write().contains("value = 20.0"));
 
@@ -380,7 +382,8 @@ fn a_derived_component_holds_custom_values_and_asset_references() {
         }
     ));
     let registry = Arc::new(registry);
-    let mut scene = Scene::parse(SPAWN_SCENE, ".", "the spawn scene", registry.clone());
+    let mut scene = Scene::parse(SPAWN_SCENE, ".", "the spawn scene", registry.clone())
+        .expect("the spawn scene parses");
     let player = Target::Node(String::from("player"));
     assert_eq!(
         scene.property(&player, "spawn.mesh"),
@@ -433,7 +436,8 @@ fn a_derived_component_holds_custom_values_and_asset_references() {
     );
     let written = scene.write().expect("a scene writes its text");
     assert!(written.contains("reach = 0.0"));
-    let again = Scene::parse(&written, ".", "the written spawn scene", registry);
+    let again = Scene::parse(&written, ".", "the written spawn scene", registry)
+        .expect("the written spawn scene parses");
     assert_eq!(again, scene);
 
     assert!(
@@ -467,6 +471,51 @@ fn a_derived_component_holds_custom_values_and_asset_references() {
     })
     .expect("an unreferenced material leaves");
 }
+const UNTYPED: &str = r#"format = "dome_scene"
+images = []
+meshes = []
+materials = []
+
+[[nodes]]
+id = "player"
+transform = "x"
+"#;
+
+const UNKNOWN: &str = r#"format = "dome_scene"
+images = []
+meshes = []
+materials = []
+
+[[nodes]]
+id = "player"
+
+[nodes.health]
+value = 10.0
+team = "red"
+spawn = [0.0, 0.0, 0.0]
+alive = true
+bogus = 1
+"#;
+
+#[test]
+fn a_malformed_scene_document_names_the_field_it_refuses() {
+    let mut registry = Registry::default();
+    registry.register::<Health>();
+    let registry = Arc::new(registry);
+    let error = Scene::parse(UNTYPED, ".", "the untyped scene", registry.clone())
+        .expect_err("a transform of no table is refused");
+    assert_eq!(
+        error,
+        "the transform of node 0 of the untyped scene holds a string where it holds a table",
+    );
+    let error = Scene::parse(UNKNOWN, ".", "the unknown scene", registry)
+        .expect_err("an unknown component field is refused");
+    assert_eq!(
+        error,
+        "the health of node 0 of the unknown scene holds the unknown field `bogus`",
+    );
+}
+
 fn edit<T>(
     scene: &mut dome_scene::Scene,
     change: impl FnOnce(&mut dome_scene::Edit<'_>) -> Result<T, String>,

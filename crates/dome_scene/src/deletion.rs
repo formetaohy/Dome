@@ -7,13 +7,12 @@ use crate::image::ImageEntry;
 use crate::material::MaterialEntry;
 use crate::mesh::MeshEntry;
 use crate::model::ModelEntry;
-use crate::prefab::{Loader, describe};
+use crate::prefab::Loader;
 use crate::scene::{Owned, Scene};
 use crate::skin::SkinEntry;
 use crate::sound::SoundEntry;
 use crate::target::Target;
 use std::collections::{BTreeSet, HashSet};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
 #[derive(Default)]
@@ -591,18 +590,8 @@ impl Planner<'_> {
             .scene
             .instance_prefab(marker)
             .expect("a prefab instance names its prefab");
-        let loaded = catch_unwind(AssertUnwindSafe(|| {
-            Loader::new(self.scene.root.clone(), self.scene.schema_arc())
-                .load(prefab, "the instance")
-        }))
-        .map_err(|payload| {
-            format!(
-                "the prefab {} loads: {}",
-                prefab.display(),
-                describe(payload.as_ref()),
-            )
-        })?;
-        let (template, _) = loaded?;
+        let (template, _) = Loader::new(self.scene.root.clone(), self.scene.schema_arc())
+            .load(prefab, "the instance")?;
         let index = template
             .node_index(node)
             .ok_or_else(|| format!("the prefab {} holds no node {node}", prefab.display(),))?;

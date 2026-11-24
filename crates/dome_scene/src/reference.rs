@@ -96,10 +96,12 @@ macro_rules! reference {
                 Toml::string(self.as_str())
             }
 
-            fn parse(value: Toml, what: &str) -> Self {
-                let id = value.string_value(what);
-                assert!(valid_id(&id), "{what} holds the {} id {id}", $kind.name());
-                Self(id)
+            fn parse(value: Toml, what: &str) -> Result<Self, String> {
+                let id = value.string_value(what)?;
+                if !valid_id(&id) {
+                    return Err(format!("{what} holds the {} id {id}", $kind.name()));
+                }
+                Ok(Self(id))
             }
 
             fn validate(&self, scene: &Scene, what: &str) -> Result<(), String> {

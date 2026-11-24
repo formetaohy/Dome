@@ -20,10 +20,6 @@ const SEGMENTS: u32 = 32;
 const RINGS: u32 = 16;
 
 impl Shape {
-    pub(crate) fn of(name: &str, what: &str) -> Self {
-        Self::from_name(name).unwrap_or_else(|| panic!("{what} holds the shape {name}"))
-    }
-
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "plane" => Some(Self::Plane),

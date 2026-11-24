@@ -8,8 +8,6 @@ use dome_render::{Camera, Lines, Renderer, Target};
 use dome_scene::{Changed, Scene};
 use dome_schema::{Registry, SceneSync};
 use dome_window::{Event, Flow, Handler, Input, Waker, Window, WindowConfig, run as run_window};
-use std::any::Any;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -139,8 +137,8 @@ impl LiveScene {
         world: &mut World,
         blocking: bool,
         wake: impl Fn() + Send + Sync + 'static,
-    ) -> Self {
-        let scene = Scene::load(&file.path, file.root.clone(), registry.clone());
+    ) -> Result<Self, String> {
+        let scene = Scene::load(&file.path, file.root.clone(), registry.clone())?;
         let mut assets = Library::new();
         let mut sync = SceneSync::new(registry.clone());
         let mut messages = Vec::new();
@@ -161,7 +159,7 @@ impl LiveScene {
             (Some(scene.clone()), Some(scene.clone()))
         };
         let watch = Watch::new(&file.path, &scene, wake);
-        Self {
+        Ok(Self {
             path: file.path,
             root: file.root,
             scene,
@@ -173,7 +171,7 @@ impl LiveScene {
             requested,
             renew: false,
             change: Change::default(),
-        }
+        })
     }
 
     fn update(
@@ -192,16 +190,11 @@ impl LiveScene {
             let change = report.change;
             self.renew = true;
             self.change.absorb(change);
-            if change.scene {
-                match catch_unwind(AssertUnwindSafe(|| {
-                    Scene::load(&self.path, self.root.clone(), registry.clone())
-                })) {
-                    Ok(scene) => {
-                        self.wanted = Some(scene);
-                    }
-                    Err(payload) => {
-                        self.messages
-                            .push(format!("reload: {}", panic_text(payload)));
+            if change.scene || change.prefab {
+                match Scene::load(&self.path, self.root.clone(), registry.clone()) {
+                    Ok(scene) => self.wanted = Some(scene),
+                    Err(error) => {
+                        self.messages.push(format!("reload: {error}"));
                         return Some(self.reloaded());
                     }
                 }
@@ -286,16 +279,6 @@ fn phase_of(world: &World) -> f32 {
     world.resource::<Time>().map_or(1.0, |time| time.alpha())
 }
 
-fn panic_text(payload: Box<dyn Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(payload) => match payload.downcast::<&str>() {
-            Ok(message) => String::from(*message),
-            Err(_) => String::from("a panic without a message"),
-        },
-    }
-}
-
 impl Session {
     fn window(window: &Window, request: &GpuRequest) -> Self {
         let request = GpuRequest {
@@ -368,8 +351,8 @@ impl Session {
         registry: &Arc<Registry>,
         blocking: bool,
         wake: impl Fn() + Send + Sync + 'static,
-    ) {
-        self.live = Some(LiveScene::new(
+    ) -> Result<(), String> {
+        let live = LiveScene::new(
             SceneConfig {
                 path: file.path.clone(),
                 root: file.root.clone(),
@@ -379,7 +362,9 @@ impl Session {
             world,
             blocking,
             wake,
-        ));
+        )?;
+        self.live = Some(live);
+        Ok(())
     }
 
     fn reload(
@@ -634,11 +619,21 @@ impl App {
                 waker.wake();
             }
         };
+        let mut loaded = false;
         if let Some(file) = &self.config.scene {
-            session.load_scene(&mut self.world, file, &self.config.registry, blocking, wake);
-            self.reload = session.live.as_mut().and_then(LiveScene::take_error);
+            match session.load_scene(&mut self.world, file, &self.config.registry, blocking, wake) {
+                Ok(()) => {
+                    loaded = true;
+                    self.reload = session.live.as_mut().and_then(LiveScene::take_error);
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    self.reload = Some(error);
+                    self.world.insert_resource(Exit);
+                }
+            }
         }
-        if !blocking && self.config.scene.is_some() {
+        if !blocking && loaded {
             let camera = self.world.spawn();
             self.world.insert(
                 camera,
@@ -648,7 +643,7 @@ impl App {
                 .insert(camera, Camera::new(std::f32::consts::FRAC_PI_2, 0.1, 100.0));
             self.loading_camera = Some(camera);
         }
-        if blocking || self.config.scene.is_none() {
+        if blocking || !loaded {
             self.settle_startup(session);
         } else {
             self.startup_pending = !self.startup.is_empty();
@@ -721,11 +716,6 @@ impl App {
 
     fn reload_scene(&mut self, session: &mut Session) {
         let reload = session.reload(&mut self.world, &self.config.registry, self.headless);
-        if let Some(change) = session.take_change() {
-            for observer in &self.reloads {
-                observer(&mut self.world, change);
-            }
-        }
         let Some(reload) = reload else {
             return;
         };
@@ -740,6 +730,17 @@ impl App {
         if self.startup_pending && session.scene_ready() {
             self.startup_pending = false;
             self.settle_startup(session);
+        }
+        if session.scene_ready()
+            && !self.startup_pending
+            && let Some(change) = session.take_change()
+        {
+            for observer in &self.reloads {
+                observer(&mut self.world, change);
+            }
+        }
+        if let Some(error) = &reload.error {
+            eprintln!("{error}");
         }
         self.reload = reload.error;
     }

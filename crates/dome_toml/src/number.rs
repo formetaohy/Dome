@@ -13,10 +13,10 @@ pub(crate) fn whole(value: u64) -> i64 {
         .unwrap_or_else(|_| panic!("a TOML integer holds {value}, which outruns 64 bits"))
 }
 
-pub(crate) fn narrow(value: f64, what: &str) -> f32 {
-    assert!(
-        value.is_finite() && value.abs() <= f64::from(f32::MAX),
-        "{what} holds {value}, which spans no finite f32",
-    );
-    value as f32
+pub(crate) fn narrow(value: f64, what: &str) -> Result<f32, String> {
+    if value.is_finite() && value.abs() <= f64::from(f32::MAX) {
+        Ok(value as f32)
+    } else {
+        Err(format!("{what} holds {value}, which spans no finite f32"))
+    }
 }

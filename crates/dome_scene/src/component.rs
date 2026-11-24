@@ -187,7 +187,7 @@ pub trait Schema: Send + Sync {
 
     fn spec(&self, name: &str) -> Option<&'static ComponentSpec>;
 
-    fn parse(&self, name: &str, value: Toml, what: &str) -> Box<dyn Component>;
+    fn parse(&self, name: &str, value: Toml, what: &str) -> Result<Box<dyn Component>, String>;
 
     fn create(&self, scene: &Scene, name: &str) -> Result<Box<dyn Component>, String>;
 

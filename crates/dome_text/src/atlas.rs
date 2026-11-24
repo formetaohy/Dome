@@ -71,6 +71,10 @@ pub struct Region {
 
 impl Region {
     fn union(self, other: Self) -> Self {
+        assert_eq!(
+            self.page, other.page,
+            "a dirty region joins the page it belongs to",
+        );
         let x = self.x.min(other.x);
         let y = self.y.min(other.y);
         Self {
@@ -84,7 +88,10 @@ impl Region {
 
     fn joins(self, other: Self) -> bool {
         let paired = self.y < other.y + other.height && other.y < self.y + self.height;
-        paired && self.x <= other.x + other.width && other.x <= self.x + self.width
+        self.page == other.page
+            && paired
+            && self.x <= other.x + other.width
+            && other.x <= self.x + self.width
     }
 }
 

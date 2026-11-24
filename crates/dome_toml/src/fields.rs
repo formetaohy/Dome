@@ -6,12 +6,12 @@ pub struct Fields {
 }
 
 impl Fields {
-    pub fn of(value: Toml, what: impl Into<String>) -> Self {
+    pub fn of(value: Toml, what: impl Into<String>) -> Result<Self, String> {
         let what = what.into();
-        Self {
-            pairs: value.object_fields(&what),
+        Ok(Self {
+            pairs: value.object_fields(&what)?,
             what,
-        }
+        })
     }
 
     pub fn take(&mut self, key: &str) -> Option<Toml> {
@@ -19,31 +19,34 @@ impl Fields {
         Some(self.pairs.remove(at).1)
     }
 
-    pub fn need(&mut self, key: &str) -> Toml {
+    pub fn need(&mut self, key: &str) -> Result<Toml, String> {
         self.take(key)
-            .unwrap_or_else(|| panic!("{} holds no `{key}`", self.what))
+            .ok_or_else(|| format!("{} holds no `{key}`", self.what))
     }
 
-    pub fn done(self) {
+    pub fn done(self) -> Result<(), String> {
         if let Some((key, _)) = self.pairs.first() {
-            panic!("{} holds the unknown field `{key}`", self.what);
+            return Err(format!("{} holds the unknown field `{key}`", self.what));
         }
+        Ok(())
     }
 }
 
-pub fn floats<const N: usize>(value: Toml, what: &str) -> [f32; N] {
-    let items = value.array_items(what);
-    assert_eq!(
-        items.len(),
-        N,
-        "{what} holds {} numbers where {N} stand",
-        items.len(),
-    );
+pub fn floats<const N: usize>(value: Toml, what: &str) -> Result<[f32; N], String> {
+    let items = value.array_items(what)?;
+    if items.len() != N {
+        return Err(format!(
+            "{what} holds {} numbers where {N} stand",
+            items.len(),
+        ));
+    }
     let mut items = items.into_iter();
-    std::array::from_fn(|_| {
-        items
+    let mut numbers = [0.0; N];
+    for number in &mut numbers {
+        *number = items
             .next()
             .expect("a counted array holds every number")
-            .f32_value(what)
-    })
+            .f32_value(what)?;
+    }
+    Ok(numbers)
 }

@@ -364,7 +364,7 @@ fn skin(entry: &SkinEntry, owner: Option<&Path>) -> Toml {
 }
 
 fn graph(entry: &GraphEntry, owner: Option<&Path>) -> Toml {
-    let mut fields = entry.authored().object_fields("an authored graph");
+    let mut fields = entry.authored_fields();
     mark_prefab(&mut fields, owner);
     Toml::object(fields)
 }
@@ -473,4 +473,39 @@ fn node(node: &Node, schema: &dyn Schema, presentation: Presentation) -> Toml {
         }
     }
     Toml::object(fields)
+}
+
+impl crate::delta::Step {
+    pub(crate) fn weight(&self, schema: &dyn Schema) -> usize {
+        match self {
+            Self::Nodes(splice) => splice.weight(|node| {
+                self::node(node, schema, Presentation::Authored)
+                    .write()
+                    .len()
+            }),
+            Self::Images(splice) => splice.weight(|entry| image(entry, None).write().len()),
+            Self::Sounds(splice) => splice.weight(|entry| sound(entry, None).write().len()),
+            Self::Environments(splice) => {
+                splice.weight(|entry| environment(entry, None).write().len())
+            }
+            Self::Meshes(splice) => splice.weight(|entry| mesh(entry, None).write().len()),
+            Self::Materials(splice) => splice.weight(|entry| material(entry, None).write().len()),
+            Self::Models(splice) => splice.weight(|entry| model(entry, None).write().len()),
+            Self::Skins(splice) => splice.weight(|entry| skin(entry, None).write().len()),
+            Self::Animations(splice) => splice.weight(|entry| animation(entry, None).write().len()),
+            Self::Graphs(splice) => splice.weight(|entry| graph(entry, None).write().len()),
+            Self::Owners(splice) => {
+                splice.weight(|owned| owned.id.len() + owned.prefab.as_os_str().len() + 64)
+            }
+            Self::Instances { key, before, after } => {
+                let held = before
+                    .iter()
+                    .flat_map(|set| set.iter())
+                    .chain(after.iter().flat_map(|set| set.iter()))
+                    .map(|path| path.as_os_str().len())
+                    .sum::<usize>();
+                key.len() + held + 64
+            }
+        }
+    }
 }

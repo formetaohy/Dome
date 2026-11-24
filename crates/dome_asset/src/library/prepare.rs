@@ -272,10 +272,7 @@ pub(super) fn image_data_of(
         ImageSource::Path(path) => {
             let file = scene.asset(path);
             let (_, bytes) = sources.read(&file)?;
-            let decoded = catch_unwind(AssertUnwindSafe(|| {
-                Image::decode(&bytes, &format!("the image {id}"))
-            }))
-            .map_err(|payload| panic_message(payload.as_ref()))?;
+            let decoded = Image::decode(&bytes, &format!("the image {id}"))?;
             ImageBytes {
                 width: decoded.width(),
                 height: decoded.height(),
@@ -445,10 +442,8 @@ pub(super) fn environment_data(
         EnvironmentSource::Panorama(path) => {
             let file = scene.asset(path);
             let (_, bytes) = sources.read(&file)?;
-            let radiance = catch_unwind(AssertUnwindSafe(|| {
-                Radiance::decode(&bytes, &format!("the environment {}", file.display()))
-            }))
-            .map_err(|payload| panic_message(payload.as_ref()))?;
+            let radiance =
+                Radiance::decode(&bytes, &format!("the environment {}", file.display()))?;
             Ok(EnvironmentData::Panorama(Panorama::new(
                 radiance.width(),
                 radiance.height(),

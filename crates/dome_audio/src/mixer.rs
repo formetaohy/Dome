@@ -72,13 +72,26 @@ impl Assigned {
     }
 }
 
+struct Slot {
+    active: Option<Assigned>,
+    retiring: Option<Assigned>,
+}
+
+impl Slot {
+    fn new() -> Self {
+        Self {
+            active: None,
+            retiring: None,
+        }
+    }
+}
+
 pub(crate) struct Mixer {
     rate: u32,
     commands: Consumer<Command>,
     garbage: garbage::Queue,
     playback: Arc<Playback>,
-    voices: Vec<Option<Assigned>>,
-    retiring: Vec<Option<Assigned>>,
+    voices: Box<[Slot; MAX_VOICES]>,
     buses: Vec<Bus>,
     layout: Arc<Layout>,
     used: usize,
@@ -111,8 +124,7 @@ impl Mixer {
             commands,
             garbage,
             playback,
-            voices: (0..MAX_VOICES).map(|_| None).collect(),
-            retiring: (0..MAX_VOICES).map(|_| None).collect(),
+            voices: Box::new(std::array::from_fn(|_| Slot::new())),
             buses,
             layout,
             used: 1,
@@ -132,7 +144,11 @@ impl Mixer {
         }
         out.fill(0.0);
         let frames = out.len() / 2;
-        if self.paused && self.pause <= 0.0 || frames == 0 {
+        let silent = self.paused && self.pause <= 0.0;
+        if silent {
+            self.drain_retiring();
+        }
+        if silent || frames == 0 {
             self.republish();
             self.active.store(self.count(), Ordering::Relaxed);
             return;
@@ -158,14 +174,21 @@ impl Mixer {
     fn count(&self) -> usize {
         self.voices
             .iter()
-            .flatten()
-            .chain(self.retiring.iter().flatten())
-            .count()
+            .map(|slot| usize::from(slot.active.is_some()) + usize::from(slot.retiring.is_some()))
+            .sum()
+    }
+
+    fn drain_retiring(&mut self) {
+        for slot in self.voices.iter_mut() {
+            if let Some(assigned) = slot.retiring.take() {
+                self.garbage.discard(assigned.discard());
+            }
+        }
     }
 
     fn republish(&mut self) {
-        for at in 0..self.voices.len() {
-            let Some(assigned) = self.voices[at].as_mut() else {
+        for (at, slot) in self.voices.iter_mut().enumerate() {
+            let Some(assigned) = slot.active.as_mut() else {
                 continue;
             };
             let position = assigned.playing.position();
@@ -182,21 +205,20 @@ impl Mixer {
         for bus in &mut self.buses[..self.used] {
             bus.buffer[..samples].fill(0.0);
         }
-        for slot in &mut self.retiring {
-            let Some(assigned) = slot else {
+        for slot in self.voices.iter_mut() {
+            let Some(assigned) = slot.retiring.as_mut() else {
                 continue;
             };
             let index = assigned.index;
-            if assigned
+            let finished = assigned
                 .playing
-                .mix(&mut self.buses[index].buffer[..samples], self.rate)
-            {
-                let assigned = slot.take().expect("a retiring voice leaves its slot");
+                .mix(&mut self.buses[index].buffer[..samples], self.rate);
+            if finished && let Some(assigned) = slot.retiring.take() {
                 self.garbage.discard(assigned.discard());
             }
         }
-        for at in 0..self.voices.len() {
-            let Some(assigned) = self.voices[at].as_mut() else {
+        for (at, slot) in self.voices.iter_mut().enumerate() {
+            let Some(assigned) = slot.active.as_mut() else {
                 continue;
             };
             let index = assigned.index;
@@ -213,15 +235,11 @@ impl Mixer {
             };
             self.playback
                 .publish(at, voice.token, state, next, position);
-            if finished {
-                let assigned = self.voices[at]
-                    .take()
-                    .expect("a finished voice leaves its slot");
+            if finished && let Some(assigned) = slot.active.take() {
                 self.garbage.discard(assigned.discard());
             }
         }
-        for at in 0..layout.order().len() {
-            let index = layout.order()[at];
+        for &index in layout.order() {
             let mut buffer = std::mem::take(&mut self.buses[index].buffer);
             {
                 let bus = &mut self.buses[index];
@@ -280,8 +298,11 @@ impl Mixer {
                 pitch,
                 start,
             } => {
-                let slot = slot_of(voice);
-                if let Some(held) = self.voices[slot].take() {
+                let Some(slot) = slot_of(voice) else {
+                    self.garbage.discard(Garbage::Voice { input, bus });
+                    return;
+                };
+                if let Some(held) = self.voices[slot].active.take() {
                     self.retire(held);
                 }
                 let settings = Settings {
@@ -296,7 +317,7 @@ impl Mixer {
                 let mut state = State::Pending;
                 self.playback
                     .publish(slot, voice.token, &mut state, State::Playing, start);
-                self.voices[slot] = Some(Assigned {
+                self.voices[slot].active = Some(Assigned {
                     voice,
                     playing: Playing::new(input, settings, self.rate),
                     state,
@@ -326,13 +347,14 @@ impl Mixer {
                 });
             }
             Command::Stop { voice } => {
-                let slot = slot_of(voice);
-                if self.voices[slot]
+                let Some(slot) = slot_of(voice) else {
+                    return;
+                };
+                let held = self.voices[slot]
+                    .active
                     .as_ref()
-                    .is_some_and(|held| held.holds(voice))
-                    && let Some(mut assigned) = self.voices[slot].take()
-                {
-                    assigned.playing.stop();
+                    .is_some_and(|held| held.holds(voice));
+                if held && let Some(assigned) = self.voices[slot].active.take() {
                     self.retire(assigned);
                 }
             }
@@ -355,8 +377,7 @@ impl Mixer {
                 for assigned in self
                     .voices
                     .iter_mut()
-                    .flatten()
-                    .chain(self.retiring.iter_mut().flatten())
+                    .flat_map(|slot| slot.active.iter_mut().chain(slot.retiring.iter_mut()))
                 {
                     assigned.index = bus_index(assigned.bus.as_deref(), &layout, used);
                 }
@@ -376,37 +397,34 @@ impl Mixer {
     }
 
     fn retire(&mut self, mut assigned: Assigned) {
-        let free = self
-            .retiring
-            .iter()
-            .position(Option::is_none)
-            .expect("a voice pool retires at most the voices it holds");
+        assigned.playing.stop();
         assigned.state = State::Fading;
-        if let Some(replaced) = self.retiring[free].replace(assigned) {
-            self.garbage.discard(replaced.discard());
+        let Some(slot) = slot_of(assigned.voice) else {
+            self.garbage.discard(assigned.discard());
+            return;
+        };
+        if let Some(displaced) = self.voices[slot].retiring.replace(assigned) {
+            self.garbage.discard(displaced.discard());
         }
     }
 
     fn assigned_mut(&mut self, voice: Voice) -> Option<&mut Assigned> {
-        self.voices[slot_of(voice)]
+        self.voices[slot_of(voice)?]
+            .active
             .as_mut()
             .filter(|held| held.holds(voice))
     }
 }
 
-fn slot_of(voice: Voice) -> usize {
+fn slot_of(voice: Voice) -> Option<usize> {
     let slot = voice.slot as usize;
-    assert!(
-        slot < MAX_VOICES,
-        "a voice names the slot {slot} of a mixer that holds {MAX_VOICES}",
-    );
-    slot
+    (slot < MAX_VOICES).then_some(slot)
 }
 
 fn bus_index(bus: Option<&str>, layout: &Layout, used: usize) -> usize {
     bus.and_then(|id| layout.index(id))
         .unwrap_or_else(|| layout.root())
-        .min(used - 1)
+        .min(used.saturating_sub(1))
 }
 
 fn mix_into(target: &mut [f32], source: &[f32]) {
@@ -465,14 +483,16 @@ mod tests {
         })
     }
 
-    fn mixer() -> (
+    fn mixer(
+        commands: usize,
+    ) -> (
         ring::Producer<Command>,
         Arc<Playback>,
         garbage::Bin,
         Mixer,
         Arc<AtomicUsize>,
     ) {
-        let (producer, command_consumer) = ring::channel(64);
+        let (producer, command_consumer) = ring::channel(commands);
         let active = Arc::new(AtomicUsize::new(0));
         let playback = Playback::new(MAX_VOICES);
         let (garbage, bin) = garbage::channel(64);
@@ -495,7 +515,7 @@ mod tests {
 
     #[test]
     fn a_replaced_voice_continues_from_the_frame_it_reported() {
-        let (mut producer, playback, _bin, mut mixer, _active) = mixer();
+        let (mut producer, playback, _bin, mut mixer, _active) = mixer(64);
         let ramp = || tone((0..4_800).map(|at| at as f32 / 1_000.0).collect());
         let reloaded = || {
             tone(
@@ -531,7 +551,7 @@ mod tests {
 
     #[test]
     fn a_stopped_voice_ramps_out_of_the_mix() {
-        let (mut producer, playback, _bin, mut mixer, active) = mixer();
+        let (mut producer, playback, _bin, mut mixer, active) = mixer(64);
         start(
             &mut producer,
             &playback,
@@ -567,8 +587,91 @@ mod tests {
     }
 
     #[test]
+    fn a_slot_retires_more_voices_than_the_mixer_holds_without_panicking() {
+        let (mut producer, playback, mut bin, mut mixer, active) = mixer(MAX_VOICES * 2 + 2);
+        let sound = tone(vec![1.0; 48_000]);
+        let play = |slot: usize, token: u32| Command::Play {
+            voice: Voice {
+                slot: slot as u32,
+                token,
+            },
+            input: Input::Decoded(Arc::clone(&sound)),
+            bus: None,
+            gain: 1.0,
+            pan: 0.0,
+            cutoff: f32::INFINITY,
+            looping: true,
+            pitch: 1.0,
+            start: 0,
+        };
+        let fading = |mixer: &Mixer| {
+            mixer
+                .voices
+                .iter()
+                .filter(|slot| slot.retiring.is_some())
+                .count()
+        };
+        let mut block = [0.0f32; 960];
+        for slot in 0..MAX_VOICES {
+            start(&mut producer, &playback, play(slot, 1));
+        }
+        mixer.render(&mut block);
+        assert_eq!(mixer.count(), MAX_VOICES);
+        for at in 0..MAX_VOICES * 2 + 1 {
+            start(
+                &mut producer,
+                &playback,
+                play(at % MAX_VOICES, at as u32 + 2),
+            );
+        }
+        let mut frame = [0.0f32; 2];
+        mixer.render(&mut frame);
+        assert_eq!(
+            fading(&mixer),
+            MAX_VOICES,
+            "a callback retires at most one fading voice per slot",
+        );
+        assert!(
+            bin.empty() > 0,
+            "a displaced fading voice waits for the thread that releases it",
+        );
+        mixer.render(&mut block);
+        assert_eq!(fading(&mixer), 0);
+        assert!(
+            block.iter().any(|sample| sample.abs() > 0.1),
+            "a block of retired and playing voices renders",
+        );
+        producer
+            .send(Command::Paused { paused: true })
+            .expect("the mixer pauses");
+        mixer.render(&mut block);
+        for _ in 0..4 {
+            for slot in 0..MAX_VOICES {
+                start(&mut producer, &playback, play(slot, slot as u32 + 2));
+            }
+            for slot in 0..MAX_VOICES {
+                producer
+                    .send(Command::Stop {
+                        voice: Voice {
+                            slot: slot as u32,
+                            token: slot as u32 + 2,
+                        },
+                    })
+                    .expect("the mixer stops a paused voice");
+            }
+            mixer.render(&mut block);
+            assert_eq!(
+                fading(&mixer),
+                0,
+                "a paused callback drains the voices it retires",
+            );
+            assert_eq!(active.load(Ordering::Relaxed), 0);
+        }
+    }
+
+    #[test]
     fn a_finished_voice_hands_its_status_and_its_frames_to_the_main_thread() {
-        let (mut producer, playback, mut bin, mut mixer, _active) = mixer();
+        let (mut producer, playback, mut bin, mut mixer, _active) = mixer(64);
         start(
             &mut producer,
             &playback,
@@ -613,7 +716,7 @@ mod tests {
 
     #[test]
     fn a_mixer_sends_a_bus_into_a_reverb_tail() {
-        let (mut producer, _playback, _bin, mut mixer, _active) = mixer();
+        let (mut producer, _playback, _bin, mut mixer, _active) = mixer(64);
         let layout = buses(&[
             ("master", None, None),
             ("quiet", Some("master"), Some("hall")),
@@ -649,7 +752,7 @@ mod tests {
 
     #[test]
     fn a_mixer_mixes_buses_through_gain_and_filter() {
-        let (mut producer, _playback, _bin, mut mixer, _active) = mixer();
+        let (mut producer, _playback, _bin, mut mixer, _active) = mixer(64);
         let layout = buses(&[("master", None, None), ("quiet", Some("master"), None)]);
         let mut params = vec![BusParams::default(); 2];
         params[1].gain_db = -12.0;

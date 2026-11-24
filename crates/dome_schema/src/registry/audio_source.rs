@@ -337,49 +337,52 @@ impl SceneComponent for AudioSourceRef {
         Ok(source)
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
-        let sound = SoundId::parse(fields.need("sound"), &format!("the sound of {what}"));
-        let bus = fields
-            .take("bus")
-            .map(|value| {
-                let id = value.string_value(&format!("the bus of {what}"));
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
+        let sound = SoundId::parse(fields.need("sound")?, &format!("the sound of {what}"))?;
+        let bus = match fields.take("bus") {
+            Some(value) => {
+                let id = value.string_value(&format!("the bus of {what}"))?;
                 if id.is_empty() {
                     None
                 } else {
-                    assert!(dome_scene::valid_id(&id), "{what} holds the bus id {id}");
+                    if !dome_scene::valid_id(&id) {
+                        return Err(format!("{what} holds the bus id {id}"));
+                    }
                     Some(AudioBusId::new(id))
                 }
-            })
-            .unwrap_or(None);
+            }
+            None => None,
+        };
         let gain = fields
-            .need("gain")
-            .f32_value(&format!("the gain of {what}"));
+            .need("gain")?
+            .f32_value(&format!("the gain of {what}"))?;
         let looping = fields
-            .need("looping")
-            .boolean_value(&format!("the looping of {what}"));
+            .need("looping")?
+            .boolean_value(&format!("the looping of {what}"))?;
         let spatial = fields
-            .need("spatial")
-            .boolean_value(&format!("the spatial of {what}"));
+            .need("spatial")?
+            .boolean_value(&format!("the spatial of {what}"))?;
         let min_distance = fields
-            .need("min_distance")
-            .f32_value(&format!("the minimum distance of {what}"));
+            .need("min_distance")?
+            .f32_value(&format!("the minimum distance of {what}"))?;
         let max_distance = fields
-            .need("max_distance")
-            .f32_value(&format!("the maximum distance of {what}"));
+            .need("max_distance")?
+            .f32_value(&format!("the maximum distance of {what}"))?;
         let pitch = fields
-            .need("pitch")
-            .f32_value(&format!("the pitch of {what}"));
-        let priority = fields.take("priority").map_or(0u8, |priority| {
-            priority
-                .f32_value(&format!("the priority of {what}"))
-                .round() as u8
-        });
+            .need("pitch")?
+            .f32_value(&format!("the pitch of {what}"))?;
+        let priority = match fields.take("priority") {
+            Some(priority) => priority
+                .f32_value(&format!("the priority of {what}"))?
+                .round() as u8,
+            None => 0,
+        };
         let autoplay = fields
-            .need("autoplay")
-            .boolean_value(&format!("the autoplay of {what}"));
-        fields.done();
-        Self {
+            .need("autoplay")?
+            .boolean_value(&format!("the autoplay of {what}"))?;
+        fields.done()?;
+        Ok(Self {
             sound,
             bus,
             gain,
@@ -391,7 +394,7 @@ impl SceneComponent for AudioSourceRef {
             priority,
             autoplay,
             playing: false,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

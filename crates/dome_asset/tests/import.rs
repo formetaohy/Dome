@@ -212,7 +212,8 @@ fn an_imported_model_expands_into_the_assets_and_nodes_it_holds() {
         Some("rig_graph"),
     );
     let written = scene.write().expect("a scene writes its text");
-    let mut parsed = Scene::parse(&written, &root, "the written scene", schema());
+    let mut parsed = Scene::parse(&written, &root, "the written scene", schema())
+        .expect("the written scene parses");
     assert_eq!(parsed, scene);
     assert!(
         edit(&mut parsed, |edit| edit.import_model(

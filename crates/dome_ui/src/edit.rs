@@ -41,6 +41,7 @@ pub struct Edit {
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     multiline: bool,
+    version: u64,
 }
 
 impl Edit {
@@ -57,6 +58,7 @@ impl Edit {
             undo: Vec::new(),
             redo: Vec::new(),
             multiline: false,
+            version: 0,
         }
     }
 
@@ -85,6 +87,10 @@ impl Edit {
 
     pub fn length(&self) -> usize {
         self.text.len()
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     pub fn selection(&self) -> Option<(Boundary, Boundary)> {
@@ -126,19 +132,19 @@ impl Edit {
         if !extend {
             self.anchor = caret;
         }
-        self.active_at = time;
+        self.changed(time);
     }
 
     pub fn select(&mut self, range: (Boundary, Boundary), time: f32) {
         self.anchor = range.0;
         self.caret = range.1;
-        self.active_at = time;
+        self.changed(time);
     }
 
     pub fn select_all(&mut self, time: f32) {
         self.anchor = Boundary::start();
         self.caret = Boundary::end(&self.text);
-        self.active_at = time;
+        self.changed(time);
     }
 
     pub fn click(&mut self, point: Vec2, time: f32) -> u32 {
@@ -310,6 +316,11 @@ impl Edit {
         }
     }
 
+    fn changed(&mut self, time: f32) {
+        self.active_at = time;
+        self.version = self.version.wrapping_add(1);
+    }
+
     fn restore(&mut self, snapshot: Snapshot) {
         self.text = snapshot.text;
         self.anchor = snapshot.anchor;
@@ -322,7 +333,7 @@ impl Edit {
         };
         self.redo.push(self.snapshot());
         self.restore(snapshot);
-        self.active_at = time;
+        self.changed(time);
     }
 
     fn redo(&mut self, time: f32) {
@@ -331,7 +342,7 @@ impl Edit {
         };
         self.undo.push(self.snapshot());
         self.restore(snapshot);
-        self.active_at = time;
+        self.changed(time);
     }
 
     pub fn insert(&mut self, text: &str, time: f32) {
@@ -444,7 +455,7 @@ impl Edit {
         self.text.replace_range(start.byte()..end.byte(), text);
         self.caret = Boundary::ceil(&self.text, start.byte() + text.len());
         self.anchor = self.caret;
-        self.active_at = time;
+        self.changed(time);
     }
 
     fn erase_before(&mut self, time: f32) {
@@ -459,7 +470,7 @@ impl Edit {
         self.text.replace_range(start.byte()..self.caret.byte(), "");
         self.caret = Boundary::floor(&self.text, start.byte());
         self.anchor = self.caret;
-        self.active_at = time;
+        self.changed(time);
     }
 
     fn erase_after(&mut self, time: f32) {
@@ -474,7 +485,7 @@ impl Edit {
         self.text.replace_range(self.caret.byte()..end.byte(), "");
         self.caret = Boundary::floor(&self.text, self.caret.byte());
         self.anchor = self.caret;
-        self.active_at = time;
+        self.changed(time);
     }
 
     fn erase_word_before(&mut self, time: f32) {
@@ -488,7 +499,7 @@ impl Edit {
             self.text.replace_range(start.byte()..self.caret.byte(), "");
             self.caret = Boundary::floor(&self.text, start.byte());
             self.anchor = self.caret;
-            self.active_at = time;
+            self.changed(time);
         }
     }
 
@@ -503,7 +514,7 @@ impl Edit {
             self.text.replace_range(self.caret.byte()..end.byte(), "");
             self.caret = Boundary::floor(&self.text, self.caret.byte());
             self.anchor = self.caret;
-            self.active_at = time;
+            self.changed(time);
         }
     }
 

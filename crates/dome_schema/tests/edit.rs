@@ -58,7 +58,7 @@ fn an_edit_transaction_returns_the_scene_it_edited() {
     fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
     fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), INSTANCE).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema()).expect("the scene loads");
     let before = scene.write().expect("a scene writes its text");
     let (_, delta) = scene
         .edit(|edit| {
@@ -136,7 +136,7 @@ fn an_edit_that_breaks_a_scene_invariant_returns_the_scene_it_started_on() {
     fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
     fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), INSTANCE).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema()).expect("the scene loads");
     let before = scene.write().expect("a scene writes its text");
     let index = scene
         .node_index("prop")
@@ -170,7 +170,7 @@ fn an_unpacked_instance_keeps_the_nodes_and_assets_it_materialized() {
     fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
     fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), INSTANCE).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema()).expect("the scene loads");
     let tint = dome_scene::Value::Vector(dome_math::Vec3::new(0.25, 0.5, 0.75));
     edit(&mut scene, |edit| {
         edit.set_property(&Target::Node(String::from("prop_body")), "mesh.tint", &tint)
@@ -203,7 +203,8 @@ fn an_unpacked_instance_keeps_the_nodes_and_assets_it_materialized() {
         "no instance survives unpacking"
     );
     assert_eq!(
-        Scene::parse(&written, &root, "the unpacked scene", schema()),
+        Scene::parse(&written, &root, "the unpacked scene", schema())
+            .expect("the unpacked scene parses"),
         scene,
         "the unpacked scene stands on its own",
     );
@@ -231,16 +232,22 @@ value = [1.0, 2.0, 3.0]
 "#;
 
 #[test]
-#[should_panic(
-    expected = "the prefab instance prop overrides transform.translation of ghost, which it does not hold"
-)]
 fn an_override_of_a_node_the_instance_lacks_is_refused() {
     let root = directory("edit_override");
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
     fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), OVERRIDING).expect("a test writes its scene");
-    Scene::load(root.join("scene.toml"), &root, schema());
+    let error = Scene::load(root.join("scene.toml"), &root, schema())
+        .expect_err("an override of a node the instance lacks is refused");
+    assert_eq!(
+        error,
+        format!(
+            "the scene {}: the prefab instance prop overrides transform.translation of ghost, which it does not hold",
+            root.join("scene.toml").display(),
+        ),
+    );
+    let _ = fs::remove_dir_all(&root);
 }
 
 const REPEATING: &str = r#"format = "dome_scene"
@@ -270,7 +277,7 @@ fn an_instance_keeps_the_overrides_its_prefab_does_not_hold() {
     fs::create_dir_all(root.join("prefabs")).expect("a test opens its directory");
     fs::write(root.join("prefabs/prop.toml"), PROP).expect("a test writes its prefab");
     fs::write(root.join("scene.toml"), REPEATING).expect("a test writes its scene");
-    let mut scene = Scene::load(root.join("scene.toml"), &root, schema());
+    let mut scene = Scene::load(root.join("scene.toml"), &root, schema()).expect("the scene loads");
     assert_eq!(
         scene.instance_changes("prop"),
         0,

@@ -54,7 +54,8 @@ scale = [1.0, 1.0, 1.0]
 
 #[test]
 fn a_scene_sync_follows_the_structure_it_edits() {
-    let mut scene = Scene::parse(SCENE, ".", "the test scene", schema());
+    let mut scene =
+        Scene::parse(SCENE, ".", "the test scene", schema()).expect("the test scene parses");
     let mut world = World::new();
     let mut sync = SceneSync::new(schema());
     sync.sync(&scene, &mut world, &NoAssets, &Changed::none());
@@ -214,7 +215,8 @@ fn edit<T>(
 
 #[test]
 fn a_shared_scene_snapshot_keeps_the_nodes_it_copied() {
-    let mut scene = Scene::parse(SCENE, ".", "the test scene", schema());
+    let mut scene =
+        Scene::parse(SCENE, ".", "the test scene", schema()).expect("the test scene parses");
     let snapshot = scene.clone();
     edit(&mut scene, |edit| {
         edit.set_transform(0, Transform::from_translation(Vec3::new(2.0, 0.0, 0.0)))

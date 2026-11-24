@@ -11,6 +11,7 @@ use std::thread::JoinHandle;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Change {
     pub scene: bool,
+    pub prefab: bool,
     pub model: bool,
     pub asset: bool,
     pub script: bool,
@@ -18,11 +19,12 @@ pub struct Change {
 
 impl Change {
     pub fn any(self) -> bool {
-        self.scene || self.model || self.asset || self.script
+        self.scene || self.prefab || self.model || self.asset || self.script
     }
 
     pub fn absorb(&mut self, other: Self) {
         self.scene |= other.scene;
+        self.prefab |= other.prefab;
         self.model |= other.model;
         self.asset |= other.asset;
         self.script |= other.script;
@@ -38,6 +40,7 @@ pub struct Report {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Kind {
     Scene,
+    Prefab,
     Model(String),
     Asset,
     Script,
@@ -48,6 +51,7 @@ impl Kind {
         let mut change = Change::default();
         match self {
             Self::Scene => change.scene = true,
+            Self::Prefab => change.prefab = true,
             Self::Model(_) => change.model = true,
             Self::Asset => change.asset = true,
             Self::Script => change.script = true,
@@ -98,7 +102,7 @@ impl Watch {
         desired.insert(self.path.clone(), Kind::Scene);
         for owners in root.instances().values() {
             for prefab in owners {
-                desired.insert(root.prefab(prefab), Kind::Scene);
+                desired.insert(root.prefab(prefab), Kind::Prefab);
             }
         }
         for image in root.images() {
@@ -196,9 +200,10 @@ nodes = []
         fs::create_dir_all(root.join("scripts")).expect("a watch test opens its scripts");
         let path = root.join("scene.toml");
         fs::write(&path, SCENE).expect("a watch test writes its scene");
-        let script = root.join("scripts/main.lampas");
+        let script = root.join("scripts/main.amp");
         fs::write(&script, SCRIPT).expect("a watch test writes its script");
-        let scene = Scene::load(&path, root.clone(), Arc::new(Registry::default()));
+        let scene = Scene::load(&path, root.clone(), Arc::new(Registry::default()))
+            .expect("the watch scene loads");
         let mut watch = Watch::new(&path, &scene, || {});
         assert!(
             watch.changed().is_none(),

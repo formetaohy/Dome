@@ -1,10 +1,8 @@
 use crate::manifest::Manifest;
 use crate::starter;
-use dome_scene::{Folder, Scene};
-use dome_schema::Registry;
+use dome_scene::Folder;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 pub const MANIFEST: &str = "project.toml";
 pub const ENTRY: &str = "main.scene.toml";
@@ -48,7 +46,8 @@ impl Project {
         let text = fs::read_to_string(&path).unwrap_or_else(|error| {
             panic!("the project {} reads no manifest: {error}", root.display())
         });
-        let manifest = Manifest::parse(&text, &format!("the project manifest {}", path.display()));
+        let manifest = Manifest::parse(&text, &format!("the project manifest {}", path.display()))
+            .unwrap_or_else(|error| panic!("{error}"));
         let entry = root.join(Folder::Scene.name()).join(ENTRY);
         assert!(
             entry.is_file(),
@@ -56,7 +55,6 @@ impl Project {
             root.display(),
             entry.display(),
         );
-        Scene::load(&entry, &root, Arc::new(Registry::default()));
         Self { root, manifest }
     }
 
@@ -135,7 +133,8 @@ nodes = []
             );
         }
         let opened = Project::open(&root);
-        let scene = Scene::load(opened.entry(), opened.root(), Arc::new(Registry::default()));
+        let scene = Scene::load(opened.entry(), opened.root(), Arc::new(Registry::default()))
+            .expect("the entry scene parses");
         assert!(
             !scene.nodes().is_empty(),
             "a scaffolded project holds an entry scene with nodes",
@@ -144,13 +143,17 @@ nodes = []
     }
 
     #[test]
-    #[should_panic(expected = "outside the assets folder")]
     fn a_scene_keeps_the_images_it_names_inside_the_assets_folder() {
-        Scene::parse(
+        let error = Scene::parse(
             OUTSIDE,
             ".",
             "the outside scene",
             Arc::new(Registry::default()),
+        )
+        .expect_err("the outside scene parses no image outside the assets folder");
+        assert_eq!(
+            error,
+            "the outside scene holds the image outside of path ../outside.png outside the assets folder",
         );
     }
 }

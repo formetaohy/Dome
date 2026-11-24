@@ -58,29 +58,29 @@ impl Value {
         }
     }
 
-    pub fn parse(value: Toml, what: &str) -> Self {
+    pub fn parse(value: Toml, what: &str) -> Result<Self, String> {
         if value.is_number() {
-            return Self::Number(value.f32_value(what));
+            return Ok(Self::Number(value.f32_value(what)?));
         }
         if value.is_boolean() {
-            return Self::Bool(value.boolean_value(what));
+            return Ok(Self::Bool(value.boolean_value(what)?));
         }
         if value.is_string() {
-            return Self::Text(value.string_value(what));
+            return Ok(Self::Text(value.string_value(what)?));
         }
         if value.is_array() {
             let numbers = value
-                .array_items(what)
+                .array_items(what)?
                 .into_iter()
                 .map(|item| item.f32_value(what))
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, String>>()?;
             return match numbers.as_slice() {
-                [x, y, z] => Self::Vector(Vec3::new(*x, *y, *z)),
-                [x, y, z, w] => Self::Color(Vec4::new(*x, *y, *z, *w)),
-                _ => panic!("{what} holds {} numbers as a value", numbers.len()),
+                [x, y, z] => Ok(Self::Vector(Vec3::new(*x, *y, *z))),
+                [x, y, z, w] => Ok(Self::Color(Vec4::new(*x, *y, *z, *w))),
+                _ => Err(format!("{what} holds {} numbers as a value", numbers.len())),
             };
         }
-        panic!("{what} holds {} as a value", value.kind());
+        Err(format!("{what} holds {} as a value", value.kind()))
     }
 
     pub(crate) fn to_toml(&self) -> Toml {

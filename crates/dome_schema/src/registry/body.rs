@@ -295,37 +295,37 @@ impl SceneComponent for BodyRef {
         Ok(Self::new(BodyKind::Dynamic))
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
         let kind = fields
-            .need("kind")
-            .string_value(&format!("the kind of {what}"));
-        let kind = BodyKind::of(&kind).unwrap_or_else(|| panic!("{what} holds the kind {kind}"));
+            .need("kind")?
+            .string_value(&format!("the kind of {what}"))?;
+        let kind = BodyKind::of(&kind).ok_or_else(|| format!("{what} holds the kind {kind}"))?;
         let mass = fields
-            .need("mass")
-            .f32_value(&format!("the mass of {what}"));
+            .need("mass")?
+            .f32_value(&format!("the mass of {what}"))?;
         let gravity_scale = fields
-            .need("gravity_scale")
-            .f32_value(&format!("the gravity scale of {what}"));
+            .need("gravity_scale")?
+            .f32_value(&format!("the gravity scale of {what}"))?;
         let linear_damping = fields
-            .need("linear_damping")
-            .f32_value(&format!("the linear damping of {what}"));
+            .need("linear_damping")?
+            .f32_value(&format!("the linear damping of {what}"))?;
         let angular_damping = fields
-            .need("angular_damping")
-            .f32_value(&format!("the angular damping of {what}"));
+            .need("angular_damping")?
+            .f32_value(&format!("the angular damping of {what}"))?;
         let linear_velocity = Vec3::from_array(floats::<3>(
-            fields.need("linear_velocity"),
+            fields.need("linear_velocity")?,
             &format!("the linear velocity of {what}"),
-        ));
+        )?);
         let angular_velocity = Vec3::from_array(floats::<3>(
-            fields.need("angular_velocity"),
+            fields.need("angular_velocity")?,
             &format!("the angular velocity of {what}"),
-        ));
+        )?);
         let can_sleep = fields
-            .need("can_sleep")
-            .boolean_value(&format!("the sleep of {what}"));
-        fields.done();
-        Self {
+            .need("can_sleep")?
+            .boolean_value(&format!("the sleep of {what}"))?;
+        fields.done()?;
+        Ok(Self {
             kind,
             mass,
             gravity_scale,
@@ -335,7 +335,7 @@ impl SceneComponent for BodyRef {
             angular_velocity,
             can_sleep,
             sleeping: false,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

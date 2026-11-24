@@ -1,4 +1,5 @@
 use crate::context::Context;
+use crate::trap::Trap;
 use crate::value::Value;
 use crate::vm::{Frame, Outcome, Vm};
 use dome_ecs::Entity;
@@ -8,7 +9,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 impl Vm {
-    pub(crate) fn execute(&mut self, module: &Module, context: &mut dyn Context) -> Outcome {
+    pub(crate) fn execute(
+        &mut self,
+        module: &Module,
+        context: &mut dyn Context,
+    ) -> Result<Outcome, Trap> {
         loop {
             let frame = *self.frames.last().expect("a lampas frame executes");
             let instruction = module.functions[frame.function as usize].code[frame.pc];
@@ -40,7 +45,7 @@ impl Vm {
                     let value = self.stack[base + instruction.b as usize].integer();
                     let value = value
                         .checked_neg()
-                        .unwrap_or_else(|| fail(module, frame, "the int holds no minus"));
+                        .ok_or_else(|| fault(module, frame, "the int holds no minus"))?;
                     self.stack[dst] = Value::Int(value);
                 }
                 Op::NegateFloat => {
@@ -53,27 +58,27 @@ impl Vm {
                 }
                 Op::AddInt => {
                     let (left, right) = self.integers(base, instruction);
-                    let value = integer(module, frame, left.checked_add(right), right, false);
+                    let value = integer(module, frame, left.checked_add(right), right, false)?;
                     self.stack[dst] = Value::Int(value);
                 }
                 Op::SubtractInt => {
                     let (left, right) = self.integers(base, instruction);
-                    let value = integer(module, frame, left.checked_sub(right), right, false);
+                    let value = integer(module, frame, left.checked_sub(right), right, false)?;
                     self.stack[dst] = Value::Int(value);
                 }
                 Op::MultiplyInt => {
                     let (left, right) = self.integers(base, instruction);
-                    let value = integer(module, frame, left.checked_mul(right), right, false);
+                    let value = integer(module, frame, left.checked_mul(right), right, false)?;
                     self.stack[dst] = Value::Int(value);
                 }
                 Op::DivideInt => {
                     let (left, right) = self.integers(base, instruction);
-                    let value = integer(module, frame, left.checked_div(right), right, true);
+                    let value = integer(module, frame, left.checked_div(right), right, true)?;
                     self.stack[dst] = Value::Int(value);
                 }
                 Op::RemainderInt => {
                     let (left, right) = self.integers(base, instruction);
-                    let value = integer(module, frame, left.checked_rem(right), right, true);
+                    let value = integer(module, frame, left.checked_rem(right), right, true)?;
                     self.stack[dst] = Value::Int(value);
                 }
                 Op::AddFloat => {
@@ -228,10 +233,9 @@ impl Vm {
                 Op::Call => {
                     let callee = instruction.imm as usize;
                     let at = base + instruction.b as usize;
-                    assert!(
-                        self.frames.len() < self.maximum_depth(),
-                        "the lampas call stack overflows",
-                    );
+                    if self.frames.len() >= self.maximum_depth() {
+                        return Err(fault(module, frame, "the lampas call stack overflows"));
+                    }
                     let registers = module.functions[callee].registers as usize;
                     self.stack.resize(at + registers, Value::Unit);
                     self.frames.push(Frame {
@@ -264,14 +268,14 @@ impl Vm {
                         }
                         None => {
                             self.stack.clear();
-                            return Outcome::Returned(value);
+                            return Ok(Outcome::Returned(value));
                         }
                     }
                 }
                 Op::Stop => {
                     self.stack.clear();
                     self.frames.clear();
-                    return Outcome::Stopped;
+                    return Ok(Outcome::Stopped);
                 }
                 Op::MakeList => {
                     let count = instruction.imm as usize;
@@ -314,33 +318,15 @@ impl Vm {
                 }
                 Op::ListGet => {
                     let index = self.stack[base + instruction.high() as usize].integer();
-                    let at = usize::try_from(index)
-                        .unwrap_or_else(|_| fail(module, frame, "the list holds no negative item"));
-                    let value = self.stack[base + instruction.low() as usize]
-                        .list()
-                        .borrow()
-                        .get(at)
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            fail(module, frame, format!("the list holds no item {index}"))
-                        });
+                    let list = self.stack[base + instruction.low() as usize].list();
+                    let value = read_item(module, frame, list, index)?;
                     self.stack[dst] = value;
                 }
                 Op::ListSet => {
                     let index = self.stack[base + instruction.low() as usize].integer();
                     let value = self.stack[base + instruction.high() as usize].clone();
-                    let at = usize::try_from(index)
-                        .unwrap_or_else(|_| fail(module, frame, "the list holds no negative item"));
-                    let mut items = self.stack[base + instruction.a as usize]
-                        .list()
-                        .borrow_mut();
-                    assert!(
-                        at < items.len(),
-                        "the lampas function {} fails at instruction {}: the list holds no item {index}",
-                        module.functions[frame.function as usize].name,
-                        frame.pc - 1,
-                    );
-                    items[at] = value;
+                    let list = self.stack[base + instruction.a as usize].list();
+                    write_item(module, frame, list, index, value)?;
                 }
                 Op::ReadField => {
                     let row = self.stack[base + instruction.b as usize].component();
@@ -386,12 +372,12 @@ impl Vm {
                 }
                 Op::FloatToInt => {
                     let value = self.stack[base + instruction.b as usize].float();
-                    assert!(
-                        value.is_finite() && value >= i64::MIN as f64 && value < -(i64::MIN as f64),
-                        "the lampas function {} fails at instruction {}: {value} holds no int",
-                        module.functions[frame.function as usize].name,
-                        frame.pc - 1,
-                    );
+                    if !(value.is_finite()
+                        && value >= i64::MIN as f64
+                        && value < -(i64::MIN as f64))
+                    {
+                        return Err(fault(module, frame, format!("{value} holds no int")));
+                    }
                     self.stack[dst] = Value::Int(value.trunc() as i64);
                 }
                 Op::ToText => {
@@ -489,20 +475,67 @@ impl Vm {
     }
 }
 
-fn integer(module: &Module, frame: Frame, value: Option<i64>, right: i64, divides: bool) -> i64 {
-    value.unwrap_or_else(|| {
+fn integer(
+    module: &Module,
+    frame: Frame,
+    value: Option<i64>,
+    right: i64,
+    divides: bool,
+) -> Result<i64, Trap> {
+    value.ok_or_else(|| {
         if divides && right == 0 {
-            fail(module, frame, "the int divides by zero")
+            fault(module, frame, "the int divides by zero")
         } else {
-            fail(module, frame, "the int overflows")
+            fault(module, frame, "the int overflows")
         }
     })
 }
 
-fn fail(module: &Module, frame: Frame, message: impl std::fmt::Display) -> ! {
-    panic!(
-        "the lampas function {} fails at instruction {}: {message}",
-        module.functions[frame.function as usize].name,
-        frame.pc - 1,
+fn item_index(module: &Module, frame: Frame, index: i64) -> Result<usize, Trap> {
+    if index < 0 {
+        return Err(fault(module, frame, "the list holds no negative item"));
+    }
+    usize::try_from(index).map_err(|_| item_absent(module, frame, index))
+}
+
+fn read_item(
+    module: &Module,
+    frame: Frame,
+    list: &RefCell<Vec<Value>>,
+    index: i64,
+) -> Result<Value, Trap> {
+    let at = item_index(module, frame, index)?;
+    list.borrow()
+        .get(at)
+        .cloned()
+        .ok_or_else(|| item_absent(module, frame, index))
+}
+
+fn write_item(
+    module: &Module,
+    frame: Frame,
+    list: &RefCell<Vec<Value>>,
+    index: i64,
+    value: Value,
+) -> Result<(), Trap> {
+    let at = item_index(module, frame, index)?;
+    match list.borrow_mut().get_mut(at) {
+        Some(item) => {
+            *item = value;
+            Ok(())
+        }
+        None => Err(item_absent(module, frame, index)),
+    }
+}
+
+fn item_absent(module: &Module, frame: Frame, index: i64) -> Trap {
+    fault(module, frame, format!("the list holds no item {index}"))
+}
+
+fn fault(module: &Module, frame: Frame, message: impl Into<String>) -> Trap {
+    Trap::new(
+        &module.functions[frame.function as usize].name,
+        frame.pc,
+        message,
     )
 }

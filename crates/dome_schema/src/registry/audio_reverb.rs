@@ -163,25 +163,27 @@ impl SceneComponent for AudioReverbRef {
         Ok(Self::default())
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
         let enabled = fields
-            .need("enabled")
-            .boolean_value(&format!("the enabled state of {what}"));
+            .need("enabled")?
+            .boolean_value(&format!("the enabled state of {what}"))?;
         let room = fields
-            .need("room")
-            .f32_value(&format!("the room of {what}"));
+            .need("room")?
+            .f32_value(&format!("the room of {what}"))?;
         let damping = fields
-            .need("damping")
-            .f32_value(&format!("the damping of {what}"));
-        let mix = fields.need("mix").f32_value(&format!("the mix of {what}"));
-        fields.done();
-        Self {
+            .need("damping")?
+            .f32_value(&format!("the damping of {what}"))?;
+        let mix = fields
+            .need("mix")?
+            .f32_value(&format!("the mix of {what}"))?;
+        fields.done()?;
+        Ok(Self {
             enabled,
             room,
             damping,
             mix,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

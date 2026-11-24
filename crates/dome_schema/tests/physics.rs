@@ -83,9 +83,11 @@ mask = 65535
 
 #[test]
 fn a_scene_installs_bodies_and_steps_them() {
-    let scene = Scene::parse(SCENE, ".", "the physics scene", schema());
+    let scene =
+        Scene::parse(SCENE, ".", "the physics scene", schema()).expect("the physics scene parses");
     let written = scene.write().expect("a scene writes its text");
-    let reloaded = Scene::parse(&written, ".", "the written physics scene", schema());
+    let reloaded = Scene::parse(&written, ".", "the written physics scene", schema())
+        .expect("the written physics scene parses");
     assert_eq!(scene, reloaded);
     let mut world = World::new();
     world.insert_resource(Gravity::default());
@@ -213,10 +215,12 @@ mask = 65535
 
 #[test]
 fn a_scene_composes_the_colliders_of_a_node_into_its_body() {
-    let scene = Scene::parse(COMPOUND, ".", "the compound scene", schema());
+    let scene = Scene::parse(COMPOUND, ".", "the compound scene", schema())
+        .expect("the compound scene parses");
     let written = scene.write().expect("a scene writes its text");
     assert_eq!(
-        Scene::parse(&written, ".", "the written compound scene", schema()),
+        Scene::parse(&written, ".", "the written compound scene", schema())
+            .expect("the written compound scene parses"),
         scene,
     );
     let mut world = World::new();
@@ -357,15 +361,17 @@ mask = 65535
 
 #[test]
 fn a_scene_collides_the_triangles_of_its_mesh() {
-    let scene = Scene::parse(MESH, ".", "the mesh scene", schema());
+    let scene = Scene::parse(MESH, ".", "the mesh scene", schema()).expect("the mesh scene parses");
     let written = scene.write().expect("a scene writes its text");
     assert!(written.contains("shape = \"mesh\""));
     assert!(written.contains("mesh = \"ground\""));
     assert_eq!(
-        Scene::parse(&written, ".", "the written mesh scene", schema()),
+        Scene::parse(&written, ".", "the written mesh scene", schema())
+            .expect("the written mesh scene parses"),
         scene
     );
-    let mut edited = Scene::parse(MESH, ".", "the edited mesh scene", schema());
+    let mut edited = Scene::parse(MESH, ".", "the edited mesh scene", schema())
+        .expect("the edited mesh scene parses");
     let ground = dome_scene::Target::Node(String::from("ground"));
     assert_eq!(
         edit(&mut edited, |edit| {

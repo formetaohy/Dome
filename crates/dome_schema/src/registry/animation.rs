@@ -165,17 +165,17 @@ impl SceneComponent for AnimationRef {
         ))
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
-        let graph = GraphId::parse(fields.need("graph"), &format!("the graph of {what}"));
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
+        let graph = GraphId::parse(fields.need("graph")?, &format!("the graph of {what}"))?;
         let playing = fields
-            .need("playing")
-            .boolean_value(&format!("the playback of {what}"));
+            .need("playing")?
+            .boolean_value(&format!("the playback of {what}"))?;
         let fade = fields
-            .need("fade")
-            .f32_value(&format!("the fade of {what}"));
-        fields.done();
-        Self::new(graph, playing, fade)
+            .need("fade")?
+            .f32_value(&format!("the fade of {what}"))?;
+        fields.done()?;
+        Ok(Self::new(graph, playing, fade))
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

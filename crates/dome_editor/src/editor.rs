@@ -1,6 +1,5 @@
 use crate::player::Player;
 use std::collections::HashSet;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,9 +22,10 @@ use crate::action::{
     Action, AssetKind, Confirm, NodeKind, ParameterKind, PathDialog, PathKind, Sheet, Tab,
 };
 use crate::camera::{self, Orbit};
-use crate::document::{Document, State as DocumentState};
+use crate::document::Document;
 use crate::gizmo::{self, Grip, Mode, Space};
 use crate::history::History;
+use crate::message::Message;
 use crate::preview::Preview;
 use crate::session::Session;
 use crate::stage::{self, State};
@@ -91,7 +91,7 @@ pub struct Editor {
     confirm: Option<Confirm>,
     exiting: bool,
     titled_dirty: Option<bool>,
-    error: Option<String>,
+    message: Option<Message>,
     child: Option<Player>,
     orbit: Orbit,
     mode: Mode,
@@ -128,8 +128,19 @@ pub struct Editor {
 impl Editor {
     fn new(config: EditorConfig) -> Self {
         let path = config.project.entry();
+        let root = config.project.root().to_path_buf();
         let registry = config.registry;
-        let scene = Scene::load(&path, config.project.root(), registry.clone());
+        let (scene, document, message) = match Scene::load(&path, root.clone(), registry.clone()) {
+            Ok(scene) => {
+                let document = Document::open(path.clone(), &scene);
+                (scene, document, None)
+            }
+            Err(error) => {
+                let scene = Scene::new(root, registry.clone());
+                let document = Document::rejected(path.clone(), &scene);
+                (scene, document, Some(Message::error(error)))
+            }
+        };
         let selected = scene
             .nodes()
             .iter()
@@ -140,13 +151,13 @@ impl Editor {
             scene,
             project: config.project,
             registry,
-            document: Document::open(path.clone()),
+            document,
             path,
             selected,
             confirm: None,
             exiting: false,
             titled_dirty: None,
-            error: None,
+            message,
             child: None,
             orbit: Orbit::default(),
             mode: Mode::Translate,
@@ -204,17 +215,26 @@ impl Editor {
         self.sync_title(window);
     }
 
+    fn fail(&mut self, text: impl Into<String>) {
+        self.message = Some(Message::error(text));
+    }
+
+    fn notice(&mut self, text: impl Into<String>) {
+        self.message = Some(Message::notice(text));
+    }
+
     fn sync_title(&mut self, window: &Window) {
-        if self.titled_dirty == Some(self.document.dirty()) {
+        let dirty = self.document.dirty(&self.scene);
+        if self.titled_dirty == Some(dirty) {
             return;
         }
-        self.titled_dirty = Some(self.document.dirty());
+        self.titled_dirty = Some(dirty);
         let name = self
             .path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("main.scene.toml");
-        if self.document.dirty() {
+        if dirty {
             window.set_title(&format!("Dome — {} — {name} •", self.project.name()));
         } else {
             window.set_title(&format!("Dome — {} — {name}", self.project.name()));
@@ -253,7 +273,7 @@ impl Editor {
 
     fn save(&mut self) -> bool {
         if self.document.conflicted() {
-            self.error = Some(format!(
+            self.fail(format!(
                 "{} changed on disk: reload it or save over it",
                 self.path.display(),
             ));
@@ -276,7 +296,7 @@ impl Editor {
             self.document.write(&self.scene)
         };
         if let Err(error) = written {
-            self.error = Some(error);
+            self.fail(error);
             return false;
         }
         if let Some(watch) = &mut self.watch {
@@ -294,27 +314,34 @@ impl Editor {
         self.apply_actions(actions);
     }
 
-    fn reload(&mut self) {
+    fn reread(&mut self) {
         self.finish_drag();
         self.commit();
         self.finish_property();
         let registry = self.scene.schema_arc();
-        let loaded = catch_unwind(AssertUnwindSafe(|| {
-            Scene::load(&self.path, self.project.root(), registry)
-        }));
-        match loaded {
+        let name = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map_or_else(|| self.path.display().to_string(), String::from);
+        match Scene::load(&self.path, self.project.root(), registry) {
             Ok(scene) => {
+                let held = self.history.can_undo();
                 self.scene = scene;
                 self.viewport_rendered = None;
+                self.drag = None;
+                self.property = None;
                 self.history.reset();
-                self.document.adopted();
+                self.document.adopted(&self.scene);
                 self.rewatch();
                 self.clamp();
                 self.refresh_preview();
+                self.notice(match held {
+                    true => format!("{name} reloads from disk: its undo history starts over"),
+                    false => format!("{name} reloads from disk"),
+                });
             }
-            Err(_) => {
-                self.error = Some(format!("{} holds no readable scene", self.path.display()));
-            }
+            Err(error) => self.fail(error),
         }
     }
 
@@ -325,35 +352,22 @@ impl Editor {
         if let Some(errors) = report.errors
             && !errors.is_empty()
         {
-            self.error = Some(errors.join("; "));
+            self.fail(errors.join("; "));
         }
         let change = report.change;
-        if change.scene {
-            if self.document.dirty() {
-                self.document.mark_foreign();
-                self.refresh_preview();
-                return true;
-            }
-            let registry = self.scene.schema_arc();
-            self.finish_drag();
-            self.commit();
-            self.finish_property();
-            match catch_unwind(AssertUnwindSafe(|| {
-                Scene::load(&self.path, self.project.root(), registry)
-            })) {
-                Ok(scene) => {
-                    self.scene = scene;
-                    self.viewport_rendered = None;
-                    self.drag = None;
-                    self.property = None;
-                    self.history.reset();
-                    self.document.adopted();
-                    self.clamp();
-                    self.refresh_preview();
+        if change.scene || change.prefab {
+            if self.document.dirty(&self.scene) {
+                if change.scene {
+                    self.document.mark_foreign();
+                    self.fail(format!(
+                        "{} changed on disk: reload it or save over it",
+                        self.path.display(),
+                    ));
+                } else {
+                    self.notice("a prefab changed on disk: reload the scene to pick it up");
                 }
-                Err(_) => {
-                    self.error = Some(format!("{} holds no readable scene", self.path.display()));
-                }
+            } else {
+                self.reread();
             }
         } else if change.model || change.asset {
             self.refresh_preview();
@@ -369,11 +383,11 @@ impl Editor {
     }
 
     fn request_reload(&mut self) {
-        if self.document.dirty() {
+        if self.document.dirty(&self.scene) {
             self.confirm = Some(Confirm::Reload);
             return;
         }
-        self.reload();
+        self.reread();
     }
 
     fn resolve_confirm(&mut self) {
@@ -391,7 +405,7 @@ impl Editor {
             }
             Some(Confirm::Reload) => {
                 self.confirm = None;
-                self.reload();
+                self.reread();
             }
             Some(Confirm::Overwrite) => {
                 if !self.overwrite() {
@@ -441,15 +455,13 @@ impl Editor {
         if delta.is_empty() {
             return;
         }
-        self.history.record(delta);
-        self.document.edited();
+        self.history.record(delta, &self.scene);
     }
 
     fn undo(&mut self) {
         self.finish_drag();
         self.finish_property();
         if self.history.undo(&mut self.scene) {
-            self.document.edited();
             self.clamp();
             self.refresh_preview();
         }
@@ -459,7 +471,6 @@ impl Editor {
         self.finish_drag();
         self.finish_property();
         if self.history.redo(&mut self.scene) {
-            self.document.edited();
             self.clamp();
             self.refresh_preview();
         }
@@ -497,9 +508,6 @@ impl Editor {
             .edit(|edit| edit.set_property(&target, &path, &value))
         {
             Ok((_, delta)) => {
-                if !delta.is_empty() {
-                    self.document.edited();
-                }
                 self.property = Some(PropertyState {
                     target: target.clone(),
                     path,
@@ -509,7 +517,7 @@ impl Editor {
             }
             Err(error) => {
                 self.property = None;
-                self.error = Some(error);
+                self.fail(error);
             }
         }
     }
@@ -543,7 +551,7 @@ impl Editor {
             let code = exit
                 .code
                 .map_or_else(|| String::from("no exit code"), |code| code.to_string());
-            self.error = Some(match exit.tail.is_empty() {
+            self.fail(match exit.tail.is_empty() {
                 true => format!("the player exited with {code}"),
                 false => format!("the player exited with {code}: {}", exit.tail),
             });
@@ -603,7 +611,7 @@ impl Editor {
                 self.tab = Tab::Scene;
                 self.refresh_preview();
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
     }
 
@@ -633,7 +641,7 @@ impl Editor {
                 self.tab = Tab::Asset;
                 self.refresh_preview();
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
     }
 
@@ -726,7 +734,7 @@ impl Editor {
                     held.focus = false;
                     held.invalid = true;
                 }
-                self.error = Some(error);
+                self.fail(error);
             }
         }
     }
@@ -752,7 +760,7 @@ impl Editor {
                 self.selected = fallback.filter(|held| self.scene.holds(held));
                 self.refresh_preview();
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
     }
 
@@ -771,7 +779,7 @@ impl Editor {
                 self.record(delta);
                 self.apply_edit(&target);
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
     }
 
@@ -783,7 +791,7 @@ impl Editor {
                 self.record(delta);
                 self.refresh_preview();
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
     }
 
@@ -810,7 +818,7 @@ impl Editor {
                 self.record(delta);
                 self.refresh_preview();
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
     }
 
@@ -838,7 +846,7 @@ impl Editor {
                 self.record(delta);
                 self.refresh_preview();
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
     }
 
@@ -860,7 +868,7 @@ impl Editor {
                 self.record(delta);
                 self.refresh_preview();
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
     }
 
@@ -884,13 +892,13 @@ impl Editor {
                 self.record(delta);
                 self.refresh_preview();
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
     }
 
     fn apply(&mut self, action: Action) {
-        if !matches!(action, Action::EditDialog(_) | Action::DismissError) {
-            self.error = None;
+        if !matches!(action, Action::EditDialog(_) | Action::DismissMessage) {
+            self.message = None;
         }
         match action {
             Action::Save => {
@@ -943,7 +951,7 @@ impl Editor {
             Action::SubmitPath(text) => self.submit_dialog(Some(text)),
             Action::SubmitDialog => self.submit_dialog(None),
             Action::CloseDialog => self.dialog = None,
-            Action::DismissError => self.error = None,
+            Action::DismissMessage => self.message = None,
             Action::RemoveTarget(target) => self.remove_target(target),
             Action::RemoveSelected => {
                 if let Some(target) = self.selected.clone() {
@@ -962,7 +970,7 @@ impl Editor {
                         self.collapsed_sections.remove(&format!("{target}.{name}"));
                         self.refresh_preview();
                     }
-                    Err(error) => self.error = Some(error),
+                    Err(error) => self.fail(error),
                 }
             }
             Action::RemoveComponent(target, name) => {
@@ -974,7 +982,7 @@ impl Editor {
                         self.record(delta);
                         self.refresh_preview();
                     }
-                    Err(error) => self.error = Some(error),
+                    Err(error) => self.fail(error),
                 }
             }
             Action::ToggleSection(id) => {
@@ -1002,7 +1010,7 @@ impl Editor {
                         self.record(delta);
                         self.refresh_preview();
                     }
-                    Err(error) => self.error = Some(error),
+                    Err(error) => self.fail(error),
                 }
             }
             Action::AddGraphParameter(graph, kind) => self.add_graph_parameter(&graph, kind),
@@ -1015,7 +1023,7 @@ impl Editor {
                         self.record(delta);
                         self.refresh_preview();
                     }
-                    Err(error) => self.error = Some(error),
+                    Err(error) => self.fail(error),
                 }
             }
             Action::AddGraphTransition(graph) => self.add_graph_transition(&graph),
@@ -1028,7 +1036,7 @@ impl Editor {
                         self.record(delta);
                         self.refresh_preview();
                     }
-                    Err(error) => self.error = Some(error),
+                    Err(error) => self.fail(error),
                 }
             }
             Action::AddGraphCondition(graph, transition) => {
@@ -1043,7 +1051,7 @@ impl Editor {
                         self.record(delta);
                         self.refresh_preview();
                     }
-                    Err(error) => self.error = Some(error),
+                    Err(error) => self.fail(error),
                 }
             }
         }
@@ -1087,7 +1095,7 @@ impl Editor {
                 .map(|refresh| refresh.message())
         };
         if let Some(error) = asset_error {
-            self.error = Some(error);
+            self.fail(error);
         }
         self.sync_title(window);
         let busy = self.session.as_ref().is_some_and(|session| {
@@ -1119,7 +1127,7 @@ impl Editor {
         let state = State {
             scene: &self.scene,
             selected: self.selected.as_ref(),
-            dirty: self.document.dirty(),
+            dirty: self.document.dirty(&self.scene),
             conflict: self.document.conflicted(),
             playing: self.child.is_some(),
             can_undo: self.history.can_undo(),
@@ -1134,7 +1142,7 @@ impl Editor {
             collapsed_sections: &self.collapsed_sections,
             dialog: self.dialog.as_ref(),
             confirm: self.confirm,
-            error: self.error.as_deref(),
+            message: self.message.as_ref(),
             camera,
             origin,
             basis,
@@ -1308,12 +1316,11 @@ impl Editor {
         {
             Ok(((), delta)) => {
                 state.delta = Some(delta);
-                self.document.edited();
                 if let Some(session) = &mut self.session {
                     session.preview.apply(&self.scene, state.node);
                 }
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.fail(error),
         }
         self.drag = Some(state);
     }
@@ -1455,7 +1462,7 @@ impl Editor {
             Key::Character('q') if !command => self.apply(Action::ToggleSpace),
             Key::Character('f') if !command => self.apply(Action::Focus),
             Key::Delete => self.apply(Action::RemoveSelected),
-            Key::Escape if self.error.is_some() => self.apply(Action::DismissError),
+            Key::Escape if self.message.is_some() => self.apply(Action::DismissMessage),
             _ => {}
         }
     }
@@ -1565,7 +1572,7 @@ impl Handler for Editor {
     }
 
     fn closing(&mut self, _window: &Window) -> bool {
-        if self.document.state() == DocumentState::Clean {
+        if !self.document.dirty(&self.scene) {
             return true;
         }
         self.confirm = Some(Confirm::Close);
@@ -1702,6 +1709,50 @@ mod tests {
     }
 
     #[test]
+    fn a_project_whose_entry_scene_breaks_opens_with_the_error_it_names() {
+        let root = std::env::temp_dir().join(format!(
+            "dome_editor_broken_{}_{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let project = Project::create(&root, "Broken");
+        fs::write(project.entry(), "format = \"dome_scene\"\nimages = ")
+            .expect("a broken entry scene holds its text");
+        let opened = Project::open(&root);
+        let mut editor = Editor::new(EditorConfig::new(opened));
+        let message = editor
+            .message
+            .as_ref()
+            .expect("a broken entry scene opens with its parse error");
+        assert!(
+            message.text().contains("invalid TOML"),
+            "the editor names the broken document: {}",
+            message.text(),
+        );
+        assert!(
+            editor.scene.nodes().is_empty(),
+            "a broken entry scene opens no node",
+        );
+        assert!(
+            !editor.document.dirty(&editor.scene),
+            "a scene that never loaded holds no edit",
+        );
+        assert!(
+            !editor.save(),
+            "an editor refuses to save over a scene it never read",
+        );
+        assert!(
+            editor
+                .message
+                .as_ref()
+                .is_some_and(|held| held.text().contains("did not load")),
+            "a refused save names the load the editor lost",
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_repeated_key_press_removes_one_node() {
         let (mut editor, _cleanup) = editor();
         let parent = editor
@@ -1805,6 +1856,10 @@ mod tests {
         let target = editor.selected.clone().expect("the editor starts selected");
         let index = editor.selected_node().expect("the editor starts on a node");
         let before = editor.scene.transform(index).translation;
+        assert!(
+            !editor.document.dirty(&editor.scene),
+            "a new document is clean"
+        );
 
         editor.handle(&button(true), 1.0, SIZE);
         editor.apply_actions((1..=4).map(|step| Action::Property {
@@ -1815,12 +1870,20 @@ mod tests {
         editor.handle(&button(false), 1.0, SIZE);
         editor.apply_actions(Vec::new());
         assert_eq!(editor.scene.transform(index).translation.x, 4.0);
+        assert!(
+            editor.document.dirty(&editor.scene),
+            "an edit dirties the document"
+        );
 
         editor.undo();
         assert_eq!(
             editor.scene.transform(index).translation,
             before,
             "a property drag lands in the history as one step",
+        );
+        assert!(
+            !editor.document.dirty(&editor.scene),
+            "an undo back to the saved transform cleans the document",
         );
         editor.undo();
         assert_eq!(editor.scene.transform(index).translation, before);

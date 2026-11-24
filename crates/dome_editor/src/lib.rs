@@ -10,6 +10,7 @@ mod gizmo;
 mod graph;
 mod history;
 mod inspector;
+mod message;
 mod outliner;
 mod player;
 mod preview;

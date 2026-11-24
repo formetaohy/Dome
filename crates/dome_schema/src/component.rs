@@ -50,7 +50,7 @@ pub trait SceneComponent: Any + Clone + PartialEq + Send + Sync {
 
     fn create(scene: &Scene) -> Result<Self, String>;
 
-    fn from_toml(value: Toml, what: &str) -> Self;
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String>;
 
     fn observe(world: &World, entity: Entity) -> Option<Self>;
 

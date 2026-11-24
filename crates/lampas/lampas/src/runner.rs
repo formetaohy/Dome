@@ -9,6 +9,7 @@ pub(crate) struct Runner<'a> {
     pub(crate) world: &'a mut World,
     pub(crate) hosts: &'a mut Hosts,
     pub(crate) commands: &'a mut Vec<Command>,
+    pub(crate) spawned: &'a mut Vec<Entity>,
 }
 
 impl Context for Runner<'_> {
@@ -25,7 +26,9 @@ impl Context for Runner<'_> {
     }
 
     fn spawn(&mut self) -> Entity {
-        self.world.spawn()
+        let entity = self.world.spawn();
+        self.spawned.push(entity);
+        entity
     }
 
     fn add(&mut self, entity: Entity, component: u16, fields: &[Value]) {

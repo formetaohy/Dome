@@ -51,6 +51,7 @@ pub struct Ui<A = ()> {
     pub(crate) edit: Option<NodeId>,
     pub(crate) edit_drag: bool,
     pub(crate) edit_caret: Option<Rect>,
+    pub(crate) caret_lit: bool,
     pub(crate) popup_anchors: HashMap<Key, NodeId>,
     pub(crate) cursor: Cursor,
     pub(crate) animating: bool,
@@ -98,6 +99,7 @@ impl<A: Clone> Ui<A> {
             edit: None,
             edit_drag: false,
             edit_caret: None,
+            caret_lit: false,
             popup_anchors: HashMap::new(),
             cursor: Cursor::Arrow,
             animating: false,
@@ -166,12 +168,6 @@ impl<A: Clone> Ui<A> {
 
     pub fn editing(&self) -> bool {
         self.edit.is_some()
-    }
-
-    pub fn editing_text(&self) -> Option<String> {
-        let node = self.edit?;
-        let edit = self.tree.nodes[node].runtime.edit.as_ref()?;
-        Some(edit.composed(self.preedit.as_deref().unwrap_or_default()))
     }
 
     pub fn edit_caret(&self) -> Option<Rect> {

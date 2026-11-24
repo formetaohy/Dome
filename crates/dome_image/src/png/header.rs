@@ -26,21 +26,12 @@ impl Color {
     }
 }
 
-pub(crate) const MAX_SIDE: u32 = 16_384;
-
-pub(crate) fn parse(data: &[u8], what: &str) -> Header {
-    assert_eq!(
-        data.len(),
-        13,
-        "{what} holds a header of {} bytes",
-        data.len()
-    );
+pub(crate) fn parse(data: &[u8], what: &str) -> Result<Header, String> {
+    if data.len() != 13 {
+        return Err(format!("{what} holds a header of {} bytes", data.len()));
+    }
     let width = u32::from_be_bytes(data[0..4].try_into().unwrap());
     let height = u32::from_be_bytes(data[4..8].try_into().unwrap());
-    assert!(
-        width > 0 && height > 0 && width <= MAX_SIDE && height <= MAX_SIDE,
-        "{what} holds an image of {width} by {height} texels",
-    );
     let depth = data[8];
     let color = match data[9] {
         0 => Color::Gray,
@@ -48,27 +39,34 @@ pub(crate) fn parse(data: &[u8], what: &str) -> Header {
         3 => Color::Palette,
         4 => Color::GrayAlpha,
         6 => Color::Rgba,
-        other => panic!("{what} holds colour type {other}"),
+        other => return Err(format!("{what} holds colour type {other}")),
     };
-    assert!(
-        matches!(
-            (color, depth),
-            (Color::Gray, 1 | 2 | 4 | 8 | 16)
-                | (Color::Rgb, 8 | 16)
-                | (Color::Palette, 1 | 2 | 4 | 8)
-                | (Color::GrayAlpha, 8 | 16)
-                | (Color::Rgba, 8 | 16)
-        ),
-        "{what} holds colour type {color:?} of {depth} bits",
-    );
-    assert_eq!(data[10], 0, "{what} holds compression {}", data[10]);
-    assert_eq!(data[11], 0, "{what} holds filter {}", data[11]);
-    assert!(data[12] <= 1, "{what} holds interlace method {}", data[12]);
-    Header {
+    if !matches!(
+        (color, depth),
+        (Color::Gray, 1 | 2 | 4 | 8 | 16)
+            | (Color::Rgb, 8 | 16)
+            | (Color::Palette, 1 | 2 | 4 | 8)
+            | (Color::GrayAlpha, 8 | 16)
+            | (Color::Rgba, 8 | 16)
+    ) {
+        return Err(format!(
+            "{what} holds colour type {color:?} of {depth} bits"
+        ));
+    }
+    if data[10] != 0 {
+        return Err(format!("{what} holds compression {}", data[10]));
+    }
+    if data[11] != 0 {
+        return Err(format!("{what} holds filter {}", data[11]));
+    }
+    if data[12] > 1 {
+        return Err(format!("{what} holds interlace method {}", data[12]));
+    }
+    Ok(Header {
         width,
         height,
         depth,
         color,
         interlaced: data[12] == 1,
-    }
+    })
 }

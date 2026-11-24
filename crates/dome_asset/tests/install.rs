@@ -111,7 +111,8 @@ fn paint() {
         TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
     );
     let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
-    let scene = Scene::parse(SCENE, ".", "the test scene", schema());
+    let scene =
+        Scene::parse(SCENE, ".", "the test scene", schema()).expect("the test scene parses");
     let mut world = World::new();
     let entities = instantiate_scene(&scene, &mut world, &mut renderer);
     assert_eq!(world.count::<SceneNode>(), 5);

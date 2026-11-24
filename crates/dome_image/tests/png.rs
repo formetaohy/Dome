@@ -28,14 +28,14 @@ fn png_encodes_truecolour_images() {
     let pixels = (0..4u8 * 3 * 4)
         .map(|value| value.wrapping_mul(5))
         .collect::<Vec<_>>();
-    let image = Image::decode(&encode(4, 3, &pixels), "the encoded test");
+    let image = Image::decode(&encode(4, 3, &pixels), "the encoded test").unwrap();
     assert_eq!((image.width(), image.height()), (4, 3));
     assert_eq!(image.rgba(), pixels);
 }
 
 #[test]
 fn png_decodes_packed_paletted_interlaced_and_truecolour_images() {
-    let image = Image::decode(&RGBA, "the test");
+    let image = Image::decode(&RGBA, "the test").unwrap();
     assert_eq!((image.width(), image.height()), (2, 2));
     assert_eq!(
         image.rgba(),
@@ -44,7 +44,7 @@ fn png_decodes_packed_paletted_interlaced_and_truecolour_images() {
         ],
     );
 
-    let image = Image::decode(&PALETTE, "the test");
+    let image = Image::decode(&PALETTE, "the test").unwrap();
     assert_eq!((image.width(), image.height()), (4, 1));
     assert_eq!(
         image.rgba(),
@@ -53,7 +53,7 @@ fn png_decodes_packed_paletted_interlaced_and_truecolour_images() {
         ],
     );
 
-    let image = Image::decode(&INTERLACED, "the test");
+    let image = Image::decode(&INTERLACED, "the test").unwrap();
     assert_eq!((image.width(), image.height()), (3, 3));
     let expected = (0..3)
         .flat_map(|y| (0..3).flat_map(move |x| [x * 40 + 10, y * 60 + 20, (x + y) * 30, 255]))

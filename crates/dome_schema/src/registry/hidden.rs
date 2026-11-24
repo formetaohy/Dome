@@ -56,10 +56,10 @@ impl SceneComponent for Hidden {
         Ok(Self)
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let fields = Fields::of(value, what);
-        fields.done();
-        Self
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let fields = Fields::of(value, what)?;
+        fields.done()?;
+        Ok(Self)
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

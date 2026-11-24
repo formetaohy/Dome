@@ -442,7 +442,8 @@ id = "camera"
             root,
             "the plan test scene",
             Arc::new(dome_schema::Registry::default()),
-        );
+        )
+        .expect("the plan test scene parses");
         let prepared = plan(Job {
             scene: scene.clone(),
             fingerprints: Fingerprints::default(),

@@ -157,32 +157,32 @@ impl SceneComponent for EnvironmentRef {
         Ok(Self::new(environment))
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
         let environment = EnvironmentId::parse(
-            fields.need("environment"),
+            fields.need("environment")?,
             &format!("the environment of {what}"),
-        );
+        )?;
         let intensity = fields
-            .need("intensity")
-            .f32_value(&format!("the intensity of {what}"));
+            .need("intensity")?
+            .f32_value(&format!("the intensity of {what}"))?;
         let sky = fields
-            .need("sky")
-            .boolean_value(&format!("the sky of {what}"));
+            .need("sky")?
+            .boolean_value(&format!("the sky of {what}"))?;
         let local = fields
-            .need("local")
-            .boolean_value(&format!("the local of {what}"));
+            .need("local")?
+            .boolean_value(&format!("the local of {what}"))?;
         let blend = fields
-            .need("blend")
-            .f32_value(&format!("the blend of {what}"));
-        fields.done();
-        Self {
+            .need("blend")?
+            .f32_value(&format!("the blend of {what}"))?;
+        fields.done()?;
+        Ok(Self {
             environment,
             intensity,
             sky,
             local,
             blend,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

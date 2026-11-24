@@ -5,6 +5,7 @@ use dome_ui::{
 };
 
 use crate::action::{Action, Confirm, PathDialog, PathKind};
+use crate::message::{Kind as MessageKind, Message};
 use crate::stage::label;
 
 const DIALOG_WIDTH: f32 = 360.0;
@@ -14,14 +15,25 @@ const CONFIRM_HEIGHT: f32 = 196.0;
 pub(crate) fn toast(
     ctx: &mut BuildContext<'_, Action>,
     screen: Vec2,
-    message: &str,
+    message: &Message,
 ) -> Element<'static, Action> {
     let theme = *ctx.theme();
     let palette = theme.palette;
-    let text_style =
-        TextStyle::new(theme.font(Level::Label), palette.on_error_container).truncating();
+    let (container, ink, symbol) = match message.kind() {
+        MessageKind::Error => (
+            palette.error_container,
+            palette.on_error_container,
+            Icon::Warning,
+        ),
+        MessageKind::Notice => (
+            palette.primary_container,
+            palette.on_primary_container,
+            Icon::Info,
+        ),
+    };
+    let text_style = TextStyle::new(theme.font(Level::Label), ink).truncating();
     let max_text = (screen.x - 120.0).max(120.0);
-    let text_width = (ctx.measure(message, text_style).x + 2.0).min(max_text);
+    let text_width = (ctx.measure(message.text(), text_style).x + 2.0).min(max_text);
     let pill = Element::row()
         .key(Key::new("toast.pill"))
         .height(Length::Fixed(40.0))
@@ -29,18 +41,13 @@ pub(crate) fn toast(
         .gap(10.0)
         .align(Align::Center)
         .blocks_pointer()
-        .background(Surface::fill(palette.error_container).with_corners(Corners::capsule()))
+        .background(Surface::fill(container).with_corners(Corners::capsule()))
         .children([
-            widget::icon(
-                Icon::Warning,
-                18.0,
-                palette.on_error_container,
-                IconStyle::FILLED,
-            ),
-            label(message, text_style).width(Length::Fixed(text_width)),
+            widget::icon(symbol, 18.0, ink, IconStyle::FILLED),
+            label(message.text(), text_style).width(Length::Fixed(text_width)),
             widget::icon_button(Icon::Close, 26.0, Role::Standard, "Dismiss")
                 .key(Key::new("toast.close"))
-                .press(Action::DismissError),
+                .press(Action::DismissMessage),
         ]);
 
     place(

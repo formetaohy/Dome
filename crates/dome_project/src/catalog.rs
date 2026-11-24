@@ -32,34 +32,40 @@ impl Catalog {
     }
 
     pub fn at(file: PathBuf) -> Self {
+        Self::read(file).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    fn read(file: PathBuf) -> Result<Self, String> {
         if !file.is_file() {
-            return Self {
+            return Ok(Self {
                 file,
                 entries: Vec::new(),
-            };
+            });
         }
-        let text = fs::read_to_string(&file).unwrap_or_else(|error| {
-            panic!(
+        let text = fs::read_to_string(&file).map_err(|error| {
+            format!(
                 "the launcher catalog {} reads no text: {error}",
                 file.display()
             )
-        });
+        })?;
         let what = format!("the launcher catalog {}", file.display());
-        let mut fields = Fields::of(Toml::parse(&text, &what), &what);
+        let mut fields = Fields::of(Toml::parse(&text, &what)?, &what)?;
         let format = fields
-            .need("format")
-            .string_value(&format!("the format of {what}"));
-        assert!(format == FORMAT, "{what} holds the format {format}");
-        let entries = fields
-            .take("project")
-            .map(|value| value.array_items(&format!("the projects of {what}")))
-            .unwrap_or_default()
-            .into_iter()
-            .enumerate()
-            .map(|(index, item)| recent(item, &format!("project {index} of {what}")))
-            .collect();
-        fields.done();
-        Self { file, entries }
+            .need("format")?
+            .string_value(&format!("the format of {what}"))?;
+        if format != FORMAT {
+            return Err(format!("{what} holds the format {format}"));
+        }
+        let entries = match fields.take("project") {
+            Some(value) => value.array_items(&format!("the projects of {what}"))?,
+            None => Vec::new(),
+        }
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| recent(item, &format!("project {index} of {what}")))
+        .collect::<Result<Vec<_>, String>>()?;
+        fields.done()?;
+        Ok(Self { file, entries })
     }
 
     pub fn entries(&self) -> &[Recent] {
@@ -128,19 +134,19 @@ impl Catalog {
     }
 }
 
-fn recent(value: Toml, what: &str) -> Recent {
-    let mut fields = Fields::of(value, what);
+fn recent(value: Toml, what: &str) -> Result<Recent, String> {
+    let mut fields = Fields::of(value, what)?;
     let name = fields
-        .need("name")
-        .string_value(&format!("the name of {what}"));
+        .need("name")?
+        .string_value(&format!("the name of {what}"))?;
     let path = fields
-        .need("path")
-        .string_value(&format!("the path of {what}"));
-    fields.done();
-    Recent {
+        .need("path")?
+        .string_value(&format!("the path of {what}"))?;
+    fields.done()?;
+    Ok(Recent {
         name,
         path: PathBuf::from(path),
-    }
+    })
 }
 
 fn home() -> PathBuf {

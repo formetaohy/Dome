@@ -106,20 +106,20 @@ impl SceneComponent for PointLight {
         Ok(Self::new(Vec3::ONE, 20.0, 10.0))
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
         let color = Vec3::from_array(floats::<3>(
-            fields.need("color"),
+            fields.need("color")?,
             &format!("the color of {what}"),
-        ));
+        )?);
         let intensity = fields
-            .need("intensity")
-            .f32_value(&format!("the intensity of {what}"));
+            .need("intensity")?
+            .f32_value(&format!("the intensity of {what}"))?;
         let range = fields
-            .need("range")
-            .f32_value(&format!("the range of {what}"));
-        fields.done();
-        Self::new(color, intensity, range)
+            .need("range")?
+            .f32_value(&format!("the range of {what}"))?;
+        fields.done()?;
+        Ok(Self::new(color, intensity, range))
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

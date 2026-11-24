@@ -89,11 +89,11 @@ impl SceneComponent for SkinRef {
         Ok(Self::new(skin.id.as_str()))
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
-        let skin = SkinId::parse(fields.need("skin"), &format!("the skin of {what}"));
-        fields.done();
-        Self { skin }
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
+        let skin = SkinId::parse(fields.need("skin")?, &format!("the skin of {what}"))?;
+        fields.done()?;
+        Ok(Self { skin })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {

@@ -491,65 +491,67 @@ impl SceneComponent for JointRef {
         Ok(Self::new())
     }
 
-    fn from_toml(value: Toml, what: &str) -> Self {
-        let mut fields = Fields::of(value, what);
-        let other = fields
-            .take("other")
-            .map(|value| {
-                let id = value.string_value(&format!("the other of {what}"));
+    fn from_toml(value: Toml, what: &str) -> Result<Self, String> {
+        let mut fields = Fields::of(value, what)?;
+        let other = match fields.take("other") {
+            Some(value) => {
+                let id = value.string_value(&format!("the other of {what}"))?;
                 if id.is_empty() {
                     None
                 } else {
-                    assert!(valid_id(&id), "{what} holds the other id {id}");
+                    if !valid_id(&id) {
+                        return Err(format!("{what} holds the other id {id}"));
+                    }
                     Some(NodeId::new(id))
                 }
-            })
-            .unwrap_or(None);
+            }
+            None => None,
+        };
         let kind = fields
-            .need("kind")
-            .string_value(&format!("the kind of {what}"));
-        let kind = JointKind::of(&kind).unwrap_or_else(|| panic!("{what} holds the kind {kind}"));
+            .need("kind")?
+            .string_value(&format!("the kind of {what}"))?;
+        let kind = JointKind::of(&kind).ok_or_else(|| format!("{what} holds the kind {kind}"))?;
         let anchor = Vec3::from_array(floats::<3>(
-            fields.need("anchor"),
+            fields.need("anchor")?,
             &format!("the anchor of {what}"),
-        ));
+        )?);
         let other_anchor = Vec3::from_array(floats::<3>(
-            fields.need("other_anchor"),
+            fields.need("other_anchor")?,
             &format!("the other anchor of {what}"),
-        ));
+        )?);
         let axis = Vec3::from_array(floats::<3>(
-            fields.need("axis"),
+            fields.need("axis")?,
             &format!("the axis of {what}"),
-        ));
+        )?);
         let rest_length = fields
-            .need("rest_length")
-            .f32_value(&format!("the rest length of {what}"));
+            .need("rest_length")?
+            .f32_value(&format!("the rest length of {what}"))?;
         let collide = fields
-            .need("collide")
-            .boolean_value(&format!("the collide of {what}"));
+            .need("collide")?
+            .boolean_value(&format!("the collide of {what}"))?;
         let limit = fields
-            .need("limit")
-            .boolean_value(&format!("the limit of {what}"));
+            .need("limit")?
+            .boolean_value(&format!("the limit of {what}"))?;
         let lower = fields
-            .need("lower")
-            .f32_value(&format!("the lower limit of {what}"));
+            .need("lower")?
+            .f32_value(&format!("the lower limit of {what}"))?;
         let upper = fields
-            .need("upper")
-            .f32_value(&format!("the upper limit of {what}"));
+            .need("upper")?
+            .f32_value(&format!("the upper limit of {what}"))?;
         let cone = fields
-            .need("cone")
-            .f32_value(&format!("the cone of {what}"));
+            .need("cone")?
+            .f32_value(&format!("the cone of {what}"))?;
         let motor = fields
-            .need("motor")
-            .boolean_value(&format!("the motor of {what}"));
+            .need("motor")?
+            .boolean_value(&format!("the motor of {what}"))?;
         let motor_speed = fields
-            .need("motor_speed")
-            .f32_value(&format!("the motor speed of {what}"));
+            .need("motor_speed")?
+            .f32_value(&format!("the motor speed of {what}"))?;
         let motor_force = fields
-            .need("motor_force")
-            .f32_value(&format!("the motor force of {what}"));
-        fields.done();
-        Self {
+            .need("motor_force")?
+            .f32_value(&format!("the motor force of {what}"))?;
+        fields.done()?;
+        Ok(Self {
             other,
             kind,
             anchor,
@@ -566,7 +568,7 @@ impl SceneComponent for JointRef {
             motor_force,
             position: 0.0,
             swing: 0.0,
-        }
+        })
     }
 
     fn observe(world: &World, entity: Entity) -> Option<Self> {
