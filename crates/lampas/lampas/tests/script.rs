@@ -330,6 +330,22 @@ fn the_checker_places_the_type_a_script_holds_wrong() {
     assert_eq!(error.message(), "int stands where float belongs");
 }
 
+const LONELY: &str = r#"
+fn gate() -> bool {
+    return true & false;
+}
+"#;
+
+#[test]
+fn the_lexer_refuses_a_sign_that_stands_alone() {
+    let (hosts, _) = hosts();
+    let error = compile("lonely.amp", LONELY, &hosts).expect_err("a lone sign holds no operator");
+    assert_eq!(
+        error.message(),
+        "the source holds the & sign alone, which pairs with itself",
+    );
+}
+
 fn folder(name: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!("dome_lampas_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

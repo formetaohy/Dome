@@ -21,7 +21,11 @@ impl Checker<'_> {
                 },
                 Type::Value(kind @ (Kind::Int | Kind::Float)),
             ) => Ok(match self.constant(operand, Type::Value(kind))? {
-                Constant::Int(value) => Constant::Int(-value),
+                Constant::Int(value) => Constant::Int(
+                    value
+                        .checked_neg()
+                        .ok_or_else(|| self.error(expr.span, "the constant overflows"))?,
+                ),
                 Constant::Float(value) => Constant::Float(-value),
                 _ => unreachable!("a negated constant holds a number"),
             }),

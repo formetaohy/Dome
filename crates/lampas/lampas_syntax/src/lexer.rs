@@ -188,7 +188,15 @@ impl Lexer<'_> {
                 self.at += 1;
                 paired
             }
-            None => single,
+            None => match single {
+                Punctuation::AndAnd | Punctuation::OrOr => {
+                    return Err(self.sources.diagnostic(
+                        Span::new(self.source, start, start + 1),
+                        format!("the source holds the {held} sign alone, which pairs with itself"),
+                    ));
+                }
+                single => single,
+            },
         };
         Ok(TokenKind::Symbol(held))
     }

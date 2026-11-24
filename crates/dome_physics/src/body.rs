@@ -584,10 +584,6 @@ impl Body {
 
     pub(crate) fn swept_aabb(&mut self, delta: f32) -> Option<(Aabb, Travel)> {
         let aabb = self.aabb()?;
-        if self.rigid.kind == BodyKind::Static {
-            self.travel = Travel::STILL;
-            return Some((aabb, Travel::STILL));
-        }
         let reach = aabb.half_extents().length();
         let velocity = self.velocity();
         let travel = Travel {
@@ -614,7 +610,7 @@ impl Body {
 
     pub(crate) fn active(&self) -> bool {
         match self.rigid.kind {
-            BodyKind::Static => false,
+            BodyKind::Static => self.moved(),
             BodyKind::Dynamic => !self.rigid.sleeping,
             BodyKind::Kinematic => self.velocity().moves(),
         }
@@ -653,6 +649,10 @@ impl Body {
             + self.rigid.angular_velocity.cross(offset)
             + self.carried.linear
             + self.carried.angular.cross(offset)
+    }
+
+    pub(crate) fn angular_velocity(&self) -> Vec3 {
+        self.rigid.angular_velocity + self.carried.angular
     }
 
     pub(crate) fn apply_impulse(&mut self, offset: Vec3, impulse: Vec3) {
@@ -714,8 +714,9 @@ impl Body {
     }
 
     pub(crate) fn slow(&self) -> bool {
-        self.rigid.linear_velocity.length_squared() <= SLEEP_LINEAR * SLEEP_LINEAR
-            && self.rigid.angular_velocity.length_squared() <= SLEEP_ANGULAR * SLEEP_ANGULAR
+        let velocity = self.velocity();
+        velocity.linear.length_squared() <= SLEEP_LINEAR * SLEEP_LINEAR
+            && velocity.angular.length_squared() <= SLEEP_ANGULAR * SLEEP_ANGULAR
     }
 
     pub(crate) fn sleep(&mut self) {

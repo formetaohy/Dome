@@ -421,6 +421,48 @@ fn a_scene_collides_the_triangles_of_its_mesh() {
     let text = observed.write();
     assert!(text.contains("shape = \"mesh\""));
 }
+const CYCLING: &str = r#"format = "dome_scene"
+images = []
+meshes = []
+materials = []
+
+[[nodes]]
+id = "first"
+parent = "second"
+
+[nodes.transform]
+translation = [0.0, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+scale = [1.0, 1.0, 1.0]
+
+[nodes.body]
+kind = "static"
+mass = 1.0
+gravity_scale = 1.0
+linear_damping = 0.0
+angular_damping = 0.0
+linear_velocity = [0.0, 0.0, 0.0]
+angular_velocity = [0.0, 0.0, 0.0]
+can_sleep = true
+
+[[nodes]]
+id = "second"
+parent = "first"
+
+[nodes.transform]
+translation = [0.0, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0, 1.0]
+scale = [1.0, 1.0, 1.0]
+"#;
+
+#[test]
+fn a_scene_that_closes_its_parent_chain_answers_before_a_component_reads_the_chain() {
+    assert_eq!(
+        Scene::parse(CYCLING, ".", "the cyclic scene", schema()).expect_err("a cycle is refused"),
+        "the cyclic scene closes the parent chain of first into a cycle",
+    );
+}
+
 fn edit<T>(
     scene: &mut dome_scene::Scene,
     change: impl FnOnce(&mut dome_scene::Edit<'_>) -> Result<T, String>,

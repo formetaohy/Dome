@@ -329,7 +329,7 @@ impl LayoutEngine<'_> {
                     Flow::Row => cross = cross.max(tree.nodes[child].measured.y),
                 }
             }
-            main = fixed_main + free;
+            main = fixed_main + gaps + free;
         }
         let content = match layout.flow {
             Flow::Column => Vec2::new(cross, main),

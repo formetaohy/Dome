@@ -21,6 +21,10 @@ use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "dome_scene";
 
+const UNVISITED: u8 = 0;
+const VISITING: u8 = 1;
+const SETTLED: u8 = 2;
+
 #[derive(Clone)]
 pub struct Scene {
     pub(crate) root: PathBuf,
@@ -462,10 +466,17 @@ impl Scene {
 
     pub fn ancestors_hold(&self, index: usize, component: &str) -> bool {
         let mut at = self.parent_index(index);
+        let mut steps = 0;
         while let Some(current) = at {
             if self.nodes[current].has_component(component) {
                 return true;
             }
+            steps += 1;
+            assert!(
+                steps <= self.nodes.len(),
+                "the scene closes the parent chain of {} into a cycle",
+                self.nodes[index].id,
+            );
             at = self.parent_index(current);
         }
         false
@@ -560,6 +571,7 @@ impl Scene {
                 .map_err(|error| format!("{what}: {error}"))?;
         }
         unique(self.nodes.iter(), what, "node")?;
+        self.check_structure(what)?;
         for node in &self.nodes {
             if let Some(path) = node.prefab.as_deref() {
                 if node.components().next().is_some() {
@@ -887,6 +899,10 @@ impl Scene {
         }
         self.check_audio_buses()
             .map_err(|error| format!("{what}: {error}"))?;
+        Ok(())
+    }
+
+    fn check_structure(&self, what: &str) -> Result<(), String> {
         for node in self.nodes.iter() {
             crate::transform::validate(&node.transform())
                 .map_err(|error| format!("{what}: {error}"))?;
@@ -898,19 +914,28 @@ impl Scene {
                     node.id,
                 ));
             }
-            let mut steps = 1;
-            let mut current = node.parent.as_deref();
-            while let Some(parent) = current {
-                if steps > self.nodes.len() {
-                    return Err(format!(
-                        "{what} closes the parent chain of {} into a cycle",
-                        node.id,
-                    ));
+        }
+        let mut state = vec![UNVISITED; self.nodes.len()];
+        for start in 0..self.nodes.len() {
+            let mut path = Vec::new();
+            let mut current = Some(start);
+            while let Some(at) = current {
+                match state[at] {
+                    SETTLED => break,
+                    VISITING => {
+                        return Err(format!(
+                            "{what} closes the parent chain of {} into a cycle",
+                            self.nodes[start].id,
+                        ));
+                    }
+                    _ => {}
                 }
-                steps += 1;
-                current = self
-                    .node_index(parent)
-                    .and_then(|index| self.nodes[index].parent.as_deref());
+                state[at] = VISITING;
+                path.push(at);
+                current = self.parent_index(at);
+            }
+            for at in path {
+                state[at] = SETTLED;
             }
         }
         Ok(())

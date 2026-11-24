@@ -413,7 +413,7 @@ fn solve_row(
     impulse: &mut f32,
 ) {
     let velocity = if push.angular {
-        (second.rigid.angular_velocity - first.rigid.angular_velocity).dot(push.axis)
+        (second.angular_velocity() - first.angular_velocity()).dot(push.axis)
     } else {
         (second.point_velocity(push.offset_second) - first.point_velocity(push.offset_first))
             .dot(push.axis)
@@ -430,7 +430,7 @@ fn solve_block(first: &mut Body, second: &mut Body, block: &Block, impulses: &mu
         return;
     }
     let relative = if block.angular {
-        second.rigid.angular_velocity - first.rigid.angular_velocity
+        second.angular_velocity() - first.angular_velocity()
     } else {
         second.point_velocity(block.offset_second) - first.point_velocity(block.offset_first)
     };

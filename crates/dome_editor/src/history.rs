@@ -36,9 +36,8 @@ impl History {
         }
         self.undo.push_back((delta, weight));
         self.bytes += weight;
-        while self.undo.len() > DEPTH || self.bytes > BYTES {
+        while self.undo.len() > 1 && (self.undo.len() > DEPTH || self.bytes > BYTES) {
             let Some((_, held)) = self.undo.pop_front() else {
-                self.bytes = 0;
                 break;
             };
             self.bytes = self.bytes.saturating_sub(held);
@@ -66,7 +65,7 @@ impl History {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEPTH, History};
+    use super::{BYTES, DEPTH, History};
     use dome_scene::Scene;
 
     #[test]
@@ -95,5 +94,29 @@ mod tests {
         }
         assert_eq!(redone, DEPTH, "the history redoes the steps it keeps");
         assert_eq!(scene.nodes().len(), DEPTH + 4);
+    }
+
+    #[test]
+    fn a_history_past_its_byte_budget_still_undoes_its_newest_edit() {
+        let mut scene = Scene::new(".", std::sync::Arc::new(dome_schema::Registry::default()));
+        let mut history = History::default();
+        let (_, delta) = scene
+            .edit(|edit| edit.add_node("first"))
+            .expect("a scene adds its node");
+        history.record(delta, &scene);
+        history.bytes = BYTES;
+        let (_, delta) = scene
+            .edit(|edit| edit.add_node("second"))
+            .expect("a scene adds its node");
+        history.record(delta, &scene);
+        assert!(
+            history.undo(&mut scene),
+            "the newest edit outlives the byte budget its history outruns",
+        );
+        assert_eq!(
+            scene.nodes().len(),
+            1,
+            "an undone edit leaves the node it added",
+        );
     }
 }

@@ -5,13 +5,15 @@ use crate::body::Body;
 use crate::cache::{self, ContactCache};
 use crate::contact::{self, Manifold};
 use crate::event::Collisions;
+use crate::filter::CollisionFilter;
 use crate::island::Islands;
 use crate::joint_solver::{self, JointConstraint};
+use crate::part::Part;
 use crate::solid::Solid;
 use crate::solver::{self, Contact};
 use crate::table::Table;
 use dome_ecs::{Entity, World};
-use dome_math::Vec3;
+use dome_math::{Aabb, Quat, Vec3};
 
 pub fn step(world: &mut World, delta: f32) {
     assert!(
@@ -48,7 +50,32 @@ pub(crate) struct Simulation {
     wakes: Vec<usize>,
     adjacency: Vec<Vec<usize>>,
     pending: Vec<usize>,
+    reaches: Vec<Reach>,
     islands: Islands,
+}
+
+struct Reach {
+    solid: Solid,
+    aabb: Aabb,
+    filter: CollisionFilter,
+    sensor: bool,
+}
+
+impl Reach {
+    fn of(part: &Part, position: Vec3, rotation: Quat, margin: f32) -> Self {
+        let aabb = part.aabb(position, rotation);
+        let margin = Vec3::splat(margin);
+        Self {
+            solid: part.solid(position, rotation),
+            aabb: Aabb::new(aabb.min - margin, aabb.max + margin),
+            filter: part.collider.filter(),
+            sensor: part.collider.is_sensor(),
+        }
+    }
+
+    fn reaches(&self, other: &Self) -> bool {
+        self.aabb.intersects(other.aabb)
+    }
 }
 
 impl Simulation {
@@ -109,6 +136,7 @@ impl Simulation {
             &mut self.cache,
             &mut self.touched,
             &mut self.wakes,
+            &mut self.reaches,
             delta,
         );
         for at in self.wakes.drain(..) {
@@ -227,11 +255,13 @@ fn collide(
     cache: &mut ContactCache,
     touched: &mut Vec<(Entity, Entity, bool)>,
     wakes: &mut Vec<usize>,
+    reaches: &mut Vec<Reach>,
     delta: f32,
 ) {
     contacts.clear();
     touched.clear();
     wakes.clear();
+    reaches.clear();
     for pair in pairs {
         let (first, second) = (pair.0 as usize, pair.1 as usize);
         let key = cache::key(bodies[first].entity, bodies[second].entity);
@@ -250,23 +280,31 @@ fn collide(
             + bodies[first].travel.angular
             + bodies[second].travel.angular
             + contact::CONTACT_GAP;
+        reaches.clear();
+        for part in &bodies[second].parts {
+            reaches.push(Reach::of(
+                part,
+                bodies[second].position,
+                bodies[second].rotation,
+                gap,
+            ));
+        }
         let mut sensor: Option<bool> = None;
         let mut solid = false;
-        for (first_part, held) in bodies[first].parts.iter().enumerate() {
-            let held_solid = held.solid(bodies[first].position, bodies[first].rotation);
-            for (second_part, other) in bodies[second].parts.iter().enumerate() {
-                if !held.collider.filter().accepts(other.collider.filter()) {
+        for (first_part, part) in bodies[first].parts.iter().enumerate() {
+            let held = Reach::of(part, bodies[first].position, bodies[first].rotation, gap);
+            for (second_part, other) in reaches.iter().enumerate() {
+                if !held.filter.accepts(other.filter) || !held.reaches(other) {
                     continue;
                 }
-                let other_solid = other.solid(bodies[second].position, bodies[second].rotation);
-                if held.collider.is_sensor() || other.collider.is_sensor() {
+                if held.sensor || other.sensor {
                     if movable
                         && triggered(
                             bodies,
                             first,
                             second,
-                            &held_solid,
-                            &other_solid,
+                            &held.solid,
+                            &other.solid,
                             gap,
                             manifolds,
                             delta,
@@ -277,7 +315,7 @@ fn collide(
                     continue;
                 }
                 manifolds.clear();
-                contact::collide(&held_solid, &other_solid, gap, manifolds);
+                contact::collide(&held.solid, &other.solid, gap, manifolds);
                 if manifolds.is_empty() {
                     continue;
                 }
