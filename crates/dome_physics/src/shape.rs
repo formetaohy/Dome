@@ -2,12 +2,47 @@ use crate::mesh::TriangleMesh;
 use dome_math::{Aabb, Quat, Vec3};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Shape {
     Sphere { radius: f32 },
     Cuboid { half_extents: Vec3 },
     Capsule { radius: f32, half_height: f32 },
     Mesh { mesh: Arc<TriangleMesh>, scale: f32 },
+}
+
+impl PartialEq for Shape {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Sphere { radius: left }, Self::Sphere { radius: right }) => left == right,
+            (
+                Self::Cuboid { half_extents: left },
+                Self::Cuboid {
+                    half_extents: right,
+                },
+            ) => left == right,
+            (
+                Self::Capsule {
+                    radius: left_radius,
+                    half_height: left_height,
+                },
+                Self::Capsule {
+                    radius: right_radius,
+                    half_height: right_height,
+                },
+            ) => left_radius == right_radius && left_height == right_height,
+            (
+                Self::Mesh {
+                    mesh: left_mesh,
+                    scale: left_scale,
+                },
+                Self::Mesh {
+                    mesh: right_mesh,
+                    scale: right_scale,
+                },
+            ) => Arc::ptr_eq(left_mesh, right_mesh) && left_scale == right_scale,
+            _ => false,
+        }
+    }
 }
 
 impl Shape {

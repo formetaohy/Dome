@@ -67,7 +67,7 @@ pub(crate) fn box_box(first: &Solid, second: &Solid, gap: f32) -> Option<Manifol
             FACE_SECOND,
         ),
         Kind::Edge(first_axis, second_axis) => {
-            let first_edge = support_edge(first, first_he, first_axis, best.normal);
+            let first_edge = support_edge(first, first_he, first_axis, normal);
             let second_edge = support_edge(second, second_he, second_axis, -normal);
             let (held, other) = closest_segment_segment(first_edge, second_edge);
             let feature = u64::from(EDGE + (first_axis * 3 + second_axis) as u32);
@@ -341,4 +341,45 @@ fn support_edge(solid: &Solid, half_extents: Vec3, axis: usize, direction: Vec3)
     let direction = solid.rotation.rotate_vec3(AXES[axis]);
     let extent = half_extents.to_array()[axis];
     (center - direction * extent, center + direction * extent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shape::Shape;
+    use dome_math::Quat;
+
+    fn solid(position: Vec3, rotation: Quat) -> Solid {
+        Solid::new(position, rotation, Shape::cuboid(Vec3::splat(1.0)))
+    }
+
+    #[test]
+    fn a_box_pair_reports_one_contact_point_however_its_boxes_are_ordered() {
+        let gap = 0.01;
+        let first = solid(Vec3::ZERO, Quat::from_rotation_z(0.7));
+        let mut worst = 0.0f32;
+        for pitch in [0.3f32, 0.6, 0.9, 1.2] {
+            for yaw in [0.2f32, 0.5, 0.8] {
+                let rotation = Quat::from_rotation_x(pitch) * Quat::from_rotation_y(yaw);
+                for height in [1.8f32, 2.0, 2.2, 2.4, 2.6] {
+                    for offset in [0.0f32, 0.3, 0.6] {
+                        let second = solid(Vec3::new(offset, height, 0.0), rotation);
+                        let Some(forward) = box_box(&first, &second, gap) else {
+                            continue;
+                        };
+                        let Some(reverse) = box_box(&second, &first, gap) else {
+                            continue;
+                        };
+                        let drift =
+                            (forward.points[0].position - reverse.points[0].position).length();
+                        worst = worst.max(drift);
+                    }
+                }
+            }
+        }
+        assert!(
+            worst < 0.05,
+            "a box pair reports contact points {worst} apart when its boxes swap places",
+        );
+    }
 }

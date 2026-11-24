@@ -7,6 +7,7 @@ mod frames;
 mod garbage;
 mod graph;
 mod mixer;
+mod playback;
 mod ring;
 mod sound;
 mod source;

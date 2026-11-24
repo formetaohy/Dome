@@ -1,4 +1,4 @@
-use dome_animation::{AnimationMachine, Clip, Interpolation, Property, Track, advance};
+use dome_animation::{AnimationMachine, Clip, Interpolation, Parameter, Property, Track, advance};
 use dome_ecs::{LocalTransform, World};
 use dome_math::Mat4;
 use dome_scene::{Changed, NodeId, ReferenceKind, Scene, SkinData, Target, Value};
@@ -290,6 +290,33 @@ fn a_scene_resolves_its_skin_and_graph_into_runtime_components() {
         world
             .iter::<SceneNode>()
             .any(|(_, node)| node.id == "joint")
+    );
+}
+
+#[test]
+fn a_graph_edited_in_the_document_reaches_the_machine_that_plays_it() {
+    let mut scene = Scene::parse(SCENE, ".", "the graph scene", schema());
+    let mut world = World::new();
+    let mut sync = SceneSync::new(schema());
+    sync.sync(&scene, &mut world, &Mock, &Changed::none());
+    let holder = sync.entity(1).expect("the sync spawns the holder");
+    let target = Target::Node(String::from("holder"));
+    let read = |world: &World| {
+        read_runtime_property(world, &schema(), &target, "animation.parameter.sprint")
+    };
+    assert_eq!(read(&world), None, "the graph holds no sprint parameter");
+    scene
+        .edit(|edit| edit.add_graph_parameter("rig_graph", "sprint", Parameter::Boolean(false)))
+        .expect("the graph holds the parameter it adds");
+    sync.sync(&scene, &mut world, &Mock, &Changed::none());
+    assert!(
+        world.get::<AnimationMachine>(holder).is_some(),
+        "the holder keeps the machine that plays its graph",
+    );
+    assert_eq!(
+        read(&world),
+        Some(Value::Bool(false)),
+        "a graph edited in the document reaches the machine that plays it",
     );
 }
 

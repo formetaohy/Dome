@@ -496,15 +496,17 @@ impl Body {
         if rotation != self.rotation {
             self.turn(rotation);
         }
-        for at in 0..self.parts.len() {
-            let entity = self.parts[at].entity;
-            match world.get::<Collider>(entity) {
-                Some(collider) => {
-                    if *collider != self.parts[at].collider {
+        for at in 0..self.nodes.len() {
+            let entity = self.nodes[at].entity;
+            let part = self.nodes[at].part;
+            match (part, world.get::<Collider>(entity)) {
+                (NONE, None) => {}
+                (NONE, Some(_)) | (_, None) => rebuilt = true,
+                (part, Some(collider)) => {
+                    if *collider != self.parts[part as usize].collider {
                         rebuilt = true;
                     }
                 }
-                None => rebuilt = true,
             }
         }
         match (rebuilt, teleported) {

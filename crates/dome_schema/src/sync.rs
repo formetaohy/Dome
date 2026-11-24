@@ -60,6 +60,7 @@ impl SceneSync {
         }
         let scene_changed = self.applied.as_ref() != Some(scene);
         let applied = self.applied.as_ref();
+        let changed = self.graphs_changed(scene, changed);
         let mut ids = HashMap::with_capacity(scene.nodes().len());
         let mut entities = Vec::with_capacity(scene.nodes().len());
         for node in scene.nodes() {
@@ -115,14 +116,14 @@ impl SceneSync {
                 animations.rebuild(scene, assets, &nodes);
                 graphs.rebuild(scene, &animations);
             } else {
-                let rebuilt = animations.revise(scene, assets, &nodes, changed);
-                graphs.revise(scene, &animations, &rebuilt, changed);
+                let rebuilt = animations.revise(scene, assets, &nodes, &changed);
+                graphs.revise(scene, &animations, &rebuilt, &changed);
             }
             world.insert_resource(animations);
             world.insert_resource(graphs);
         }
         world.insert_resource(nodes);
-        let visual = Visual::of(scene, changed);
+        let visual = Visual::of(scene, &changed);
         let mut sky = visual.sky;
         for (index, node) in scene.nodes().iter().enumerate() {
             let (entity, reused) = entities[index];
@@ -146,7 +147,7 @@ impl SceneSync {
                 let spec = registration.spec;
                 let authored = node.component_by_name(spec.name);
                 let refreshed = authored
-                    .is_some_and(|component| (registration.runtime)(component).stale(changed));
+                    .is_some_and(|component| (registration.runtime)(component).stale(&changed));
                 let replaced = !shared
                     && (!reused
                         || previous.is_none_or(|previous| {
@@ -180,6 +181,24 @@ impl SceneSync {
         publish(world, damaged, sky);
         dome_animation::settle(world);
         propagate(world);
+    }
+
+    fn graphs_changed(&self, scene: &Scene, changed: &Changed) -> Changed {
+        let mut held = changed.clone();
+        let Some(applied) = &self.applied else {
+            return held;
+        };
+        for graph in scene.graphs() {
+            if applied.graph(&graph.id) != Some(graph) {
+                held.insert(ReferenceKind::Graph, &graph.id);
+            }
+        }
+        for graph in applied.graphs() {
+            if scene.graph(&graph.id).is_none() {
+                held.insert(ReferenceKind::Graph, &graph.id);
+            }
+        }
+        held
     }
 
     pub fn apply(&mut self, scene: &Scene, world: &mut World, assets: &dyn Assets, index: usize) {

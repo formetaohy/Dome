@@ -1,15 +1,15 @@
 use crate::bus::decibels;
-use crate::command::{Command, Event, VoiceId};
+use crate::command::{Command, Topology, Voice};
 use crate::effect::{Compressor, Filter, Reverb};
 use crate::garbage::{self, Garbage};
 use crate::graph::{BLOCK_FRAMES, BusParams, Layout, MAX_BUSES};
-use crate::ring::{Consumer, Producer};
+use crate::playback::{Playback, State};
+use crate::ring::Consumer;
 use crate::voice::{Settings, Voice as Playing};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(crate) const MAX_VOICES: usize = 256;
-const RETIRING: usize = 16;
 
 struct Bus {
     buffer: Vec<f32>,
@@ -52,29 +52,33 @@ impl Bus {
 }
 
 struct Assigned {
-    voice: Playing,
+    voice: Voice,
+    playing: Playing,
+    state: State,
     bus: Option<String>,
     index: usize,
-    sequence: u64,
-    located: bool,
 }
 
 impl Assigned {
     fn discard(self) -> Garbage {
         Garbage::Voice {
-            input: self.voice.release(),
+            input: self.playing.release(),
             bus: self.bus,
         }
+    }
+
+    fn holds(&self, voice: Voice) -> bool {
+        self.voice.token == voice.token
     }
 }
 
 pub(crate) struct Mixer {
     rate: u32,
     commands: Consumer<Command>,
-    events: Producer<Event>,
     garbage: garbage::Queue,
+    playback: Arc<Playback>,
     voices: Vec<Option<Assigned>>,
-    retiring: [Option<Assigned>; RETIRING],
+    retiring: Vec<Option<Assigned>>,
     buses: Vec<Bus>,
     layout: Arc<Layout>,
     used: usize,
@@ -83,26 +87,32 @@ pub(crate) struct Mixer {
     master_target: f32,
     pause: f32,
     paused: bool,
-    sequence: u64,
 }
 
 impl Mixer {
     pub(crate) fn new(
         rate: u32,
         commands: Consumer<Command>,
-        events: Producer<Event>,
         garbage: garbage::Queue,
+        playback: Arc<Playback>,
         active: Arc<AtomicUsize>,
     ) -> Self {
         let layout = Arc::new(Layout::master());
         let buses = (0..MAX_BUSES).map(|_| Bus::new(rate)).collect::<Vec<_>>();
+        assert_eq!(
+            playback.len(),
+            MAX_VOICES,
+            "the mixer addresses {} voices where its playback table holds {}",
+            MAX_VOICES,
+            playback.len(),
+        );
         Self {
             rate,
             commands,
-            events,
             garbage,
+            playback,
             voices: (0..MAX_VOICES).map(|_| None).collect(),
-            retiring: [const { None }; RETIRING],
+            retiring: (0..MAX_VOICES).map(|_| None).collect(),
             buses,
             layout,
             used: 1,
@@ -111,21 +121,20 @@ impl Mixer {
             master_target: 1.0,
             pause: 1.0,
             paused: false,
-            sequence: 0,
         }
     }
 
     pub(crate) fn render(&mut self, out: &mut [f32]) {
+        self.playback.tick();
         self.garbage.flush();
         while let Some(command) = self.commands.take() {
             self.apply(command);
         }
-        self.report();
         out.fill(0.0);
         let frames = out.len() / 2;
         if self.paused && self.pause <= 0.0 || frames == 0 {
-            self.active
-                .store(self.voices.iter().flatten().count(), Ordering::Relaxed);
+            self.republish();
+            self.active.store(self.count(), Ordering::Relaxed);
             return;
         }
         let layout = Arc::clone(&self.layout);
@@ -143,8 +152,28 @@ impl Mixer {
         }
         self.master = self.master_target;
         self.pause = if self.paused { 0.0 } else { 1.0 };
-        self.active
-            .store(self.voices.iter().flatten().count(), Ordering::Relaxed);
+        self.active.store(self.count(), Ordering::Relaxed);
+    }
+
+    fn count(&self) -> usize {
+        self.voices
+            .iter()
+            .flatten()
+            .chain(self.retiring.iter().flatten())
+            .count()
+    }
+
+    fn republish(&mut self) {
+        for at in 0..self.voices.len() {
+            let Some(assigned) = self.voices[at].as_mut() else {
+                continue;
+            };
+            let position = assigned.playing.position();
+            let voice = assigned.voice;
+            let state = &mut assigned.state;
+            self.playback
+                .publish(at, voice.token, state, State::Playing, position);
+        }
     }
 
     fn render_block(&mut self, out: &mut [f32], layout: &Layout) {
@@ -159,23 +188,36 @@ impl Mixer {
             };
             let index = assigned.index;
             if assigned
-                .voice
+                .playing
                 .mix(&mut self.buses[index].buffer[..samples], self.rate)
             {
                 let assigned = slot.take().expect("a retiring voice leaves its slot");
                 self.garbage.discard(assigned.discard());
             }
         }
-        for slot in &mut self.voices {
-            let Some(assigned) = slot else {
+        for at in 0..self.voices.len() {
+            let Some(assigned) = self.voices[at].as_mut() else {
                 continue;
             };
-            let bus = &mut self.buses[assigned.index];
-            if assigned.voice.mix(&mut bus.buffer[..samples], self.rate) {
-                let id = assigned.voice.id();
-                let assigned = slot.take().expect("a finished voice leaves its slot");
+            let index = assigned.index;
+            let finished = assigned
+                .playing
+                .mix(&mut self.buses[index].buffer[..samples], self.rate);
+            let position = assigned.playing.position();
+            let voice = assigned.voice;
+            let state = &mut assigned.state;
+            let next = if finished {
+                State::Finished
+            } else {
+                State::Playing
+            };
+            self.playback
+                .publish(at, voice.token, state, next, position);
+            if finished {
+                let assigned = self.voices[at]
+                    .take()
+                    .expect("a finished voice leaves its slot");
                 self.garbage.discard(assigned.discard());
-                let _ = self.events.send(Event::Finished(id));
             }
         }
         for at in 0..layout.order().len() {
@@ -236,36 +278,30 @@ impl Mixer {
                 cutoff,
                 looping,
                 pitch,
-                priority,
                 start,
             } => {
+                let slot = slot_of(voice);
+                if let Some(held) = self.voices[slot].take() {
+                    self.retire(held);
+                }
                 let settings = Settings {
                     gain,
                     pan,
                     cutoff,
                     looping,
                     pitch,
-                    priority,
                     start,
                 };
-                let Some(index) = self.slot(priority, gain) else {
-                    self.garbage.discard(Garbage::Voice { input, bus });
-                    let _ = self.events.send(Event::Dropped(voice));
-                    return;
-                };
-                let bus_index = bus
-                    .as_deref()
-                    .and_then(|id| self.layout.index(id))
-                    .unwrap_or_else(|| self.layout.root());
-                let bus_index = bus_index.min(self.used - 1);
-                let sequence = self.sequence;
-                self.sequence = self.sequence.wrapping_add(1);
-                self.voices[index] = Some(Assigned {
-                    voice: Playing::new(voice, input, settings, self.rate),
+                let index = bus_index(bus.as_deref(), &self.layout, self.used);
+                let mut state = State::Pending;
+                self.playback
+                    .publish(slot, voice.token, &mut state, State::Playing, start);
+                self.voices[slot] = Some(Assigned {
+                    voice,
+                    playing: Playing::new(input, settings, self.rate),
+                    state,
                     bus,
-                    index: bus_index,
-                    sequence,
-                    located: false,
+                    index,
                 });
             }
             Command::Update {
@@ -274,30 +310,14 @@ impl Mixer {
                 pan,
                 cutoff,
             } => {
-                if let Some(held) = self.voice_mut(voice) {
-                    held.update(gain, pan, cutoff);
-                }
-            }
-            Command::Locate { voice } => {
                 if let Some(held) = self.assigned_mut(voice) {
-                    held.located = true;
+                    held.playing.update(gain, pan, cutoff);
                 }
             }
-            Command::Stop { voice } => {
-                if let Some(slot) = self
-                    .voices
-                    .iter_mut()
-                    .find(|slot| slot.as_ref().is_some_and(|held| held.voice.id() == voice))
-                {
-                    let mut assigned = slot.take().expect("the stopped slot holds its voice");
-                    assigned.voice.stop();
-                    self.retire(assigned);
-                }
-            }
-            Command::Replace { voice, input } => {
+            Command::Replace { voice, input, seek } => {
                 let rate = self.rate;
-                let replaced = match self.voice_mut(voice) {
-                    Some(held) => held.replace(input, rate),
+                let replaced = match self.assigned_mut(voice) {
+                    Some(held) => held.playing.replace(input, seek, rate),
                     None => input,
                 };
                 self.garbage.discard(Garbage::Voice {
@@ -305,10 +325,31 @@ impl Mixer {
                     bus: None,
                 });
             }
-            Command::Buses(layout) => {
+            Command::Stop { voice } => {
+                let slot = slot_of(voice);
+                if self.voices[slot]
+                    .as_ref()
+                    .is_some_and(|held| held.holds(voice))
+                    && let Some(mut assigned) = self.voices[slot].take()
+                {
+                    assigned.playing.stop();
+                    self.retire(assigned);
+                }
+            }
+            Command::Topology(topology) => {
+                let Topology { layout, params } = topology;
                 self.used = layout.len();
                 for bus in &mut self.buses[..self.used] {
                     bus.reset();
+                }
+                for (bus, params) in self.buses[..self.used].iter_mut().zip(params.iter()) {
+                    bus.params = *params;
+                    bus.gain_target = if params.mute {
+                        0.0
+                    } else {
+                        decibels(params.gain_db)
+                    };
+                    bus.send_target = decibels(params.send_db);
                 }
                 let used = self.used;
                 for assigned in self
@@ -321,24 +362,6 @@ impl Mixer {
                 }
                 let replaced = std::mem::replace(&mut self.layout, layout);
                 self.garbage.discard(Garbage::Layout(replaced));
-            }
-            Command::Params(params) => {
-                assert_eq!(
-                    params.len(),
-                    self.used,
-                    "the audio mixer holds {} buses for {} parameter sets",
-                    self.used,
-                    params.len(),
-                );
-                for (bus, params) in self.buses[..self.used].iter_mut().zip(params.iter()) {
-                    bus.params = *params;
-                    bus.gain_target = if params.mute {
-                        0.0
-                    } else {
-                        decibels(params.gain_db)
-                    };
-                    bus.send_target = decibels(params.send_db);
-                }
                 self.garbage.discard(Garbage::Params(params));
             }
             Command::Master { gain } => {
@@ -352,90 +375,32 @@ impl Mixer {
         }
     }
 
-    fn slot(&mut self, priority: i32, gain: f32) -> Option<usize> {
-        if let Some(index) = self.voices.iter().position(Option::is_none) {
-            return Some(index);
-        }
-        let victim = self
-            .voices
-            .iter()
-            .enumerate()
-            .filter_map(|(index, assigned)| assigned.as_ref().map(|assigned| (index, assigned)))
-            .min_by(|(_, left), (_, right)| {
-                left.voice
-                    .priority()
-                    .cmp(&right.voice.priority())
-                    .then_with(|| left.voice.gain().total_cmp(&right.voice.gain()))
-                    .then_with(|| left.sequence.cmp(&right.sequence))
-            })
-            .map(|(index, _)| index)?;
-        let assigned = self.voices[victim]
-            .as_ref()
-            .expect("a victim of voice stealing holds its voice");
-        if assigned.voice.priority() > priority
-            || (assigned.voice.priority() == priority && assigned.voice.gain() > gain)
-        {
-            return None;
-        }
-        let id = assigned.voice.id();
-        let position = assigned.voice.position();
-        let mut held = self.voices[victim]
-            .take()
-            .expect("a victim of voice stealing holds its voice");
-        held.voice.stop();
-        self.retire(held);
-        let _ = self.events.send(Event::Stolen {
-            voice: id,
-            position,
-        });
-        Some(victim)
-    }
-
     fn retire(&mut self, mut assigned: Assigned) {
         let free = self
             .retiring
             .iter()
             .position(Option::is_none)
-            .unwrap_or_else(|| {
-                self.retiring
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, slot)| slot.as_ref().map_or(u64::MAX, |held| held.sequence))
-                    .map(|(index, _)| index)
-                    .expect("a retiring pool holds the slot it replaces")
-            });
-        assigned.sequence = self.sequence;
-        self.sequence = self.sequence.wrapping_add(1);
+            .expect("a voice pool retires at most the voices it holds");
+        assigned.state = State::Fading;
         if let Some(replaced) = self.retiring[free].replace(assigned) {
             self.garbage.discard(replaced.discard());
         }
     }
 
-    fn voice_mut(&mut self, voice: VoiceId) -> Option<&mut Playing> {
-        self.assigned_mut(voice).map(|held| &mut held.voice)
+    fn assigned_mut(&mut self, voice: Voice) -> Option<&mut Assigned> {
+        self.voices[slot_of(voice)]
+            .as_mut()
+            .filter(|held| held.holds(voice))
     }
+}
 
-    fn assigned_mut(&mut self, voice: VoiceId) -> Option<&mut Assigned> {
-        self.voices
-            .iter_mut()
-            .flatten()
-            .find(|held| held.voice.id() == voice)
-    }
-
-    fn report(&mut self) {
-        for held in self.voices.iter_mut().flatten() {
-            if !held.located {
-                continue;
-            }
-            let event = Event::Located {
-                voice: held.voice.id(),
-                position: held.voice.position(),
-            };
-            if self.events.send(event).is_ok() {
-                held.located = false;
-            }
-        }
-    }
+fn slot_of(voice: Voice) -> usize {
+    let slot = voice.slot as usize;
+    assert!(
+        slot < MAX_VOICES,
+        "a voice names the slot {slot} of a mixer that holds {MAX_VOICES}",
+    );
+    slot
 }
 
 fn bus_index(bus: Option<&str>, layout: &Layout, used: usize) -> usize {
@@ -458,15 +423,18 @@ mod tests {
     use crate::ring;
     use crate::sound::{Channels, Sound};
     use crate::source::Input;
-    use std::sync::Arc;
 
     fn tone(frames: Vec<f32>) -> Arc<Sound> {
         Arc::new(Sound::new(48_000, Channels::Mono, frames))
     }
 
-    fn command(voice: u32, sound: Arc<Sound>, bus: Option<&str>) -> Command {
+    fn voice(token: u32) -> Voice {
+        Voice { slot: 0, token }
+    }
+
+    fn command(token: u32, sound: Arc<Sound>, bus: Option<&str>) -> Command {
         Command::Play {
-            voice: VoiceId(voice),
+            voice: voice(token),
             input: Input::Decoded(sound),
             bus: bus.map(String::from),
             gain: 1.0,
@@ -474,13 +442,12 @@ mod tests {
             cutoff: f32::INFINITY,
             looping: true,
             pitch: 1.0,
-            priority: 0,
             start: 0,
         }
     }
 
-    fn buses(buses: &[(&str, Option<&str>, Option<&str>)]) -> Arc<Layout> {
-        let links = buses
+    fn buses(links: &[(&str, Option<&str>, Option<&str>)]) -> Arc<Layout> {
+        let links = links
             .iter()
             .map(|(id, parent, send)| BusLink {
                 id,
@@ -488,23 +455,47 @@ mod tests {
                 send: *send,
             })
             .collect::<Vec<_>>();
-        let layout = crate::graph::layout_of(&links).expect("the test buses hold a graph");
-        Arc::new(layout)
+        Arc::new(crate::graph::layout_of(&links).expect("the test buses hold a graph"))
+    }
+
+    fn topology(layout: Arc<Layout>, params: Vec<BusParams>) -> Command {
+        Command::Topology(Topology {
+            layout,
+            params: Arc::new(params),
+        })
+    }
+
+    fn mixer() -> (
+        ring::Producer<Command>,
+        Arc<Playback>,
+        garbage::Bin,
+        Mixer,
+        Arc<AtomicUsize>,
+    ) {
+        let (producer, command_consumer) = ring::channel(64);
+        let active = Arc::new(AtomicUsize::new(0));
+        let playback = Playback::new(MAX_VOICES);
+        let (garbage, bin) = garbage::channel(64);
+        let mixer = Mixer::new(
+            48_000,
+            command_consumer,
+            garbage,
+            Arc::clone(&playback),
+            Arc::clone(&active),
+        );
+        (producer, playback, bin, mixer, active)
+    }
+
+    fn start(producer: &mut ring::Producer<Command>, playback: &Playback, command: Command) {
+        if let Command::Play { voice, .. } = &command {
+            playback.begin(voice.slot as usize, voice.token);
+        }
+        producer.send(command).expect("the mixer accepts a voice");
     }
 
     #[test]
-    fn a_replaced_voice_continues_from_the_frame_it_reached() {
-        let (mut producer, command_consumer) = ring::channel(8);
-        let (event_producer, mut events) = ring::channel(8);
-        let active = Arc::new(AtomicUsize::new(0));
-        let (garbage, _bin) = garbage::channel(64);
-        let mut mixer = Mixer::new(
-            48_000,
-            command_consumer,
-            event_producer,
-            garbage,
-            Arc::clone(&active),
-        );
+    fn a_replaced_voice_continues_from_the_frame_it_reported() {
+        let (mut producer, playback, _bin, mut mixer, _active) = mixer();
         let ramp = || tone((0..4_800).map(|at| at as f32 / 1_000.0).collect());
         let reloaded = || {
             tone(
@@ -513,29 +504,24 @@ mod tests {
                     .collect(),
             )
         };
-        producer
-            .send(command(1, ramp(), None))
-            .expect("the mixer accepts a voice");
+        start(&mut producer, &playback, command(1, ramp(), None));
         let mut block = [0.0f32; 512];
         mixer.render(&mut block);
-        producer
-            .send(Command::Locate { voice: VoiceId(1) })
-            .expect("the mixer locates a voice");
-        let mut probe = [0.0f32; 2];
-        mixer.render(&mut probe);
-        assert!(
-            matches!(events.take(), Some(Event::Located { voice, position }) if voice == VoiceId(1) && position == 256),
-            "a located voice reports the frame it reached",
-        );
+        let report = playback
+            .report(0)
+            .expect("a playing voice reports through its slot");
+        assert_eq!(report.state, State::Playing);
+        assert_eq!(report.position, 256);
         producer
             .send(Command::Replace {
-                voice: VoiceId(1),
+                voice: voice(1),
                 input: Input::Decoded(reloaded()),
+                seek: report.position,
             })
             .expect("the mixer replaces the source of a voice");
         let mut held = [0.0f32; 2];
         mixer.render(&mut held);
-        let carried = (257.0 + 1_000.0) / 2_000.0 * std::f32::consts::FRAC_PI_4.cos();
+        let carried = (256.0 + 1_000.0) / 2_000.0 * std::f32::consts::FRAC_PI_4.cos();
         assert!(
             (held[0] - carried).abs() < 1e-2,
             "a replaced voice continues at {carried} rather than {}",
@@ -545,29 +531,20 @@ mod tests {
 
     #[test]
     fn a_stopped_voice_ramps_out_of_the_mix() {
-        let (mut producer, command_consumer) = ring::channel(8);
-        let (event_producer, mut events) = ring::channel(8);
-        let active = Arc::new(AtomicUsize::new(0));
-        let (garbage, _bin) = garbage::channel(64);
-        let mut mixer = Mixer::new(
-            48_000,
-            command_consumer,
-            event_producer,
-            garbage,
-            Arc::clone(&active),
+        let (mut producer, playback, _bin, mut mixer, active) = mixer();
+        start(
+            &mut producer,
+            &playback,
+            command(1, tone(vec![1.0; 48_000]), None),
         );
-        producer
-            .send(command(1, tone(vec![1.0; 48_000]), None))
-            .expect("the mixer accepts a voice");
         let mut block = [0.0f32; 960];
         mixer.render(&mut block);
         let level = block[958].abs();
         assert!(level > 0.5, "a held voice mixes at {level}");
         producer
-            .send(Command::Stop { voice: VoiceId(1) })
+            .send(Command::Stop { voice: voice(1) })
             .expect("the mixer stops a voice");
         mixer.render(&mut block);
-        assert_eq!(active.load(Ordering::Relaxed), 0);
         assert!(
             block[0].abs() > level * 0.5,
             "a stopped voice steps out of the mix at {} where it played {level}",
@@ -586,170 +563,57 @@ mod tests {
                 "a stopped voice ramps down from {left} to {right}",
             );
         }
-        assert!(events.take().is_none());
+        assert_eq!(active.load(Ordering::Relaxed), 0);
     }
 
     #[test]
-    fn a_mixer_pans_and_finishes_voices() {
-        let (commands, command_consumer) = ring::channel(8);
-        let (event_producer, mut events) = ring::channel(8);
-        let active = Arc::new(AtomicUsize::new(0));
-        let (garbage, _bin) = garbage::channel(64);
-        let mut mixer = Mixer::new(
-            48_000,
-            command_consumer,
-            event_producer,
-            garbage,
-            Arc::clone(&active),
-        );
-        let mut producer = commands;
-        let mut block = [0.0f32; 960];
-        producer
-            .send(command(1, tone(vec![1.0; 4_800]), None))
-            .expect("the mixer accepts a voice");
-        mixer.render(&mut block);
-        mixer.render(&mut block);
-        assert_eq!(active.load(Ordering::Relaxed), 1);
-        assert!((block[958] - 0.707).abs() < 0.01);
-        assert!((block[959] - 0.707).abs() < 0.01);
-        producer
-            .send(Command::Update {
-                voice: VoiceId(1),
+    fn a_finished_voice_hands_its_status_and_its_frames_to_the_main_thread() {
+        let (mut producer, playback, mut bin, mut mixer, _active) = mixer();
+        start(
+            &mut producer,
+            &playback,
+            Command::Play {
+                voice: voice(1),
+                input: Input::Decoded(tone(vec![1.0; 4_800])),
+                bus: None,
                 gain: 1.0,
                 pan: 1.0,
                 cutoff: f32::INFINITY,
-            })
-            .expect("the mixer updates a voice");
-        mixer.render(&mut block);
-        mixer.render(&mut block);
-        assert!(block[958].abs() < 0.01);
-        assert!((block[959] - 1.0).abs() < 0.01);
-        producer
-            .send(Command::Stop { voice: VoiceId(1) })
-            .expect("the mixer stops a voice");
-        mixer.render(&mut block);
-        assert_eq!(active.load(Ordering::Relaxed), 0);
-        assert!(events.take().is_none());
-        producer
-            .send(Command::Play {
-                voice: VoiceId(2),
-                input: Input::Decoded(tone(vec![1.0; 2])),
-                bus: None,
-                gain: 1.0,
-                pan: 0.0,
-                cutoff: f32::INFINITY,
                 looping: false,
                 pitch: 1.0,
-                priority: 0,
                 start: 0,
-            })
-            .expect("the mixer accepts a one shot");
-        mixer.render(&mut block);
-        assert!(matches!(events.take(), Some(Event::Finished(VoiceId(2)))));
-    }
-
-    #[test]
-    fn a_mixer_hands_the_voice_it_finishes_to_the_main_thread() {
-        let (mut producer, command_consumer) = ring::channel(8);
-        let (event_producer, _events) = ring::channel(8);
-        let (garbage, mut bin) = garbage::channel(8);
-        let active = Arc::new(AtomicUsize::new(0));
-        let mut mixer = Mixer::new(
-            48_000,
-            command_consumer,
-            event_producer,
-            garbage,
-            Arc::clone(&active),
+            },
         );
-        producer
-            .send(Command::Play {
-                voice: VoiceId(1),
-                input: Input::Decoded(tone(vec![1.0; 2])),
-                bus: None,
-                gain: 1.0,
-                pan: 0.0,
-                cutoff: f32::INFINITY,
-                looping: false,
-                pitch: 1.0,
-                priority: 0,
-                start: 0,
-            })
-            .expect("the mixer accepts a one shot");
-        assert_eq!(bin.empty(), 0, "a mixer holds no garbage before it mixes");
         let mut block = [0.0f32; 960];
         mixer.render(&mut block);
-        assert_eq!(
-            bin.empty(),
-            1,
+        assert!(
+            block[958].abs() < 0.01 && (block[959] - 1.0).abs() < 0.01,
+            "a voice panned right mixes {} and {}",
+            block[958],
+            block[959],
+        );
+        for _ in 0..16 {
+            mixer.render(&mut block);
+        }
+        let report = playback
+            .report(0)
+            .expect("a finished voice holds its report");
+        assert_eq!(report.state, State::Finished);
+        assert!(
+            bin.empty() > 0,
             "a finished voice waits for the thread that releases it",
         );
-    }
-
-    #[test]
-    fn a_mixer_steals_the_quietest_voice_of_the_lowest_priority() {
-        let (mut producer, command_consumer) = ring::channel(1024);
-        let (event_producer, mut events) = ring::channel(1024);
-        let active = Arc::new(AtomicUsize::new(0));
-        let (garbage, _bin) = garbage::channel(64);
-        let mut mixer = Mixer::new(
-            48_000,
-            command_consumer,
-            event_producer,
-            garbage,
-            Arc::clone(&active),
+        mixer.render(&mut block);
+        assert_eq!(
+            playback.report(0),
+            Some(report),
+            "a report stays until the main thread releases its slot",
         );
-        for voice in 0..MAX_VOICES as u32 {
-            let mut held = command(voice, tone(vec![1.0; 4_800]), None);
-            if let Command::Play { priority, gain, .. } = &mut held {
-                *priority = 10;
-                *gain = 1.0;
-            }
-            producer.send(held).expect("the mixer accepts its music");
-        }
-        let mut block = [0.0f32; 960];
-        mixer.render(&mut block);
-        assert_eq!(active.load(Ordering::Relaxed), MAX_VOICES);
-        let mut quiet = command(MAX_VOICES as u32 + 1, tone(vec![1.0; 4_800]), None);
-        if let Command::Play { priority, .. } = &mut quiet {
-            *priority = 0;
-        }
-        producer
-            .send(quiet)
-            .expect("the mixer refuses the quietest voice");
-        mixer.render(&mut block);
-        assert!(matches!(
-            events.take(),
-            Some(Event::Dropped(VoiceId(voice))) if voice == MAX_VOICES as u32 + 1
-        ));
-        let mut loud = command(MAX_VOICES as u32 + 2, tone(vec![1.0; 4_800]), None);
-        if let Command::Play { priority, gain, .. } = &mut loud {
-            *priority = 20;
-            *gain = 1.0;
-        }
-        producer
-            .send(loud)
-            .expect("the mixer steals the quietest music");
-        mixer.render(&mut block);
-        assert!(matches!(
-            events.take(),
-            Some(Event::Stolen { voice, .. }) if voice == VoiceId(0)
-        ));
-        assert_eq!(active.load(Ordering::Relaxed), MAX_VOICES);
     }
 
     #[test]
     fn a_mixer_sends_a_bus_into_a_reverb_tail() {
-        let (mut producer, command_consumer) = ring::channel(8);
-        let (event_producer, _events) = ring::channel(8);
-        let active = Arc::new(AtomicUsize::new(0));
-        let (garbage, _bin) = garbage::channel(64);
-        let mut mixer = Mixer::new(
-            48_000,
-            command_consumer,
-            event_producer,
-            garbage,
-            Arc::clone(&active),
-        );
+        let (mut producer, _playback, _bin, mut mixer, _active) = mixer();
         let layout = buses(&[
             ("master", None, None),
             ("quiet", Some("master"), Some("hall")),
@@ -758,14 +622,11 @@ mod tests {
         let mut params = vec![BusParams::default(); 3];
         params[2].reverb = crate::bus::AudioReverb::new(true, 0.9, 0.3, 1.0);
         producer
-            .send(Command::Buses(Arc::clone(&layout)))
-            .expect("the mixer accepts its layout");
-        producer
-            .send(Command::Params(Arc::new(params)))
-            .expect("the mixer accepts its parameters");
+            .send(topology(layout, params))
+            .expect("the mixer accepts its topology");
         producer
             .send(Command::Play {
-                voice: VoiceId(1),
+                voice: voice(1),
                 input: Input::Decoded(tone(vec![1.0; 64])),
                 bus: Some(String::from("quiet")),
                 gain: 1.0,
@@ -773,7 +634,6 @@ mod tests {
                 cutoff: f32::INFINITY,
                 looping: false,
                 pitch: 1.0,
-                priority: 0,
                 start: 0,
             })
             .expect("the mixer accepts a one shot");
@@ -789,27 +649,14 @@ mod tests {
 
     #[test]
     fn a_mixer_mixes_buses_through_gain_and_filter() {
-        let (mut producer, command_consumer) = ring::channel(8);
-        let (event_producer, _events) = ring::channel(8);
-        let active = Arc::new(AtomicUsize::new(0));
-        let (garbage, _bin) = garbage::channel(64);
-        let mut mixer = Mixer::new(
-            48_000,
-            command_consumer,
-            event_producer,
-            garbage,
-            Arc::clone(&active),
-        );
+        let (mut producer, _playback, _bin, mut mixer, _active) = mixer();
         let layout = buses(&[("master", None, None), ("quiet", Some("master"), None)]);
         let mut params = vec![BusParams::default(); 2];
         params[1].gain_db = -12.0;
         params[1].filter = AudioFilter::new(true, FilterKind::LowPass, 200.0, 0.707, 0.0);
         producer
-            .send(Command::Buses(Arc::clone(&layout)))
-            .expect("the mixer accepts its layout");
-        producer
-            .send(Command::Params(Arc::new(params.clone())))
-            .expect("the mixer accepts its parameters");
+            .send(topology(Arc::clone(&layout), params.clone()))
+            .expect("the mixer accepts its topology");
         producer
             .send(command(1, tone(vec![1.0; 4_800]), Some("quiet")))
             .expect("the mixer accepts a voice");
@@ -821,7 +668,7 @@ mod tests {
         params[1].filter.set_enabled(false);
         params[1].mute = true;
         producer
-            .send(Command::Params(Arc::new(params)))
+            .send(topology(layout, params))
             .expect("the mixer accepts muted parameters");
         for _ in 0..8 {
             mixer.render(&mut block);

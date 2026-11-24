@@ -8,7 +8,7 @@ const SMOOTH_EDGE: f32 = 0.984_807_7;
 
 type EdgeKey = ((u32, u32, u32), (u32, u32, u32));
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct TriangleMesh {
     triangles: Vec<Triangle>,
     edges: Vec<[Vec3; 2]>,
@@ -18,13 +18,13 @@ pub struct TriangleMesh {
     bounds: Aabb,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct Triangle {
     vertices: [Vec3; 3],
     bounds: Aabb,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct Node {
     bounds: Aabb,
     first: u32,

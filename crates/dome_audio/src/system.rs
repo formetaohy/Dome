@@ -1,10 +1,11 @@
 use crate::bus::{AudioBus, BusState};
-use crate::command::{Command, Event, VoiceId};
+use crate::command::{Command, Topology, Voice};
 use crate::component::{AudioListener, AudioSource};
 use crate::device::{Output, Stream};
 use crate::garbage;
 use crate::graph::{self, BusParams, Layout};
 use crate::mixer::{MAX_VOICES, Mixer};
+use crate::playback::{Playback, State};
 use crate::ring;
 use crate::source::Source;
 use crate::spatial::{self, Listener};
@@ -18,38 +19,35 @@ use std::time::{Duration, Instant};
 pub use crate::device::Unavailable as AudioUnavailable;
 
 const COMMAND_CAPACITY: usize = 8192;
-const EVENT_CAPACITY: usize = 4096;
 const GARBAGE_CAPACITY: usize = 1024;
 const RETRY: Duration = Duration::from_secs(1);
+const MISSING_BEATS: u32 = 4;
 
 struct Deck {
     stream: Stream,
     commands: Mutex<ring::Producer<Command>>,
-    events: Mutex<ring::Consumer<Event>>,
     garbage: garbage::Bin,
     active: Arc<AtomicUsize>,
 }
 
 impl Deck {
-    fn open() -> Result<Self, AudioUnavailable> {
+    fn open(playback: Arc<Playback>) -> Result<Self, AudioUnavailable> {
         let output = Output::open()?;
         let format = output.format();
         let (commands, command_consumer) = ring::channel(COMMAND_CAPACITY);
-        let (event_producer, events) = ring::channel(EVENT_CAPACITY);
         let (garbage, bin) = garbage::channel(GARBAGE_CAPACITY);
         let active = Arc::new(AtomicUsize::new(0));
         let mut mixer = Mixer::new(
             format.sample_rate(),
             command_consumer,
-            event_producer,
             garbage,
+            playback,
             Arc::clone(&active),
         );
         let stream = output.start(Box::new(move |out: &mut [f32]| mixer.render(out)))?;
         Ok(Self {
             stream,
             commands: Mutex::new(commands),
-            events: Mutex::new(events),
             garbage: bin,
             active,
         })
@@ -70,18 +68,14 @@ impl Deck {
             .unwrap_or_else(|poison| poison.into_inner());
         commands.send(command).is_ok()
     }
-
-    fn take_events(&self) -> impl Iterator<Item = Event> {
-        let mut events = self
-            .events
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        std::iter::from_fn(move || events.take())
-    }
 }
 
 struct Playing {
-    voice: u32,
+    voice: Voice,
+    state: State,
+    position: u64,
+    missing: u32,
+    sequence: u64,
     generation: u64,
     last: Params,
     bus: String,
@@ -91,12 +85,6 @@ struct Playing {
     name: String,
     source: usize,
     pitch: f32,
-    exchange: Option<Exchange>,
-}
-
-struct Exchange {
-    source: usize,
-    position: Option<u64>,
 }
 
 impl Playing {
@@ -114,6 +102,12 @@ impl Playing {
     }
 }
 
+#[derive(Clone, Copy)]
+enum End {
+    Played,
+    Lost,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 struct Params {
     gain: f32,
@@ -125,18 +119,24 @@ pub struct Audio {
     deck: Option<Deck>,
     failure: Option<AudioUnavailable>,
     retry: Instant,
-    stalled: bool,
+    playback: Arc<Playback>,
+    free: Vec<u32>,
+    tokens: u32,
+    sequences: u64,
+    beat: u64,
     voices: BTreeMap<Entity, Playing>,
     suspended: BTreeMap<Entity, (u64, u64)>,
     owners: BTreeMap<u32, Entity>,
-    next: u32,
+    finished: Vec<Entity>,
     master: f32,
     paused: bool,
+    sent: Option<(f32, bool)>,
     layout: Arc<Layout>,
     bus_entities: Vec<Entity>,
     buses: Vec<BusParams>,
     scratch: Vec<BusParams>,
     fingerprint: u64,
+    topology: bool,
     revision: u64,
     reopen: bool,
 }
@@ -147,18 +147,24 @@ impl Audio {
             deck: None,
             failure: None,
             retry: Instant::now(),
-            stalled: false,
+            playback: Playback::new(MAX_VOICES),
+            free: (0..MAX_VOICES as u32).rev().collect(),
+            tokens: 1,
+            sequences: 0,
+            beat: 0,
             voices: BTreeMap::new(),
             suspended: BTreeMap::new(),
             owners: BTreeMap::new(),
-            next: 0,
+            finished: Vec::new(),
             master: 1.0,
             paused: false,
+            sent: None,
             layout: Arc::new(Layout::master()),
             bus_entities: Vec::new(),
             buses: vec![BusParams::default()],
             scratch: Vec::new(),
             fingerprint: 0,
+            topology: false,
             revision: 0,
             reopen: true,
         };
@@ -180,10 +186,6 @@ impl Audio {
             .map_or(0, |deck| deck.active.load(Ordering::Relaxed))
     }
 
-    fn lowest_priority(&self) -> Option<u8> {
-        self.voices.values().map(|playing| playing.priority).min()
-    }
-
     pub fn master(&self) -> f32 {
         self.master
     }
@@ -203,7 +205,6 @@ impl Audio {
         }
         self.master = gain;
         self.revision = self.revision.wrapping_add(1);
-        self.send(Command::Master { gain });
     }
 
     pub fn paused(&self) -> bool {
@@ -216,7 +217,6 @@ impl Audio {
         }
         self.paused = paused;
         self.revision = self.revision.wrapping_add(1);
-        self.send(Command::Paused { paused });
     }
 
     pub fn buses(&self) -> impl Iterator<Item = BusState<'_>> + '_ {
@@ -235,15 +235,13 @@ impl Audio {
 
     fn acquire(&mut self) {
         self.retry = Instant::now() + RETRY;
-        match Deck::open() {
+        match Deck::open(Arc::clone(&self.playback)) {
             Ok(deck) => {
-                deck.send(Command::Master { gain: self.master });
-                deck.send(Command::Paused {
-                    paused: self.paused,
-                });
                 self.deck = Some(deck);
                 self.failure = None;
                 self.reopen = true;
+                self.sent = None;
+                self.beat = 0;
             }
             Err(error) => {
                 self.deck = None;
@@ -253,36 +251,48 @@ impl Audio {
     }
 
     fn supervise(&mut self) {
-        if std::mem::take(&mut self.stalled) {
-            eprintln!("the audio mixer holds no command the frame sends: reopening its device");
-            self.deck = None;
-            self.forget();
-            self.retry = Instant::now();
-        }
         if let Some(deck) = &mut self.deck
             && deck.alive()
         {
             deck.empty();
             return;
         }
-        let now = Instant::now();
-        if now < self.retry {
+        if self.deck.is_some() {
+            self.deck = None;
+            self.playback.release_all();
+            self.suspend_all();
+            self.retry = Instant::now();
+        }
+        if Instant::now() < self.retry {
             return;
         }
-        self.deck = None;
-        self.forget();
         self.acquire();
     }
 
-    fn forget(&mut self) {
-        if self.voices.is_empty() && self.suspended.is_empty() && self.owners.is_empty() {
+    fn suspend_all(&mut self) {
+        let entities = self.voices.keys().copied().collect::<Vec<_>>();
+        for entity in entities {
+            if let Some(playing) = self.release(entity) {
+                self.suspended.insert(
+                    entity,
+                    (playing.generation, playing.position.max(playing.start)),
+                );
+            }
+        }
+    }
+
+    fn sync_mixer(&mut self) {
+        let desired = (self.master, self.paused);
+        if self.sent == Some(desired) {
             return;
         }
-        self.voices.clear();
-        self.suspended.clear();
-        self.owners.clear();
-        self.reopen = true;
-        self.revision = self.revision.wrapping_add(1);
+        if self.send(Command::Master { gain: self.master })
+            && self.send(Command::Paused {
+                paused: self.paused,
+            })
+        {
+            self.sent = Some(desired);
+        }
     }
 
     fn sync_buses(&mut self, world: &World) {
@@ -305,29 +315,81 @@ impl Audio {
             graph::entities(world, &self.layout, &mut self.bus_entities);
         }
         self.fingerprint = fingerprint;
-        if rebuilt {
-            self.send(Command::Buses(Arc::clone(&self.layout)));
-        }
         graph::params(world, &self.layout, &self.bus_entities, &mut self.scratch);
-        if rebuilt || self.scratch != self.buses {
-            self.send(Command::Params(Arc::new(self.scratch.clone())));
-            std::mem::swap(&mut self.scratch, &mut self.buses);
-            self.revision = self.revision.wrapping_add(1);
+        if rebuilt || self.scratch != self.buses || self.topology {
+            let topology = Topology {
+                layout: Arc::clone(&self.layout),
+                params: Arc::new(self.scratch.clone()),
+            };
+            if self.send(Command::Topology(topology)) {
+                std::mem::swap(&mut self.scratch, &mut self.buses);
+                self.topology = false;
+                self.revision = self.revision.wrapping_add(1);
+            } else {
+                self.topology = true;
+            }
         }
     }
 
-    fn send(&mut self, command: Command) {
-        if let Some(deck) = &self.deck
-            && !deck.send(command)
-        {
-            self.stalled = true;
+    fn send(&self, command: Command) -> bool {
+        match &self.deck {
+            Some(deck) => deck.send(command),
+            None => false,
         }
     }
 
-    fn start(&mut self, entity: Entity, source: &AudioSource, params: Params, start: u64) {
+    fn alloc(&mut self) -> Option<u32> {
+        self.free.pop()
+    }
+
+    fn token(&mut self) -> u32 {
+        let token = self.tokens;
+        self.tokens = self
+            .tokens
+            .checked_add(1)
+            .expect("the audio mixer does not hand out four billion voices");
+        token
+    }
+
+    fn victim(&self, priority: u8, gain: f32) -> Option<Entity> {
+        let (entity, playing) = self.voices.iter().min_by(|(_, left), (_, right)| {
+            left.priority
+                .cmp(&right.priority)
+                .then_with(|| left.last.gain.total_cmp(&right.last.gain))
+                .then_with(|| left.sequence.cmp(&right.sequence))
+        })?;
+        let worth = playing.priority < priority
+            || (playing.priority == priority && playing.last.gain <= gain);
+        worth.then_some(*entity)
+    }
+
+    fn reserve(&mut self, priority: u8, gain: f32) -> Option<u32> {
+        if let Some(slot) = self.alloc() {
+            return Some(slot);
+        }
+        let entity = self.victim(priority, gain)?;
+        let slot = self.voices.get(&entity)?.voice.slot;
+        let playing = self.detach(entity)?;
+        if playing.looping {
+            self.suspended.insert(
+                entity,
+                (playing.generation, playing.position.max(playing.start)),
+            );
+        } else {
+            self.finished.push(entity);
+        }
+        Some(slot)
+    }
+
+    fn start(&mut self, entity: Entity, source: &AudioSource, params: Params, start: u64) -> bool {
         if self.deck.is_none() {
-            return;
+            return false;
         }
+        assert!(
+            !self.voices.contains_key(&entity),
+            "the audio source of entity {} starts a second voice",
+            entity.index(),
+        );
         if !source.bus().is_empty() && self.layout.index(source.bus()).is_none() {
             panic!(
                 "the audio source of entity {} plays through the bus {}, which the mixer does not hold",
@@ -335,14 +397,21 @@ impl Audio {
                 source.bus(),
             );
         }
+        let Some(slot) = self.reserve(source.priority(), params.gain) else {
+            if !source.looping() {
+                self.finished.push(entity);
+            }
+            return false;
+        };
         let input = source
             .source()
             .open(source.looping(), start)
             .unwrap_or_else(|error| panic!("{error}"));
-        let voice = self.next;
-        self.next = self.next.wrapping_add(1);
-        self.send(Command::Play {
-            voice: VoiceId(voice),
+        let token = self.token();
+        let voice = Voice { slot, token };
+        self.playback.begin(slot as usize, token);
+        let accepted = self.send(Command::Play {
+            voice,
             input,
             bus: (!source.bus().is_empty()).then(|| String::from(source.bus())),
             gain: params.gain,
@@ -350,13 +419,23 @@ impl Audio {
             cutoff: params.cutoff,
             looping: source.looping(),
             pitch: source.pitch(),
-            priority: i32::from(source.priority()),
             start,
         });
+        if !accepted {
+            self.playback.release(slot as usize, token);
+            self.free.push(slot);
+            return false;
+        }
+        let sequence = self.sequences;
+        self.sequences = self.sequences.wrapping_add(1);
         self.voices.insert(
             entity,
             Playing {
                 voice,
+                state: State::Pending,
+                position: start,
+                missing: 0,
+                sequence,
                 generation: source.generation(),
                 last: params,
                 bus: String::from(source.bus()),
@@ -366,24 +445,96 @@ impl Audio {
                 name: String::from(source.name()),
                 source: source.source().identity(),
                 pitch: source.pitch(),
-                exchange: None,
             },
         );
-        self.owners.insert(voice, entity);
+        self.owners.insert(token, entity);
         self.suspended.remove(&entity);
         self.revision = self.revision.wrapping_add(1);
+        true
     }
 
-    fn stop(&mut self, entity: Entity) {
-        self.suspended.remove(&entity);
-        let Some(playing) = self.voices.remove(&entity) else {
-            return;
-        };
-        self.send(Command::Stop {
-            voice: VoiceId(playing.voice),
-        });
-        self.owners.remove(&playing.voice);
+    fn detach(&mut self, entity: Entity) -> Option<Playing> {
+        let playing = self.voices.remove(&entity)?;
+        self.owners.remove(&playing.voice.token);
+        self.playback
+            .release(playing.voice.slot as usize, playing.voice.token);
         self.revision = self.revision.wrapping_add(1);
+        Some(playing)
+    }
+
+    fn release(&mut self, entity: Entity) -> Option<Playing> {
+        let playing = self.detach(entity)?;
+        self.free.push(playing.voice.slot);
+        Some(playing)
+    }
+
+    fn stop(&mut self, entity: Entity) -> bool {
+        self.suspended.remove(&entity);
+        let Some(playing) = self.voices.get(&entity) else {
+            return true;
+        };
+        if !self.send(Command::Stop {
+            voice: playing.voice,
+        }) {
+            return false;
+        }
+        self.release(entity);
+        true
+    }
+
+    fn reconcile(&mut self) {
+        let beat = self.playback.beat();
+        if beat != self.beat {
+            self.beat = beat;
+            for playing in self.voices.values_mut() {
+                playing.missing = playing.missing.saturating_add(1);
+            }
+        }
+        for slot in 0..self.playback.len() {
+            let Some(report) = self.playback.report(slot) else {
+                continue;
+            };
+            let Some(entity) = self.owners.get(&report.token).copied() else {
+                continue;
+            };
+            let Some(playing) = self.voices.get_mut(&entity) else {
+                continue;
+            };
+            if playing.voice.slot as usize != slot {
+                continue;
+            }
+            playing.missing = 0;
+            playing.position = report.position;
+            playing.state = report.state;
+        }
+        let ended = self
+            .voices
+            .iter()
+            .filter_map(|(entity, playing)| match playing.state {
+                State::Finished => Some((*entity, End::Played)),
+                _ if playing.missing > MISSING_BEATS => Some((*entity, End::Lost)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for (entity, end) in ended {
+            let Some(playing) = self.release(entity) else {
+                continue;
+            };
+            match end {
+                End::Played => self.finished.push(entity),
+                End::Lost if playing.looping => {
+                    self.suspended.insert(
+                        entity,
+                        (playing.generation, playing.position.max(playing.start)),
+                    );
+                }
+                End::Lost => self.finished.push(entity),
+            }
+        }
+    }
+
+    fn take_finished(&mut self) -> Vec<Entity> {
+        std::mem::take(&mut self.finished)
     }
 
     fn ensure(&mut self, entity: Entity, source: &AudioSource, params: Params) {
@@ -393,91 +544,63 @@ impl Audio {
                 playing.last,
                 playing.plays(source),
                 playing.rebinds(source),
+                playing.position,
             )
         });
         match held {
-            Some((voice, last, true, _)) => {
+            Some((voice, last, true, _, _)) => {
                 if last != params {
                     self.update(entity, voice, params);
                 }
             }
-            Some((voice, _, false, true)) => self.exchange(entity, voice, source, params),
-            Some(_) => {
-                self.stop(entity);
+            Some((voice, _, false, true, position)) => {
+                self.exchange(entity, voice, position, source, params);
+            }
+            Some((_, _, false, false, _)) => {
+                if self.stop(entity) {
+                    self.start(entity, source, params, 0);
+                }
+            }
+            None => {
                 self.start(entity, source, params, 0);
             }
-            None => self.start(entity, source, params, 0),
         }
     }
 
-    fn exchange(&mut self, entity: Entity, voice: u32, source: &AudioSource, params: Params) {
-        let identity = source.source().identity();
-        let position = match source.source() {
-            Source::Decoded(_) => Some(0),
-            Source::Stream(_) => match self.requested(entity, identity) {
-                Some(Some(position)) => Some(position),
-                Some(None) => None,
-                None => {
-                    self.playing_mut(entity).exchange = Some(Exchange {
-                        source: identity,
-                        position: None,
-                    });
-                    self.send(Command::Locate {
-                        voice: VoiceId(voice),
-                    });
-                    None
-                }
-            },
-        };
-        let Some(position) = position else {
-            return;
+    fn exchange(
+        &mut self,
+        entity: Entity,
+        voice: Voice,
+        position: u64,
+        source: &AudioSource,
+        params: Params,
+    ) {
+        let seek = match source.source() {
+            Source::Decoded(_) => 0,
+            Source::Stream(_) => position,
         };
         let input = source
             .source()
-            .open(source.looping(), position)
+            .open(source.looping(), seek)
             .unwrap_or_else(|error| panic!("{error}"));
-        self.send(Command::Replace {
-            voice: VoiceId(voice),
-            input,
-        });
-        let playing = self.playing_mut(entity);
-        playing.source = identity;
-        playing.exchange = None;
+        if !self.send(Command::Replace { voice, input, seek }) {
+            return;
+        }
+        if let Some(playing) = self.voices.get_mut(&entity) {
+            playing.source = source.source().identity();
+            playing.position = seek;
+        }
         self.update(entity, voice, params);
     }
 
-    fn requested(&self, entity: Entity, identity: usize) -> Option<Option<u64>> {
-        let exchange = self.voices.get(&entity)?.exchange.as_ref()?;
-        (exchange.source == identity).then_some(exchange.position)
-    }
-
-    fn playing_mut(&mut self, entity: Entity) -> &mut Playing {
-        self.voices
-            .get_mut(&entity)
-            .expect("a playing voice holds its entity")
-    }
-
-    fn locate(&mut self, voice: VoiceId, position: u64) {
-        let Some(playing) = self
-            .voices
-            .values_mut()
-            .find(|playing| playing.voice == voice.0)
-        else {
-            return;
-        };
-        if let Some(exchange) = playing.exchange.as_mut() {
-            exchange.position = Some(position);
-        }
-    }
-
-    fn update(&mut self, entity: Entity, voice: u32, params: Params) {
-        self.send(Command::Update {
-            voice: VoiceId(voice),
+    fn update(&mut self, entity: Entity, voice: Voice, params: Params) {
+        let accepted = self.send(Command::Update {
+            voice,
             gain: params.gain,
             pan: params.pan,
             cutoff: params.cutoff,
         });
-        if let Some(playing) = self.voices.get_mut(&entity) {
+        if accepted && let Some(playing) = self.voices.get_mut(&entity) {
             playing.last = params;
         }
     }
@@ -493,53 +616,6 @@ impl Audio {
             self.stop(entity);
         }
         self.suspended.retain(|entity, _| alive.contains(entity));
-    }
-
-    fn take_finished(&mut self) -> Vec<Entity> {
-        let Some(deck) = &self.deck else {
-            return Vec::new();
-        };
-        let taken = deck.take_events().collect::<Vec<_>>();
-        let mut finished = Vec::new();
-        for event in taken {
-            self.settle(event, &mut finished);
-        }
-        if !finished.is_empty() {
-            self.revision = self.revision.wrapping_add(1);
-        }
-        finished
-    }
-
-    fn settle(&mut self, event: Event, finished: &mut Vec<Entity>) {
-        let (voice, suspend, position) = match event {
-            Event::Located { voice, position } => {
-                self.locate(voice, position);
-                return;
-            }
-            Event::Finished(voice) => (voice, false, 0),
-            Event::Stolen { voice, position } => (voice, true, position),
-            Event::Dropped(voice) => (voice, true, 0),
-        };
-        let Some(entity) = self.owners.remove(&voice.0) else {
-            return;
-        };
-        if self
-            .voices
-            .get(&entity)
-            .is_none_or(|playing| playing.voice != voice.0)
-        {
-            return;
-        }
-        let playing = self
-            .voices
-            .remove(&entity)
-            .expect("an event names the voice of its entity");
-        if suspend && playing.looping {
-            self.suspended
-                .insert(entity, (playing.generation, position.max(playing.start)));
-        } else {
-            finished.push(entity);
-        }
     }
 }
 
@@ -571,6 +647,8 @@ pub fn sync(world: &mut World) {
     };
     audio.supervise();
     audio.sync_buses(world);
+    audio.sync_mixer();
+    audio.reconcile();
     for entity in audio.take_finished() {
         if let Some(source) = world.get_mut::<AudioSource>(entity) {
             source.finished();
@@ -601,13 +679,7 @@ pub fn sync(world: &mut World) {
             .copied()
             .filter(|(generation, _)| *generation == source.generation());
         if let Some((_, start)) = held {
-            let room = audio.voices.len() < MAX_VOICES;
-            let worth = audio
-                .lowest_priority()
-                .is_some_and(|lowest| lowest < source.priority());
-            if room || worth {
-                audio.start(entity, &source, params, start);
-            }
+            audio.start(entity, &source, params, start);
             continue;
         }
         if audio.suspended.remove(&entity).is_some() {

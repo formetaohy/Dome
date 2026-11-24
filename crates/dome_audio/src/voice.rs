@@ -1,4 +1,3 @@
-use crate::command::VoiceId;
 use crate::sound::Channels;
 use crate::source::Input;
 use std::f32::consts::{FRAC_PI_4, TAU};
@@ -15,18 +14,15 @@ pub(crate) struct Settings {
     pub(crate) cutoff: f32,
     pub(crate) looping: bool,
     pub(crate) pitch: f32,
-    pub(crate) priority: i32,
     pub(crate) start: u64,
 }
 
 pub(crate) struct Voice {
-    id: VoiceId,
     input: Input,
     cursor: f64,
     step: f64,
     pitch: f32,
     looping: bool,
-    priority: i32,
     gain: f32,
     pan: f32,
     cutoff: f32,
@@ -39,7 +35,7 @@ pub(crate) struct Voice {
 }
 
 impl Voice {
-    pub(crate) fn new(id: VoiceId, input: Input, settings: Settings, rate: u32) -> Self {
+    pub(crate) fn new(input: Input, settings: Settings, rate: u32) -> Self {
         let pitch = if settings.pitch.is_finite() {
             settings.pitch.clamp(MIN_PITCH, MAX_PITCH)
         } else {
@@ -47,13 +43,11 @@ impl Voice {
         };
         let step = f64::from(input.sample_rate()) / f64::from(rate) * f64::from(pitch);
         Self {
-            id,
             input,
             cursor: settings.start as f64,
             step,
             pitch,
             looping: settings.looping,
-            priority: settings.priority,
             gain: finite(settings.gain, MIN_GAIN, MAX_GAIN, 0.0),
             pan: finite(settings.pan, -1.0, 1.0, 0.0),
             cutoff: settings.cutoff,
@@ -66,8 +60,9 @@ impl Voice {
         }
     }
 
-    pub(crate) fn replace(&mut self, input: Input, rate: u32) -> Input {
+    pub(crate) fn replace(&mut self, input: Input, seek: u64, rate: u32) -> Input {
         self.step = f64::from(input.sample_rate()) / f64::from(rate) * f64::from(self.pitch);
+        self.cursor = seek as f64;
         std::mem::replace(&mut self.input, input)
     }
 
@@ -77,18 +72,6 @@ impl Voice {
 
     pub(crate) fn stop(&mut self) {
         self.fading = true;
-    }
-
-    pub(crate) fn id(&self) -> VoiceId {
-        self.id
-    }
-
-    pub(crate) fn priority(&self) -> i32 {
-        self.priority
-    }
-
-    pub(crate) fn gain(&self) -> f32 {
-        self.gain
     }
 
     pub(crate) fn position(&self) -> u64 {

@@ -103,6 +103,26 @@ fn a_body_balances_the_parts_on_both_sides_of_it() {
 }
 
 #[test]
+fn a_collider_added_below_a_known_body_holds_what_lands_on_it() {
+    let mut world = world();
+    floor(&mut world);
+    let shelf = node(&mut world, None, Vec3::new(0.0, 3.0, 0.0));
+    world.insert(shelf, RigidBody::new(BodyKind::Static));
+    let board = node(&mut world, Some(shelf), Vec3::new(0.0, 0.0, 0.0));
+    step(&mut world, DELTA);
+    world.insert(board, Collider::new(Shape::cuboid(Vec3::splat(1.0))));
+    let ball = node(&mut world, None, Vec3::new(0.0, 5.0, 0.0));
+    world.insert(ball, RigidBody::new(BodyKind::Dynamic));
+    world.insert(ball, Collider::new(Shape::sphere(0.5)));
+    settle(&mut world);
+    assert!(
+        (translation(&world, ball).y - 4.5).abs() < 0.02,
+        "a sphere rests on the board it meets at {:?}",
+        translation(&world, ball),
+    );
+}
+
+#[test]
 fn a_compound_body_swings_its_mass_around_a_joint() {
     let mut world = world();
     let anchor = node(&mut world, None, Vec3::new(0.0, 3.0, 0.0));
