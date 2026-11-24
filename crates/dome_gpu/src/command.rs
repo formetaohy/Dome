@@ -157,6 +157,19 @@ impl<'a> Pass<'a> {
         }
     }
 
+    pub fn depth_keep(depth: &'a Texture) -> Self {
+        assert!(
+            depth.format().is_depth(),
+            "a depth only pass writes into a depth attachment",
+        );
+        Self {
+            color: None,
+            level: 0,
+            clear: [0.0; 4],
+            depth: Some((depth, DepthOps::KEEP)),
+        }
+    }
+
     pub fn level(self, level: u32) -> Self {
         Self { level, ..self }
     }

@@ -11,4 +11,4 @@ pub use font::{FaceRun, Fonts, GlyphStyle, IconGlyph, ShapedGlyph, ShapedRun};
 pub use glyph::GlyphRaster;
 pub use outline::{Contour, Curve, Outline};
 pub use style::{Align, TypeStyle};
-pub use text::{GlyphPlot, PlacedGlyph, Text, TextLayout};
+pub use text::{GlyphPlot, PlacedGlyph, PlacedLine, Stop, Text, TextLayout};

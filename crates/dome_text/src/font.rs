@@ -186,6 +186,7 @@ impl Fonts {
         let mut glyphs = Vec::new();
         let mut width = 0.0f32;
         shaper.shape_with(|cluster| {
+            let byte = cluster.source.start;
             for glyph in cluster.glyphs {
                 let advance = glyph.advance;
                 glyphs.push(ShapedGlyph {
@@ -193,6 +194,7 @@ impl Fonts {
                     x: width + glyph.x,
                     y: glyph.y,
                     advance,
+                    byte,
                 });
                 width += advance;
             }
@@ -333,6 +335,7 @@ pub struct ShapedGlyph {
     pub x: f32,
     pub y: f32,
     pub advance: f32,
+    pub byte: u32,
 }
 
 #[derive(Clone, Debug, Default)]

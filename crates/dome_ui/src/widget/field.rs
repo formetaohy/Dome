@@ -1,14 +1,16 @@
+use std::sync::Arc;
+
 use dome_math::Vec2;
 
 use crate::content::{Content, FieldContent};
 use crate::edit::Edit;
 use crate::element::{Element, Layout, Length, Size};
 use crate::geometry::{Corners, Rect};
-use crate::grapheme::{self, Boundary};
+use crate::grapheme::Boundary;
 use crate::node::Runtime;
 use crate::paint::Painter;
 use crate::style::{Border, State};
-use crate::text::TextStyle;
+use crate::text::{TextLayout, TextStyle};
 use crate::theme::Role;
 
 use super::PaintInfo;
@@ -61,30 +63,36 @@ pub(crate) fn caret_at(
     multiline: bool,
     rect: Rect,
     pointer: Vec2,
-    layout: &mut crate::text::Text,
+    text: &mut crate::text::Text,
 ) -> Boundary {
-    let text = edit.text();
+    let value = edit.text();
     let caret = edit.caret();
     let inner = inner(rect);
-    let preedit_width = preedit.map_or(0.0, |composed| width(composed, style, layout));
+    let preedit_width = preedit.map_or(0.0, |composed| measure(composed, style, text));
     if !multiline {
-        let caret_x = width(&text[..caret.byte()], style, layout);
+        let held = layout(text, value, style);
+        let caret_x = held.caret(0, caret.byte());
         let shift = shift(caret_x, preedit_width, inner.width());
-        return column(text, pointer.x - inner.min.x + shift, style, layout);
+        let column = held.column(0, pointer.x - inner.min.x + shift);
+        return Boundary::nearest(value, column);
     }
     let line_height = style.font.leading.max(style.font.size * 1.28);
-    let lines = lines(text);
+    let lines = lines(value);
     let caret_line = line_at(&lines, caret);
     let row = ((pointer.y - inner.min.y) / line_height).floor().max(0.0) as usize
         + scroll_rows(caret_line, inner.height(), line_height);
-    let (_, line_x) = caret_x_of(text, &lines, caret, style, layout);
+    let held = layout(text, line_of(value, &lines, caret_line), style);
+    let caret_byte = caret
+        .byte()
+        .clamp(lines[caret_line].start, lines[caret_line].end);
+    let line_x = held.caret(0, caret_byte - lines[caret_line].start);
     let shift = shift(line_x, preedit_width, inner.width());
     let x = pointer.x - inner.min.x + shift;
     let Some(line) = lines.get(row) else {
-        return Boundary::end(text);
+        return Boundary::end(value);
     };
-    let relative = column(&text[line.start..line.end], x, style, layout);
-    Boundary::nearest(text, line.start + relative.byte())
+    let held = layout(text, &value[line.start..line.end], style);
+    Boundary::nearest(value, line.start + held.column(0, x))
 }
 
 fn inner(rect: Rect) -> Rect {
@@ -129,84 +137,16 @@ fn line_at(lines: &[Line], caret: Boundary) -> usize {
         .expect("a caret sits inside a line")
 }
 
-fn line_prefix<'a>(text: &'a str, lines: &[Line], line: usize, caret: Boundary) -> &'a str {
-    let start = lines[line].start;
-    &text[start..caret.byte().clamp(start, lines[line].end)]
+fn line_of<'a>(text: &'a str, lines: &[Line], line: usize) -> &'a str {
+    &text[lines[line].start..lines[line].end]
 }
 
-fn caret_x_of(
-    text: &str,
-    lines: &[Line],
-    caret: Boundary,
-    style: TextStyle,
-    layout: &mut crate::text::Text,
-) -> (usize, f32) {
-    let line = line_at(lines, caret);
-    (
-        line,
-        width(line_prefix(text, lines, line, caret), style, layout),
-    )
+fn layout(text: &mut crate::text::Text, value: &str, style: TextStyle) -> Arc<TextLayout> {
+    crate::text::layout(text, value, style, 0.0)
 }
 
-fn caret_xy(
-    painter: &mut Painter,
-    style: TextStyle,
-    text: &str,
-    lines: &[Line],
-    caret: Boundary,
-) -> (usize, f32) {
-    let line = line_at(lines, caret);
-    (
-        line,
-        text_width(painter, style, line_prefix(text, lines, line, caret)),
-    )
-}
-
-fn column(text: &str, x: f32, style: TextStyle, layout: &mut crate::text::Text) -> Boundary {
-    let boundaries = grapheme::boundaries(text);
-    let (mut low, mut high) = (0usize, boundaries.len() - 1);
-    while low < high {
-        let middle = (low + high).div_ceil(2);
-        if width(&text[..boundaries[middle].byte()], style, layout) <= x {
-            low = middle;
-        } else {
-            high = middle - 1;
-        }
-    }
-    let before = width(&text[..boundaries[low].byte()], style, layout);
-    let Some(after) = boundaries.get(low + 1) else {
-        return boundaries[low];
-    };
-    if (width(&text[..after.byte()], style, layout) - x).abs() < (before - x).abs() {
-        *after
-    } else {
-        boundaries[low]
-    }
-}
-
-fn width(text: &str, style: TextStyle, layout: &mut crate::text::Text) -> f32 {
-    if text.is_empty() {
-        return 0.0;
-    }
-    layout
-        .layout(
-            text,
-            style.font,
-            0.0,
-            false,
-            false,
-            crate::text::Align::Start,
-        )
-        .size
-        .x
-}
-
-fn text_width(painter: &mut Painter, style: TextStyle, text: &str) -> f32 {
-    if text.is_empty() {
-        0.0
-    } else {
-        painter.measure(text, style).x
-    }
+fn measure(value: &str, style: TextStyle, text: &mut crate::text::Text) -> f32 {
+    layout(text, value, style).size.x
 }
 
 pub(super) fn paint_field(
@@ -252,7 +192,12 @@ pub(super) fn paint_field(
             let preedit_width = preedit.map_or(0.0, |composed| painter.measure(composed, style).x);
             let line_height = style.font.leading.max(style.font.size * 1.28);
             let lines = lines(text);
-            let (caret_line, caret_x) = caret_xy(painter, style, text, &lines, caret);
+            let caret_line = line_at(&lines, caret);
+            let caret_byte = caret
+                .byte()
+                .clamp(lines[caret_line].start, lines[caret_line].end);
+            let held = painter.layout(line_of(text, &lines, caret_line), style, 0.0);
+            let caret_x = held.caret(0, caret_byte - lines[caret_line].start);
             let offset = shift(caret_x, preedit_width, inner.width());
             let rows = scroll_rows(caret_line, inner.height(), line_height);
             let top = |index: usize| inner.min.y + (index as f32 - rows as f32) * line_height;
@@ -262,8 +207,9 @@ pub(super) fn paint_field(
                     let low = selection.start.max(line.start);
                     let high = selection.end.min(line.end);
                     if low < high {
-                        let left = text_width(painter, style, &text[line.start..low]);
-                        let right = text_width(painter, style, &text[line.start..high]);
+                        let held = painter.layout(&text[line.start..line.end], style, 0.0);
+                        let left = held.caret(0, low - line.start);
+                        let right = held.caret(0, high - line.start);
                         painter.rect(
                             Rect::from_min_size(
                                 Vec2::new(inner.min.x + left - offset, top(index)),
@@ -345,14 +291,15 @@ pub(crate) fn paint_single_line_edit(
     let text = edit.text();
     let caret = edit.caret().byte();
     let anchor = edit.anchor().byte();
-    let caret_x = text_width(painter, style, &text[..caret]);
+    let held = painter.layout(text, style, 0.0);
+    let caret_x = held.caret(0, caret);
     let preedit = preedit.filter(|composed| !composed.is_empty());
     let preedit_width = preedit.map_or(0.0, |composed| painter.measure(composed, style).x);
     let offset = shift(caret_x, preedit_width, inner.width());
     let selection = anchor.min(caret)..anchor.max(caret);
     if selection.start != selection.end {
-        let left = text_width(painter, style, &text[..selection.start]);
-        let right = text_width(painter, style, &text[..selection.end]);
+        let left = held.caret(0, selection.start);
+        let right = held.caret(0, selection.end);
         painter.rect(
             Rect::from_min_size(
                 Vec2::new(inner.min.x + left - offset, inner.min.y + 2.0),
@@ -362,12 +309,11 @@ pub(crate) fn paint_single_line_edit(
             accent.with_alpha(0.28),
         );
     }
-    let layout = painter.layout(text, style, 0.0);
     let origin = Vec2::new(
         inner.min.x - offset,
-        inner.min.y + (inner.height() - layout.size.y) * 0.5,
+        inner.min.y + (inner.height() - held.size.y) * 0.5,
     );
-    painter.text(&layout, origin, style.color);
+    painter.text(&held, origin, style.color);
     if let Some(composed) = preedit {
         let composed = painter.layout(composed, style, 0.0);
         let origin = Vec2::new(

@@ -78,4 +78,14 @@ fn fragment(input: FragmentIn) {
             discard;
         }
     }
+    if entry.alpha_mode == 2u {
+        let sampled = textureSample(
+            textures[entry.base_color_image],
+            samplers[entry.base_color_sampler],
+            vec2<f32>(shape.x, shape.y),
+        );
+        if sampled.w * entry.base_color.w <= 0.0 {
+            discard;
+        }
+    }
 }

@@ -153,11 +153,12 @@ fn fragment(input: FragmentIn) -> @location(0) vec4<f32> {
         clamped(held.z, shade_low.z, shade_high.z),
         1.0,
     );
+    let revealage = select(1.0, current.w, setup.revealage > 0.5);
     let weight = select(0.0, setup.blend, valid);
     return vec4<f32>(
         bounded.x * weight + current.x * (1.0 - weight),
         bounded.y * weight + current.y * (1.0 - weight),
         bounded.z * weight + current.z * (1.0 - weight),
-        current.w,
+        revealage,
     );
 }

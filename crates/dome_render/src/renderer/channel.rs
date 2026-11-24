@@ -174,7 +174,6 @@ impl Renderer {
             capture: &self.capture_draw,
             blended: &self.transparent_draw,
             motion: self.temporality.motion(),
-            motion_blended: self.temporality.motion_blended(),
             shadow: &self.shadow,
         };
         let mut slots_in = Vec::with_capacity(batches.len());
@@ -270,39 +269,26 @@ impl Renderer {
             textures,
             samplers,
         );
-        let motion_blended_tables = table(
-            pipelines.motion_blended,
-            program::MOTION_TEXTURE,
-            program::MOTION_SAMPLER,
-            textures,
-            samplers,
-        );
-        let depth_groups = (0..depth_batches as usize)
-            .map(|index| {
-                [
-                    groups[index]
-                        .depth()
-                        .expect("an opaque batch binds the depth pass")
-                        .clone(),
-                    depth_tables.clone(),
-                ]
-            })
+        let depth_groups = groups
+            .iter()
+            .map(|slot| [slot.depth().clone(), depth_tables.clone()])
             .collect::<Vec<_>>();
         let mut main_groups = Vec::with_capacity(batches.len());
-        let mut motion_groups = Vec::with_capacity(batches.len());
         for (index, slot) in groups.iter().enumerate() {
             if index < depth_batches as usize {
                 main_groups.push([slot.shade().clone(), tables.clone(), self.shade.clone()]);
-                motion_groups.push([slot.motion().clone(), motion_tables.clone()]);
             } else {
                 main_groups.push([
                     slot.shade().clone(),
                     transparent_tables.clone(),
                     self.transparent_shade.clone(),
                 ]);
-                motion_groups.push([slot.motion().clone(), motion_blended_tables.clone()]);
             }
         }
+        let motion_groups = groups
+            .iter()
+            .map(|slot| [slot.motion().clone(), motion_tables.clone()])
+            .collect::<Vec<_>>();
         let mut cast_groups = Vec::with_capacity(CASCADE_COUNT as usize * depth_batches as usize);
         for cascade in 0..CASCADE_COUNT as usize {
             for slot in groups.iter().take(depth_batches as usize) {
@@ -311,6 +297,7 @@ impl Renderer {
         }
         let depth = depth_groups
             .iter()
+            .take(depth_batches as usize)
             .enumerate()
             .map(|(index, groups)| {
                 Draw::indirect(
@@ -447,17 +434,29 @@ impl Renderer {
                 .depth(scene_depth, DepthOps::KEEP),
             &main,
         );
+        if depth_batches < batches.len() as u32 {
+            let blended = depth_groups
+                .iter()
+                .enumerate()
+                .skip(depth_batches as usize)
+                .map(|(index, groups)| {
+                    Draw::indirect(
+                        &self.depth,
+                        groups,
+                        self.depth_arguments
+                            .buffer()
+                            .binding(index as u64 * ARGUMENT_BYTES, ARGUMENT_BYTES),
+                    )
+                })
+                .collect::<Vec<_>>();
+            submission.render(Pass::depth_keep(scene_depth), &blended);
+        }
         let motion = motion_groups
             .iter()
             .enumerate()
             .map(|(index, groups)| {
-                let pipeline = if index < depth_batches as usize {
-                    &self.temporality.motion()
-                } else {
-                    &self.temporality.motion_blended()
-                };
                 Draw::indirect(
-                    pipeline,
+                    self.temporality.motion(),
                     groups,
                     self.main_arguments
                         .buffer()

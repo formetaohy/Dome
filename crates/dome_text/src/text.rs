@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::mem::size_of;
 use std::sync::Arc;
 
 use dome_math::Vec2;
@@ -6,6 +7,8 @@ use dome_math::Vec2;
 use crate::atlas::{Atlas, GlyphRequest, GlyphSlot, Slot};
 use crate::font::{Fonts, IconGlyph};
 use crate::style::{Align, TypeStyle};
+
+const BUDGET: usize = 8 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlacedGlyph {
@@ -15,14 +18,70 @@ pub struct PlacedGlyph {
     pub baseline: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stop {
+    pub byte: u32,
+    pub x: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlacedLine {
+    pub start: u32,
+    pub end: u32,
+    pub x: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct TextLayout {
-    pub text: String,
+    pub text: Arc<str>,
     pub style: TypeStyle,
     pub glyphs: Vec<PlacedGlyph>,
+    pub lines: Vec<PlacedLine>,
+    pub stops: Vec<Stop>,
     pub size: Vec2,
     pub baseline: f32,
     pub truncated: bool,
+}
+
+impl TextLayout {
+    pub fn line(&self, byte: usize) -> usize {
+        self.lines
+            .iter()
+            .rposition(|line| line.start as usize <= byte)
+            .unwrap_or(0)
+    }
+
+    pub fn caret(&self, line: usize, byte: usize) -> f32 {
+        let held = self.lines[line];
+        let at = self
+            .stops
+            .partition_point(|stop| (stop.byte as usize) <= byte);
+        self.stops[..at]
+            .iter()
+            .rev()
+            .find(|stop| stop.byte >= held.start)
+            .map_or(held.x, |stop| stop.x)
+    }
+
+    pub fn column(&self, line: usize, x: f32) -> usize {
+        let held = self.lines[line];
+        let low = self.stops.partition_point(|stop| stop.byte < held.start);
+        let high = self.stops.partition_point(|stop| stop.byte <= held.end);
+        let stops = &self.stops[low..high];
+        let at = stops.partition_point(|stop| stop.x < x);
+        match (at.checked_sub(1).map(|index| &stops[index]), stops.get(at)) {
+            (Some(before), Some(after)) => {
+                if (after.x - x).abs() < (before.x - x).abs() {
+                    after.byte as usize
+                } else {
+                    before.byte as usize
+                }
+            }
+            (Some(before), None) => before.byte as usize,
+            (None, Some(after)) => after.byte as usize,
+            (None, None) => held.start as usize,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -43,15 +102,26 @@ struct Spec {
 
 struct Entry {
     spec: Spec,
-    used: u64,
+    stamp: u64,
+    bytes: usize,
     layout: Arc<TextLayout>,
+}
+
+struct Row {
+    glyphs: Vec<PlacedGlyph>,
+    stops: Vec<Stop>,
+    width: f32,
+    start: u32,
+    end: u32,
 }
 
 pub struct Text {
     fonts: Fonts,
     atlas: Atlas,
-    entries: HashMap<String, Vec<Entry>>,
-    frame: u64,
+    entries: HashMap<Arc<str>, Vec<Entry>>,
+    order: BTreeMap<u64, (Arc<str>, Spec)>,
+    bytes: usize,
+    stamp: u64,
     pixels_per_point: f32,
 }
 
@@ -61,7 +131,9 @@ impl Text {
             fonts: Fonts::system(),
             atlas: Atlas::new(),
             entries: HashMap::new(),
-            frame: 0,
+            order: BTreeMap::new(),
+            bytes: 0,
+            stamp: 0,
             pixels_per_point: 1.0,
         }
     }
@@ -76,11 +148,7 @@ impl Text {
 
     pub fn begin(&mut self, pixels_per_point: f32) -> bool {
         self.pixels_per_point = pixels_per_point;
-        self.frame += 1;
         self.atlas.advance();
-        if self.frame.is_multiple_of(120) {
-            self.evict();
-        }
         self.atlas.take_recycled()
     }
 
@@ -94,14 +162,6 @@ impl Text {
 
     pub fn description(&self) -> &str {
         self.fonts.description()
-    }
-
-    fn evict(&mut self) {
-        let floor = self.frame.saturating_sub(240);
-        self.entries.retain(|_, entries| {
-            entries.retain(|entry| entry.used >= floor);
-            !entries.is_empty()
-        });
     }
 
     pub fn layout(
@@ -127,22 +187,57 @@ impl Text {
             wrap,
             truncate,
         };
+        let stamp = self.stamp + 1;
+        self.stamp = stamp;
         if let Some(entries) = self.entries.get_mut(text)
             && let Some(entry) = entries.iter_mut().find(|entry| entry.spec == spec)
         {
-            entry.used = self.frame;
+            let held = entry.stamp;
+            entry.stamp = stamp;
+            if let Some(key) = self.order.remove(&held) {
+                self.order.insert(stamp, key);
+            }
             return Arc::clone(&entry.layout);
         }
         let layout = Arc::new(self.build(text, style, max_width, wrap, truncate, align));
-        self.entries
-            .entry(text.to_string())
-            .or_default()
-            .push(Entry {
-                spec,
-                used: self.frame,
-                layout: Arc::clone(&layout),
-            });
+        let bytes = size_of::<TextLayout>()
+            + size_of::<Entry>()
+            + layout.text.len()
+            + layout.glyphs.len() * size_of::<PlacedGlyph>()
+            + layout.lines.len() * size_of::<PlacedLine>()
+            + layout.stops.len() * size_of::<Stop>();
+        let shared = self
+            .entries
+            .get_key_value(text)
+            .map_or_else(|| Arc::from(text), |(held, _)| Arc::clone(held));
+        self.entries.entry(shared.clone()).or_default().push(Entry {
+            spec,
+            stamp,
+            bytes,
+            layout: Arc::clone(&layout),
+        });
+        self.order.insert(stamp, (shared, spec));
+        self.bytes += bytes;
+        self.trim();
         layout
+    }
+
+    fn trim(&mut self) {
+        while self.bytes > BUDGET {
+            let Some((stamp, (text, _))) = self.order.pop_first() else {
+                return;
+            };
+            let mut dropped = 0;
+            if let Some(entries) = self.entries.get_mut(&*text) {
+                if let Some(index) = entries.iter().position(|entry| entry.stamp == stamp) {
+                    dropped = entries.remove(index).bytes;
+                }
+                if entries.is_empty() {
+                    self.entries.remove(&*text);
+                }
+            }
+            self.bytes = self.bytes.saturating_sub(dropped);
+        }
     }
 
     fn build(
@@ -164,26 +259,40 @@ impl Text {
         let descent = style.size * if cjk { 0.18 } else { 0.22 };
         let baseline_offset = 0.5 * (leading - (ascent + descent)) + ascent;
         let bounded = max_width > 0.0;
-        let mut lines: Vec<(Vec<PlacedGlyph>, f32)> = Vec::new();
+        let glyph_style = style.glyph(false);
+        let mut rows: Vec<Row> = Vec::new();
         let mut glyphs: Vec<PlacedGlyph> = Vec::new();
-        let mut pen = 0.0f32;
+        let mut stops: Vec<Stop> = Vec::new();
+        let mut width = 0.0f32;
+        let mut start = 0usize;
         let mut truncated = false;
 
-        let flush = |lines: &mut Vec<(Vec<PlacedGlyph>, f32)>,
+        let flush = |rows: &mut Vec<Row>,
                      glyphs: &mut Vec<PlacedGlyph>,
-                     pen: &mut f32| {
-            if !glyphs.is_empty() || !lines.is_empty() {
-                lines.push((std::mem::take(glyphs), *pen));
-                *pen = 0.0;
-            }
+                     stops: &mut Vec<Stop>,
+                     width: &mut f32,
+                     start: usize,
+                     end: usize| {
+            stops.push(Stop {
+                byte: end as u32,
+                x: *width,
+            });
+            rows.push(Row {
+                glyphs: std::mem::take(glyphs),
+                stops: std::mem::take(stops),
+                width: *width,
+                start: start as u32,
+                end: end as u32,
+            });
+            *width = 0.0;
         };
 
-        let glyph_style = style.glyph(false);
+        let mut offset = 0usize;
         'paragraphs: for paragraph in text.split('\n') {
-            if !glyphs.is_empty() {
-                flush(&mut lines, &mut glyphs, &mut pen);
-            }
+            let mut cursor = offset;
             for token in tokenize(paragraph) {
+                let token_start = cursor;
+                cursor += token.len();
                 let whitespace = token.starts_with(' ');
                 let runs = if style.monospace {
                     self.fonts.monospace_runs(token)
@@ -191,26 +300,41 @@ impl Text {
                     self.fonts.runs(token)
                 };
                 let mut shaped = Vec::with_capacity(runs.len());
-                let mut width = 0.0f32;
+                let mut token_width = 0.0f32;
+                let mut run_start = 0usize;
                 for run in runs {
-                    let glyphs = self.fonts.shape(run.face, run.text, glyph_style, 1.0);
-                    width += glyphs.width + style.tracking * glyphs.glyphs.len() as f32;
-                    shaped.push((run.face as u16, glyphs));
+                    let held = self.fonts.shape(run.face, run.text, glyph_style, 1.0);
+                    token_width += held.width + style.tracking * held.glyphs.len() as f32;
+                    shaped.push((run.face as u16, token_start + run_start, held));
+                    run_start += run.text.len();
                 }
-                if wrap && bounded && !whitespace && pen > 0.0 && pen + width > max_width + 0.01 {
-                    flush(&mut lines, &mut glyphs, &mut pen);
+                if wrap
+                    && bounded
+                    && !whitespace
+                    && width > 0.0
+                    && width + token_width > max_width + 0.01
+                {
+                    flush(
+                        &mut rows,
+                        &mut glyphs,
+                        &mut stops,
+                        &mut width,
+                        start,
+                        token_start,
+                    );
+                    start = token_start;
                 }
-                if truncate && !wrap && bounded && pen + width > max_width {
+                if truncate && !wrap && bounded && width + token_width > max_width {
                     let face = if style.monospace {
                         self.fonts.face_for_mono('\u{2026}')
                     } else {
                         self.fonts.face_for('\u{2026}')
                     };
                     let ellipsis = self.fonts.shape(face, "\u{2026}", glyph_style, 1.0);
-                    let room = (max_width - pen - ellipsis.width).max(0.0);
+                    let room = (max_width - width - ellipsis.width).max(0.0);
                     let mut base = 0.0f32;
                     let mut used = 0.0f32;
-                    'prefix: for (face, run) in &shaped {
+                    'prefix: for (held, held_start, run) in &shaped {
                         for (index, glyph) in run.glyphs.iter().enumerate() {
                             let advance = run
                                 .glyphs
@@ -221,72 +345,125 @@ impl Text {
                                 break 'prefix;
                             }
                             glyphs.push(PlacedGlyph {
-                                face: *face,
+                                face: *held,
                                 id: glyph.id,
-                                x: pen + x,
+                                x: width + x,
                                 baseline: 0.0,
+                            });
+                            stops.push(Stop {
+                                byte: (*held_start + glyph.byte as usize) as u32,
+                                x: width + x,
                             });
                             used = x + advance;
                         }
                         base += run.width + style.tracking * run.glyphs.len() as f32;
                     }
-                    pen += used;
-                    if pen + ellipsis.width <= max_width {
+                    width += used;
+                    if width + ellipsis.width <= max_width {
                         for glyph in &ellipsis.glyphs {
                             glyphs.push(PlacedGlyph {
                                 face: face as u16,
                                 id: glyph.id,
-                                x: pen + glyph.x,
+                                x: width + glyph.x,
                                 baseline: 0.0,
                             });
                         }
-                        pen += ellipsis.width;
+                        width += ellipsis.width;
                     }
                     truncated = true;
-                    flush(&mut lines, &mut glyphs, &mut pen);
+                    flush(
+                        &mut rows,
+                        &mut glyphs,
+                        &mut stops,
+                        &mut width,
+                        start,
+                        cursor,
+                    );
                     break 'paragraphs;
                 }
-                for (face, run) in &shaped {
+                for (held, held_start, run) in &shaped {
+                    let base = width;
                     for (index, glyph) in run.glyphs.iter().enumerate() {
+                        let x = base + glyph.x + style.tracking * index as f32;
                         glyphs.push(PlacedGlyph {
-                            face: *face,
+                            face: *held,
                             id: glyph.id,
-                            x: pen + glyph.x + style.tracking * index as f32,
+                            x,
                             baseline: 0.0,
                         });
+                        stops.push(Stop {
+                            byte: (*held_start + glyph.byte as usize) as u32,
+                            x,
+                        });
                     }
-                    pen += run.width + style.tracking * run.glyphs.len() as f32;
+                    width += run.width + style.tracking * run.glyphs.len() as f32;
                 }
             }
             if !glyphs.is_empty() {
-                flush(&mut lines, &mut glyphs, &mut pen);
+                flush(
+                    &mut rows,
+                    &mut glyphs,
+                    &mut stops,
+                    &mut width,
+                    start,
+                    cursor,
+                );
             } else {
-                lines.push((Vec::new(), 0.0));
+                rows.push(Row {
+                    glyphs: Vec::new(),
+                    stops: Vec::new(),
+                    width: 0.0,
+                    start: cursor as u32,
+                    end: cursor as u32,
+                });
             }
+            offset = cursor + 1;
+            start = offset;
         }
-        if lines.is_empty() {
-            lines.push((Vec::new(), 0.0));
+        if rows.is_empty() {
+            rows.push(Row {
+                glyphs: Vec::new(),
+                stops: Vec::new(),
+                width: 0.0,
+                start: text.len() as u32,
+                end: text.len() as u32,
+            });
         }
 
-        let widest = lines.iter().map(|(_, width)| *width).fold(0.0f32, f32::max);
+        let widest = rows.iter().map(|row| row.width).fold(0.0f32, f32::max);
         let reference = if bounded { max_width } else { widest };
         let mut placed = Vec::new();
-        for (index, (line, width)) in lines.iter().enumerate() {
-            let shift = (reference - width) * align.factor();
+        let mut lines = Vec::with_capacity(rows.len());
+        let mut held_stops = Vec::new();
+        for (index, row) in rows.iter().enumerate() {
+            let shift = (reference - row.width) * align.factor();
             let baseline = baseline_offset + index as f32 * leading;
-            for glyph in line {
+            for glyph in &row.glyphs {
                 placed.push(PlacedGlyph {
                     x: glyph.x + shift,
                     baseline,
                     ..*glyph
                 });
             }
+            for stop in &row.stops {
+                held_stops.push(Stop {
+                    byte: stop.byte,
+                    x: stop.x + shift,
+                });
+            }
+            lines.push(PlacedLine {
+                start: row.start,
+                end: row.end,
+                x: shift,
+            });
         }
-        let size = Vec2::new(widest, leading * lines.len() as f32);
+        let size = Vec2::new(widest, leading * rows.len() as f32);
         TextLayout {
-            text: text.to_string(),
+            text: Arc::from(text),
             style,
             glyphs: placed,
+            lines,
+            stops: held_stops,
             size,
             baseline: baseline_offset,
             truncated,

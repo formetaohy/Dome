@@ -299,7 +299,13 @@ impl Post {
         }
     }
 
-    pub(crate) fn tonemap(&self, submission: &mut Submission, target: &Texture, source: &Texture) {
+    pub(crate) fn tonemap(
+        &self,
+        submission: &mut Submission,
+        target: &Texture,
+        source: &Texture,
+        cover: &Texture,
+    ) {
         let screen = self
             .screen
             .as_ref()
@@ -318,6 +324,7 @@ impl Post {
                 Binding::texture(program::TONEMAP_LIT, source),
                 Binding::texture(program::TONEMAP_BLOOM, &screen.up[0]),
                 Binding::sampler(program::TONEMAP_FILTER, &self.filter),
+                Binding::texture(program::TONEMAP_COVER, cover),
             ],
         );
         submission.render(

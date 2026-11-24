@@ -176,7 +176,7 @@ struct Temporal {
     height: f32,
     blend: f32,
     tolerance: f32,
-    pad0: u32,
+    revealage: f32,
 };
 
 struct Light {

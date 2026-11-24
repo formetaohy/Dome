@@ -121,6 +121,7 @@ pub(crate) const TONEMAP_SETTINGS: u32 = 0;
 pub(crate) const TONEMAP_LIT: u32 = 0;
 pub(crate) const TONEMAP_BLOOM: u32 = 1;
 pub(crate) const TONEMAP_FILTER: u32 = 2;
+pub(crate) const TONEMAP_COVER: u32 = 3;
 
 pub(crate) const SHADOW_SHADOW: u32 = 0;
 pub(crate) const SHADOW_SAMPLER: u32 = 1;

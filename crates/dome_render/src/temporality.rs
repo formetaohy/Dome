@@ -31,6 +31,7 @@ pub(crate) struct Frame<'a> {
     pub(crate) near: f32,
     pub(crate) far: f32,
     pub(crate) vertical: f32,
+    pub(crate) revealage: bool,
 }
 
 struct Screen {
@@ -45,7 +46,6 @@ struct Screen {
 
 pub(crate) struct Temporality {
     motion_pipeline: GraphicsPipeline,
-    motion_blended_pipeline: GraphicsPipeline,
     temporal_pipeline: GraphicsPipeline,
     filter: Sampler,
     nearest: Sampler,
@@ -65,12 +65,6 @@ impl Temporality {
                 program::motion_vectors(tables),
                 FORMAT,
                 PipelineState::COVERED,
-            ),
-            motion_blended_pipeline: GraphicsPipeline::new_depth(
-                device,
-                program::motion_vectors(tables),
-                FORMAT,
-                PipelineState::TESTED,
             ),
             temporal_pipeline: GraphicsPipeline::new(
                 device,
@@ -163,10 +157,6 @@ impl Temporality {
         &self.motion_pipeline
     }
 
-    pub(crate) fn motion_blended(&self) -> &GraphicsPipeline {
-        &self.motion_blended_pipeline
-    }
-
     pub(crate) fn view(&self) -> BufferBinding<'_> {
         self.motion_record.binding(0, MOTION_BYTES)
     }
@@ -228,7 +218,7 @@ impl Temporality {
                 height: screen.height as f32,
                 blend: screen.weight,
                 tolerance: DEPTH_TOLERANCE,
-                pad0: 0,
+                revealage: if frame.revealage { 1.0 } else { 0.0 },
             }),
         );
         let record = self.temporal_pipeline.bind_group(

@@ -92,6 +92,6 @@ fn fragment(input: FragmentIn) -> @location(0) vec4<f32> {
         resolved.x + base.x * through,
         resolved.y + base.y * through,
         resolved.z + base.z * through,
-        base.w * through,
+        through,
     );
 }

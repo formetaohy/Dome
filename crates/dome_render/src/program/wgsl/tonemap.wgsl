@@ -2,6 +2,7 @@
 @group(1) @binding(0) var lit: texture_2d<f32>;
 @group(1) @binding(1) var bloom: texture_2d<f32>;
 @group(1) @binding(2) var filtering_sampler: sampler;
+@group(1) @binding(3) var cover: texture_2d<f32>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -74,12 +75,13 @@ fn fragment(input: FragmentIn) -> @location(0) vec4<f32> {
     );
     let neutral = pbr_neutral(held);
     let step = vec2<f32>(1.0 / setup.source_width, 1.0 / setup.source_height);
-    let left = textureSample(lit, filtering_sampler, vec2<f32>(at.x - 2.0 * step.x, at.y));
-    let right = textureSample(lit, filtering_sampler, vec2<f32>(at.x + 2.0 * step.x, at.y));
-    let down = textureSample(lit, filtering_sampler, vec2<f32>(at.x, at.y - 2.0 * step.y));
-    let up = textureSample(lit, filtering_sampler, vec2<f32>(at.x, at.y + 2.0 * step.y));
+    let left = textureSample(cover, filtering_sampler, vec2<f32>(at.x - 2.0 * step.x, at.y));
+    let right = textureSample(cover, filtering_sampler, vec2<f32>(at.x + 2.0 * step.x, at.y));
+    let down = textureSample(cover, filtering_sampler, vec2<f32>(at.x, at.y - 2.0 * step.y));
+    let up = textureSample(cover, filtering_sampler, vec2<f32>(at.x, at.y + 2.0 * step.y));
+    let marked = textureSample(cover, filtering_sampler, at);
     let near = max(max(left.w, right.w), max(down.w, up.w));
-    let outlined = select(0.0, 1.0, near > 0.5 && scene.w < 0.5);
+    let outlined = select(0.0, 1.0, near > 0.5 && marked.w < 0.5);
     let shaded = vec4<f32>(encoded(neutral.x), encoded(neutral.y), encoded(neutral.z), 1.0);
     let outline = vec4<f32>(0.30, 0.62, 1.0, 1.0);
     return vec4<f32>(

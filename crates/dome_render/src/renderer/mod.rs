@@ -784,11 +784,13 @@ impl Renderer {
                     near: camera.near,
                     far: camera.far,
                     vertical,
+                    revealage: false,
                 },
             );
             let resolved = self.temporality.resolved().clone();
             self.post.resolve(&mut submission, &resolved);
-            self.post.tonemap(&mut submission, &texture, &resolved);
+            self.post
+                .tonemap(&mut submission, &texture, &resolved, self.post.hdr());
             if let Some(frame) = frame {
                 submission.present(frame);
             }
@@ -869,11 +871,13 @@ impl Renderer {
                 near: camera.near,
                 far: camera.far,
                 vertical,
+                revealage: blended,
             },
         );
         let resolved = self.temporality.resolved().clone();
         self.post.resolve(&mut submission, &resolved);
-        self.post.tonemap(&mut submission, &texture, &resolved);
+        self.post
+            .tonemap(&mut submission, &texture, &resolved, self.post.hdr());
         if let Some(frame) = frame {
             submission.present(frame);
         }

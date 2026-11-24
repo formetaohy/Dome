@@ -80,6 +80,7 @@ const TONEMAP: GraphicsShader = GraphicsShader {
         BindingSpec::sampled_texture(1, TONEMAP_LIT),
         BindingSpec::sampled_texture(1, TONEMAP_BLOOM),
         BindingSpec::filtering_sampler(1, TONEMAP_FILTER),
+        BindingSpec::sampled_texture(1, TONEMAP_COVER),
     ],
     targets: 1,
 };

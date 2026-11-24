@@ -1042,6 +1042,83 @@ fn crossing(context: &Gpu, target: &Texture, white: Texture, sampler: Sampler) {
 }
 
 #[test]
+fn a_highlighted_instance_keeps_the_outline_a_transparent_surface_covers() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device renders a frame: {error}"));
+    let target = Texture::new(
+        context.device(),
+        "highlighted frame",
+        SIDE,
+        SIDE,
+        1,
+        TextureFormat::Rgba8Unorm,
+        TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+    );
+    let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
+    let opaque = renderer.material(MaterialDesc::new(WHITE).emissive(WHITE));
+    let veil = renderer.material(
+        MaterialDesc::new(WHITE)
+            .alpha(0.5)
+            .alpha_mode(AlphaMode::Blend)
+            .emissive(WHITE),
+    );
+    let quad = renderer.mesh(&QUAD);
+    let mut world = World::new();
+    let eye = world.spawn();
+    world.insert(eye, Transform::from_translation(Vec3::new(0.0, 0.0, 2.0)));
+    world.insert(
+        eye,
+        Camera {
+            vertical_fov: std::f32::consts::FRAC_PI_2,
+            near: 0.1,
+            far: 100.0,
+        },
+    );
+    let marked = world.spawn();
+    world.insert(
+        marked,
+        Transform::from_scale_rotation_translation(Vec3::splat(0.5), Quat::IDENTITY, Vec3::ZERO),
+    );
+    world.insert(
+        marked,
+        MeshInstance {
+            mesh: quad,
+            material: opaque,
+            tint: WHITE,
+        },
+    );
+    let cover = world.spawn();
+    world.insert(cover, Transform::from_translation(Vec3::new(0.0, 0.0, 0.5)));
+    world.insert(
+        cover,
+        MeshInstance {
+            mesh: quad,
+            material: veil,
+            tint: WHITE,
+        },
+    );
+    renderer.render(
+        &mut world,
+        Target::Texture(&target),
+        [0.0, 0.0, 0.0, 1.0],
+        Some(marked),
+    );
+    let pixels = read(&context, &target);
+    for (x, y) in [(23, 32), (32, 23), (40, 32), (32, 40)] {
+        let held = pixels[(y * SIDE + x) as usize];
+        assert!(
+            held[2] > held[0] + 16 && held[2] > held[1] + 16,
+            "paints ({x}, {y}) {held:?} where the outline of the highlighted instance belongs: a transparent surface keeps the marker of the opaque frame it covers",
+        );
+    }
+    let inside = pixels[(SIDE * 32 + 32) as usize];
+    assert!(
+        inside[2].abs_diff(inside[0]) <= 8,
+        "paints the highlighted instance itself {inside:?} where its own surface belongs",
+    );
+}
+
+#[test]
 fn a_linear_frame_resolves_its_highlights_into_a_glow() {
     glow();
 }
@@ -1790,11 +1867,15 @@ fn temporal() {
         TextureFormat::Rgba8Unorm,
         TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
     );
-    accumulation(&context, &target);
+    let covered = accumulation(&context, &target);
+    assert!(
+        covered > 4,
+        "leaves {covered} pixels of fractional edge coverage where a temporal frame accumulates its jitter",
+    );
     movement(&context, &target);
 }
 
-fn accumulation(context: &Gpu, target: &Texture) {
+fn accumulation(context: &Gpu, target: &Texture) -> usize {
     let mut renderer = Renderer::new(context, TextureFormat::Rgba8Unorm);
     let quad = renderer.mesh(&QUAD);
     let material = renderer.material(MaterialDesc::new(WHITE).emissive(WHITE));
@@ -1840,14 +1921,10 @@ fn accumulation(context: &Gpu, target: &Texture) {
         held[0] > 200,
         "paints the quad {held:?} where its emission belongs",
     );
-    let covered = pixels
+    pixels
         .iter()
         .filter(|pixel| pixel[0] > 40 && pixel[0] < 200)
-        .count();
-    assert!(
-        covered > 4,
-        "leaves {covered} pixels of fractional edge coverage where a temporal frame accumulates its jitter",
-    );
+        .count()
 }
 
 fn movement(context: &Gpu, target: &Texture) {

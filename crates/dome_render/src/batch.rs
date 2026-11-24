@@ -10,7 +10,6 @@ pub(crate) struct Pipelines<'a> {
     pub(crate) capture: &'a GraphicsPipeline,
     pub(crate) blended: &'a GraphicsPipeline,
     pub(crate) motion: &'a GraphicsPipeline,
-    pub(crate) motion_blended: &'a GraphicsPipeline,
     pub(crate) shadow: &'a GraphicsPipeline,
 }
 
@@ -39,7 +38,7 @@ pub(crate) struct Slot<'a> {
 }
 
 pub(crate) struct SlotGroups {
-    depth: Option<BindGroup>,
+    depth: BindGroup,
     shade: BindGroup,
     motion: BindGroup,
     shadow: [BindGroup; CASCADES],
@@ -52,18 +51,16 @@ impl SlotGroups {
         slot: &Slot<'_>,
         blended: bool,
     ) -> Self {
-        let depth = (!blended).then(|| {
-            pipelines.depth.bind_group(
-                0,
-                &[
-                    Binding::buffer(program::DEPTH_PALETTE, shared.palette),
-                    Binding::buffer(program::DEPTH_SKINS, slot.skins),
-                    Binding::buffer(program::DEPTH_DRAWN, slot.depth_drawn),
-                    Binding::buffer(program::DEPTH_VERTICES, slot.vertices),
-                    Binding::buffer(program::DEPTH_MATERIALS, shared.materials),
-                ],
-            )
-        });
+        let depth = pipelines.depth.bind_group(
+            0,
+            &[
+                Binding::buffer(program::DEPTH_PALETTE, shared.palette),
+                Binding::buffer(program::DEPTH_SKINS, slot.skins),
+                Binding::buffer(program::DEPTH_DRAWN, slot.depth_drawn),
+                Binding::buffer(program::DEPTH_VERTICES, slot.vertices),
+                Binding::buffer(program::DEPTH_MATERIALS, shared.materials),
+            ],
+        );
         let pipeline = if blended {
             pipelines.blended
         } else {
@@ -89,12 +86,7 @@ impl SlotGroups {
                 Binding::buffer(program::DRAW_POINT_LIGHTS, shared.point_light),
             ],
         );
-        let motion_pipeline = if blended {
-            pipelines.motion_blended
-        } else {
-            pipelines.motion
-        };
-        let motion = motion_pipeline.bind_group(
+        let motion = pipelines.motion.bind_group(
             0,
             &[
                 Binding::buffer(program::MOTION_VIEW, shared.motion_view),
@@ -125,8 +117,8 @@ impl SlotGroups {
         }
     }
 
-    pub(crate) fn depth(&self) -> Option<&BindGroup> {
-        self.depth.as_ref()
+    pub(crate) fn depth(&self) -> &BindGroup {
+        &self.depth
     }
 
     pub(crate) fn shade(&self) -> &BindGroup {

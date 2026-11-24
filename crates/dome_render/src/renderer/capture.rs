@@ -123,7 +123,6 @@ impl Renderer {
             capture: &self.capture_draw,
             blended: &self.transparent_draw,
             motion: self.temporality.motion(),
-            motion_blended: self.temporality.motion_blended(),
             shadow: &self.shadow,
         };
         let textures = self.materials.textures();
