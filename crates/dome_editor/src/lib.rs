@@ -10,6 +10,7 @@ mod graph;
 mod history;
 mod inspector;
 mod outliner;
+mod player;
 mod preview;
 mod session;
 mod stage;

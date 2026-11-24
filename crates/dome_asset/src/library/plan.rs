@@ -128,7 +128,10 @@ pub(super) fn plan(job: Job) -> Prepared {
                 &mut prepare.sources,
             ) {
                 Ok(data) => data,
-                Err(_) => Arc::new(placeholder::image()),
+                Err(message) => {
+                    fail(&mut errors, "image", &id, message);
+                    Arc::new(placeholder::image())
+                }
             },
         };
         textures.insert(id, Arc::new(mips(&data, &colors)));

@@ -10,8 +10,8 @@ use dome_math::{Mat4, Vec3};
 use std::mem::size_of;
 
 pub const POINT_SHADOW_SIDE: u32 = 256;
+pub(crate) const POINT_SHADOW_CASTERS: u32 = 8;
 pub(crate) const POINT_SHADOW_FACES: u32 = 6;
-pub(crate) const POINT_SHADOW_NEAR: f32 = 0.05;
 pub(crate) const POINT_SHADOW_NONE: f32 = -1.0;
 
 const VIEW_BYTES: u64 = size_of::<ViewRecord>() as u64;
@@ -44,6 +44,7 @@ pub(crate) struct PointShadows {
     drawn: Growing,
     arguments: Growing,
     rows: u32,
+    casting: u32,
     slots: u32,
     batches: u32,
     drawn_span: u64,
@@ -52,8 +53,9 @@ pub(crate) struct PointShadows {
 
 impl PointShadows {
     pub(crate) fn new(device: &Device) -> Self {
+        let rows = POINT_SHADOW_CASTERS.min(capacity(device));
         Self {
-            atlas: atlas(device, 1),
+            atlas: atlas(device, rows),
             sampler: Sampler::new(
                 device,
                 SamplerDesc {
@@ -68,7 +70,7 @@ impl PointShadows {
             views: GpuBuffer::new(
                 device,
                 "dome point shadow views",
-                u64::from(POINT_SHADOW_FACES) * VIEW_BYTES,
+                u64::from(rows) * u64::from(POINT_SHADOW_FACES) * VIEW_BYTES,
                 BufferUsages::STORAGE | BufferUsages::COPY_DST,
             ),
             drawn: Growing::new(device, "dome point shadow drawn", BufferUsages::STORAGE),
@@ -77,27 +79,13 @@ impl PointShadows {
                 "dome point shadow arguments",
                 BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
             ),
-            rows: 1,
+            rows,
+            casting: 0,
             slots: 0,
             batches: 0,
             drawn_span: 0,
             argument_span: 0,
         }
-    }
-
-    pub(crate) fn ensure(&mut self, device: &Device, rows: u32) {
-        let rows = rows.clamp(1, capacity(device));
-        if self.rows == rows {
-            return;
-        }
-        self.atlas = atlas(device, rows);
-        self.views = GpuBuffer::new(
-            device,
-            "dome point shadow views",
-            u64::from(rows) * u64::from(POINT_SHADOW_FACES) * VIEW_BYTES,
-            BufferUsages::STORAGE | BufferUsages::COPY_DST,
-        );
-        self.rows = rows;
     }
 
     pub(crate) fn prepare(&mut self, device: &Device, queue: &Queue, frame: &PointShadowFrame<'_>) {
@@ -117,35 +105,31 @@ impl PointShadows {
             .iter()
             .filter(|light| light.shadow.x >= 0.0)
             .collect::<Vec<_>>();
-        assert_eq!(
-            casting.len().max(1) as u32,
+        assert!(
+            casting.len() as u32 <= self.rows,
+            "a frame casts {} point shadows where the atlas holds {}",
+            casting.len(),
             self.rows,
-            "a frame prepares the point shadow rows its lights span",
         );
-        let casting = casting.as_slice();
-        if casting.is_empty() {
-            self.slots = slots;
-            self.batches = (arguments.len() / 4) as u32;
-            return;
-        }
-        let rows = self.rows;
         self.slots = slots;
         self.batches = (arguments.len() / 4) as u32;
+        self.casting = casting.len() as u32;
+        let casting = casting.as_slice();
+        if casting.is_empty() {
+            return;
+        }
         let alignment = device.binding_alignment().max(4);
         self.drawn_span = (u64::from(slots) * DRAW_BYTES).next_multiple_of(alignment);
         self.argument_span = (arguments.len() as u64 * WORD_BYTES).next_multiple_of(alignment);
-        let cells = u64::from(rows) * u64::from(POINT_SHADOW_FACES);
+        let cells = u64::from(self.casting) * u64::from(POINT_SHADOW_FACES);
         self.drawn.fit(device, cells * self.drawn_span);
         self.arguments.fit(device, cells * self.argument_span);
         let mut views = Vec::with_capacity(cells as usize);
         for light in casting {
-            let far = light.position.w;
-            assert!(
-                far > POINT_SHADOW_NEAR && far.is_finite(),
-                "a point light of range {far} shadows no depth",
-            );
+            let near = light.shadow.z;
+            let far = light.shadow.w;
             let eye = Vec3::new(light.position.x, light.position.y, light.position.z);
-            let projection = Mat4::perspective(WIDE, 1.0, POINT_SHADOW_NEAR, far);
+            let projection = Mat4::perspective(WIDE, 1.0, near, far);
             for (forward, up) in FACES {
                 let clip = projection * Mat4::look_at(eye, eye + forward, up);
                 views.push(record_of_view(
@@ -156,15 +140,6 @@ impl PointShadows {
                     palette_base,
                 ));
             }
-        }
-        if views.is_empty() {
-            views.push(record_of_view(
-                &View::of(Mat4::IDENTITY),
-                0,
-                Vec3::ZERO,
-                Vec3::Z,
-                palette_base,
-            ));
         }
         self.views.write(queue, bytemuck::cast_slice(&views));
         let mut held = vec![0u8; (cells * self.argument_span) as usize];
@@ -187,8 +162,12 @@ impl PointShadows {
         &self.sampler
     }
 
+    pub(crate) fn rows(&self) -> u32 {
+        self.rows
+    }
+
     pub(crate) fn cells(&self) -> u32 {
-        self.rows * POINT_SHADOW_FACES
+        self.casting * POINT_SHADOW_FACES
     }
 
     pub(crate) fn view(&self, cell: u32) -> BufferBinding<'_> {

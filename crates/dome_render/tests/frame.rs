@@ -553,6 +553,12 @@ fn points() {
             tint: WHITE,
         },
     );
+    let sliver = world.spawn();
+    world.insert(
+        sliver,
+        Transform::from_translation(Vec3::new(0.0, 0.0, 3.0)),
+    );
+    world.insert(sliver, PointLight::new(WHITE, 1.0, 0.04));
 
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     let pixels = read(&context, &target);

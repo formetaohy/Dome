@@ -1,5 +1,7 @@
 use dome_math::Vec3;
 
+const POINT_SHADOW_NEAR_RATIO: f32 = 1.0e-3;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DirectionalLight {
     pub color: Vec3,
@@ -56,4 +58,8 @@ impl PointLight {
             range,
         }
     }
+}
+
+pub(crate) fn shadow_near(range: f32) -> f32 {
+    range * POINT_SHADOW_NEAR_RATIO
 }

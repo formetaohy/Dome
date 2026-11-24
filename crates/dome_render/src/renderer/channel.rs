@@ -155,7 +155,7 @@ impl Renderer {
         for group in &shadow_cull {
             submission.dispatch(&self.cull, group, [total.div_ceil(WORKGROUP), 1, 1]);
         }
-        if point_light_count > 0 {
+        if point_cells > 0 {
             for cell in 0..point_cells {
                 let group = hzb.cull(
                     &self.cull,
@@ -382,7 +382,7 @@ impl Renderer {
             })
             .collect::<Vec<_>>();
         submission.render(Pass::depth_only(&self.shadow_map), &cast);
-        if point_light_count > 0 {
+        if point_cells > 0 {
             let palette = self.palettes.binding();
             let materials = self
                 .material_records

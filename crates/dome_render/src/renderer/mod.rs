@@ -39,7 +39,7 @@ use crate::material::{AlphaMode, Material, MaterialDesc, MaterialLibrary};
 use crate::mesh::{Mesh, MeshLibrary};
 use crate::palette::Palettes;
 use crate::pick::{PickBatch, PickFrame, PickResources, Picker};
-use crate::point_shadow::{POINT_SHADOW_NEAR, POINT_SHADOW_NONE, PointShadowFrame, PointShadows};
+use crate::point_shadow::{POINT_SHADOW_NONE, PointShadowFrame, PointShadows};
 use crate::post::Post;
 use crate::probe::Probes;
 use crate::program;
@@ -673,28 +673,27 @@ impl Renderer {
             };
             distance(first).total_cmp(&distance(second))
         });
-        let capacity = crate::point_shadow::capacity(&self.device) as usize;
-        let casting = point_light_records.len().min(capacity);
-        let rows = (casting as u32).max(1);
+        let rows = self.point_shadows.rows();
+        let casting = point_light_records.len().min(rows as usize);
         let span = 1.0 / rows as f32;
         for (index, record) in point_light_records.iter_mut().enumerate() {
+            let near = crate::light::shadow_near(record.position.w);
             record.shadow = if index < casting {
                 Fvec4 {
                     x: index as f32 * span,
                     y: span,
-                    z: POINT_SHADOW_NEAR,
+                    z: near,
                     w: record.position.w,
                 }
             } else {
                 Fvec4 {
                     x: POINT_SHADOW_NONE,
                     y: 0.0,
-                    z: POINT_SHADOW_NEAR,
+                    z: near,
                     w: record.position.w,
                 }
             };
         }
-        self.point_shadows.ensure(&self.device, rows);
         self.refresh_ambient(environment);
         let width = texture.width();
         let height = texture.height();

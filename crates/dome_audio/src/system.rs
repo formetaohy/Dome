@@ -63,14 +63,12 @@ impl Deck {
         self.garbage.empty();
     }
 
-    fn send(&self, command: Command) {
+    fn send(&self, command: Command) -> bool {
         let mut commands = self
             .commands
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        if commands.send(command).is_err() {
-            panic!("the audio mixer holds every command the frame sends");
-        }
+        commands.send(command).is_ok()
     }
 
     fn take_events(&self) -> impl Iterator<Item = Event> {
@@ -127,6 +125,7 @@ pub struct Audio {
     deck: Option<Deck>,
     failure: Option<AudioUnavailable>,
     retry: Instant,
+    stalled: bool,
     voices: BTreeMap<Entity, Playing>,
     suspended: BTreeMap<Entity, (u64, u64)>,
     owners: BTreeMap<u32, Entity>,
@@ -148,6 +147,7 @@ impl Audio {
             deck: None,
             failure: None,
             retry: Instant::now(),
+            stalled: false,
             voices: BTreeMap::new(),
             suspended: BTreeMap::new(),
             owners: BTreeMap::new(),
@@ -253,6 +253,12 @@ impl Audio {
     }
 
     fn supervise(&mut self) {
+        if std::mem::take(&mut self.stalled) {
+            eprintln!("the audio mixer holds no command the frame sends: reopening its device");
+            self.deck = None;
+            self.forget();
+            self.retry = Instant::now();
+        }
         if let Some(deck) = &mut self.deck
             && deck.alive()
         {
@@ -311,8 +317,10 @@ impl Audio {
     }
 
     fn send(&mut self, command: Command) {
-        if let Some(deck) = &self.deck {
-            deck.send(command);
+        if let Some(deck) = &self.deck
+            && !deck.send(command)
+        {
+            self.stalled = true;
         }
     }
 

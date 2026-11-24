@@ -1,7 +1,7 @@
+use crate::player::Player;
 use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command as Process};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -88,7 +88,7 @@ pub struct Editor {
     conflict: bool,
     titled_dirty: Option<bool>,
     error: Option<String>,
-    child: Option<Child>,
+    child: Option<Player>,
     orbit: Orbit,
     mode: Mode,
     space: Space,
@@ -114,6 +114,7 @@ pub struct Editor {
     hover: Option<Grip>,
     viewport_texture: Option<dome_gpu::Texture>,
     viewport_rendered: Option<Viewport>,
+    textures_at: Option<u64>,
     ime: bool,
     redraw: bool,
     ui_at: Option<Instant>,
@@ -167,6 +168,7 @@ impl Editor {
             hover: None,
             viewport_texture: None,
             viewport_rendered: None,
+            textures_at: None,
             ime: false,
             redraw: true,
             ui_at: None,
@@ -244,15 +246,16 @@ impl Editor {
         }
     }
 
-    fn save(&mut self) {
+    fn save(&mut self) -> bool {
         if self.conflict {
             self.error = Some(format!(
                 "{} changed on disk: reload it or save over it",
                 self.path.display(),
             ));
-            return;
+            return false;
         }
         self.write();
+        true
     }
 
     fn overwrite(&mut self) {
@@ -385,6 +388,7 @@ impl Editor {
     fn refresh_preview(&mut self) {
         if let Some(session) = &mut self.session {
             session.preview.refresh(&self.scene);
+            self.textures_at = Some(session.preview.revision());
             session.register_textures(&self.scene);
         }
     }
@@ -475,39 +479,32 @@ impl Editor {
     }
 
     fn play(&mut self) {
-        if self.child.is_some() {
+        if self.child.is_some() || !self.save() {
             return;
         }
-        self.save();
-        let executable = std::env::current_exe().expect("the editor names its own executable");
-        let mut process = Process::new(executable);
-        process.arg("--play").arg(self.project.root());
-        if self.debug {
-            process.arg("--debug");
-        }
-        let child = process
-            .spawn()
-            .unwrap_or_else(|error| panic!("the editor starts its player: {error}"));
+        self.child = Some(Player::start(self.project.root(), self.debug));
         self.player_at = Instant::now() + PLAYER_INTERVAL;
-        self.child = Some(child);
     }
 
     fn stop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        self.child = None;
     }
 
     fn poll(&mut self) -> bool {
-        let exited = self
-            .child
-            .as_mut()
-            .is_some_and(|child| child.try_wait().ok().flatten().is_some());
-        if exited {
-            self.child = None;
+        let Some(exit) = self.child.as_mut().and_then(Player::exited) else {
+            return false;
+        };
+        self.child = None;
+        if exit.failed() {
+            let code = exit
+                .code
+                .map_or_else(|| String::from("no exit code"), |code| code.to_string());
+            self.error = Some(match exit.tail.is_empty() {
+                true => format!("the player exited with {code}"),
+                false => format!("the player exited with {code}: {}", exit.tail),
+            });
         }
-        exited
+        true
     }
 
     fn parent_for_insert(&self) -> Option<String> {
@@ -852,7 +849,9 @@ impl Editor {
             self.error = None;
         }
         match action {
-            Action::Save => self.save(),
+            Action::Save => {
+                self.save();
+            }
             Action::Overwrite => self.overwrite(),
             Action::Reload => self.reload(),
             Action::Undo => self.undo(),
@@ -1050,7 +1049,11 @@ impl Editor {
             let Some(session) = self.session.as_mut() else {
                 return Flow::Idle;
             };
-            session.register_textures(&self.scene);
+            let revision = session.preview.revision();
+            if self.textures_at != Some(revision) {
+                self.textures_at = Some(revision);
+                session.register_textures(&self.scene);
+            }
             session.preview.advance(real);
             session.ui.update(logical, scale, time)
         };
@@ -1511,10 +1514,7 @@ impl Handler for Editor {
 
 impl Drop for Editor {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        self.stop();
     }
 }
 
