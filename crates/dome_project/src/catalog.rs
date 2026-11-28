@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 const FORMAT: &str = "dome_launcher";
 const LIMIT: usize = 8;
 
+#[derive(Clone)]
 pub struct Recent {
     name: String,
     path: PathBuf,
@@ -27,12 +28,12 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    pub fn load() -> Self {
-        Self::at(home().join("launcher.toml"))
+    pub fn load() -> Result<Self, String> {
+        Self::at(home()?.join("launcher.toml"))
     }
 
-    pub fn at(file: PathBuf) -> Self {
-        Self::read(file).unwrap_or_else(|error| panic!("{error}"))
+    pub fn at(file: PathBuf) -> Result<Self, String> {
+        Self::read(file)
     }
 
     fn read(file: PathBuf) -> Result<Self, String> {
@@ -72,66 +73,67 @@ impl Catalog {
         &self.entries
     }
 
-    pub fn record(&mut self, project: &Project) {
-        self.entries.retain(|held| held.path != project.root());
-        self.entries.insert(
+    pub fn record(&mut self, project: &Project) -> Result<(), String> {
+        let mut entries = self.entries.clone();
+        entries.retain(|held| held.path != project.root());
+        entries.insert(
             0,
             Recent {
                 name: String::from(project.name()),
                 path: project.root().to_path_buf(),
             },
         );
-        self.entries.truncate(LIMIT);
-        self.save();
+        entries.truncate(LIMIT);
+        save(&self.file, &entries)?;
+        self.entries = entries;
+        Ok(())
     }
 
-    pub fn forget(&mut self, index: usize) {
+    pub fn forget(&mut self, index: usize) -> Result<(), String> {
         assert!(
             index < self.entries.len(),
             "the launcher forgets a project it holds",
         );
-        self.entries.remove(index);
-        self.save();
+        let mut entries = self.entries.clone();
+        entries.remove(index);
+        save(&self.file, &entries)?;
+        self.entries = entries;
+        Ok(())
     }
+}
 
-    fn save(&self) {
-        if let Some(parent) = self.file.parent() {
-            fs::create_dir_all(parent).unwrap_or_else(|error| {
-                panic!(
-                    "the launcher catalog folder {} opens: {error}",
-                    parent.display(),
-                )
-            });
-        }
-        let projects = self
-            .entries
-            .iter()
-            .map(|held| {
-                Toml::object([
-                    ("name", Toml::string(held.name.as_str())),
-                    (
-                        "path",
-                        Toml::string(held.path.to_str().unwrap_or_else(|| {
-                            panic!(
-                                "the launcher catalog path {} holds no text",
-                                held.path.display(),
-                            )
-                        })),
-                    ),
-                ])
-            })
-            .collect();
-        let document = Toml::object([
-            ("format", Toml::string(FORMAT)),
-            ("project", Toml::array(projects)),
-        ]);
-        fs::write(&self.file, document.write()).unwrap_or_else(|error| {
-            panic!(
-                "the launcher catalog {} writes no text: {error}",
-                self.file.display(),
+fn save(file: &Path, entries: &[Recent]) -> Result<(), String> {
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "the launcher catalog folder {} opens: {error}",
+                parent.display(),
             )
-        });
+        })?;
     }
+    let mut projects = Vec::with_capacity(entries.len());
+    for held in entries {
+        let path = held.path.to_str().ok_or_else(|| {
+            format!(
+                "the launcher catalog path {} holds no text",
+                held.path.display(),
+            )
+        })?;
+        projects.push(Toml::object([
+            ("name", Toml::string(held.name.as_str())),
+            ("path", Toml::string(path)),
+        ]));
+    }
+    let document = Toml::object([
+        ("format", Toml::string(FORMAT)),
+        ("project", Toml::array(projects)),
+    ]);
+    fs::write(file, document.write()).map_err(|error| {
+        format!(
+            "the launcher catalog {} writes no text: {error}",
+            file.display(),
+        )
+    })
 }
 
 fn recent(value: Toml, what: &str) -> Result<Recent, String> {
@@ -149,9 +151,9 @@ fn recent(value: Toml, what: &str) -> Result<Recent, String> {
     })
 }
 
-fn home() -> PathBuf {
+fn home() -> Result<PathBuf, String> {
     if let Some(held) = std::env::var_os("DOME_HOME") {
-        return PathBuf::from(held);
+        return Ok(PathBuf::from(held));
     }
     #[cfg(windows)]
     let base = std::env::var_os("APPDATA").map(PathBuf::from);
@@ -165,8 +167,9 @@ fn home() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
-    base.unwrap_or_else(|| panic!("the launcher finds no home folder"))
-        .join("Dome")
+    Ok(base
+        .ok_or_else(|| String::from("the launcher finds no home folder"))?
+        .join("Dome"))
 }
 
 #[cfg(test)]
@@ -177,11 +180,11 @@ mod tests {
     fn a_catalog_remembers_the_project_it_records() {
         let root = std::env::temp_dir().join(format!("dome_catalog_{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        let project = Project::create(root.join("Game"), "Game");
+        let project = Project::create(root.join("Game"), "Game").expect("the project is created");
         let file = root.join("launcher.toml");
-        let mut catalog = Catalog::at(file.clone());
-        catalog.record(&project);
-        let loaded = Catalog::at(file);
+        let mut catalog = Catalog::at(file.clone()).expect("the catalog opens");
+        catalog.record(&project).expect("the catalog records");
+        let loaded = Catalog::at(file).expect("the catalog reloads");
         assert_eq!(loaded.entries().len(), 1);
         assert_eq!(loaded.entries()[0].name(), "Game");
         assert_eq!(loaded.entries()[0].path(), project.root());

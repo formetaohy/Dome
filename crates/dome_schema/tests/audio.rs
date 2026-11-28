@@ -92,11 +92,15 @@ impl Assets for Mock {
         panic!("the audio scene renders no material")
     }
 
-    fn skin(&self, _id: &str) -> SkinData {
+    fn skin(&self, _id: &str, _node: &str) -> SkinData {
         panic!("the audio scene deforms no skin")
     }
 
-    fn animation(&self, _id: &str) -> std::sync::Arc<dome_animation::Clip> {
+    fn animation(
+        &self,
+        _id: &str,
+        _targets: &[dome_scene::NodeId],
+    ) -> std::sync::Arc<dome_animation::Clip> {
         panic!("the audio scene plays no animation")
     }
 

@@ -6,9 +6,10 @@ mod work;
 
 use crate::digest::Digest;
 use crate::source::Sources;
-use dome_animation::Clip;
+use dome_animation::{Clip, Interpolation, Property, Track};
 use dome_audio::Source;
 use dome_image::ColorSpace;
+use dome_math::{Mat4, Vec3};
 use dome_physics::TriangleMesh;
 use dome_render::{
     Environment, Material, MaterialDesc, MaterialImage, Mesh, Renderer, Sampler, SamplerDesc,
@@ -16,6 +17,7 @@ use dome_render::{
 };
 use dome_scene::Changed;
 use dome_scene::MaterialEntry;
+use dome_scene::NodeId;
 use dome_scene::Scene;
 use dome_scene::SkinData;
 use dome_schema::Assets;
@@ -23,6 +25,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use work::Fingerprints;
 use work::ImageMips;
 use work::Job;
@@ -43,6 +46,7 @@ pub struct Library {
     worker: Worker,
     loading: bool,
     commit: Option<commit::Commit>,
+    fallback: Option<Fallback>,
 }
 
 #[derive(Clone)]
@@ -77,6 +81,12 @@ pub struct Refresh {
     pub applied: bool,
     pub changed: Changed,
     pub errors: Vec<AssetError>,
+}
+
+pub enum WaitOutcome {
+    Ready(Refresh),
+    Timeout,
+    Cancelled,
 }
 
 impl Refresh {
@@ -129,6 +139,13 @@ struct AnimationRecord {
     clip: Arc<Clip>,
 }
 
+struct Fallback {
+    mesh: MeshRecord,
+    material: Material,
+    sound: Source,
+    environment: Environment,
+}
+
 impl Default for Library {
     fn default() -> Self {
         Self::new()
@@ -151,6 +168,7 @@ impl Library {
             worker: Worker::new(),
             loading: false,
             commit: None,
+            fallback: None,
         }
     }
 
@@ -206,16 +224,40 @@ impl Library {
         }
     }
 
-    pub fn refresh(&mut self, scene: &Scene, renderer: &mut Renderer) -> Refresh {
+    pub fn refresh(
+        &mut self,
+        scene: &Scene,
+        renderer: &mut Renderer,
+        budget: u64,
+        deadline: Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> WaitOutcome {
         assert!(
             self.request(scene),
             "a library refreshes one scene at a time",
         );
+        self.wait(renderer, budget, deadline, cancelled)
+    }
+
+    pub fn wait(
+        &mut self,
+        renderer: &mut Renderer,
+        budget: u64,
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> WaitOutcome {
+        assert!(self.loading(), "a library waits for the scene it loads");
         loop {
-            if let Some(refresh) = self.poll(renderer, u64::MAX) {
-                return refresh;
+            if cancelled() {
+                return WaitOutcome::Cancelled;
             }
-            std::thread::sleep(std::time::Duration::from_micros(100));
+            if Instant::now() >= deadline {
+                return WaitOutcome::Timeout;
+            }
+            if let Some(refresh) = self.poll(renderer, budget) {
+                return WaitOutcome::Ready(refresh);
+            }
+            std::thread::sleep(Duration::from_micros(100));
         }
     }
 
@@ -243,6 +285,40 @@ impl Library {
         self.environments
             .get(id)
             .map(|held| held.environment.clone())
+    }
+
+    fn ensure_fallback(&mut self, renderer: &mut Renderer) {
+        if self.fallback.is_some() {
+            return;
+        }
+        let sampler = self.sampler(renderer, environment_sampler_desc());
+        let radiance = empty_texture(renderer, "missing.environment");
+        let panorama = empty_texture(renderer, "missing.environment.panorama");
+        let mut data = placeholder::mesh();
+        let skin = data
+            .skin
+            .take()
+            .expect("a placeholder mesh holds its skin weights");
+        let mesh = renderer.skinned_mesh(&data.vertices, &skin);
+        let mesh = MeshRecord {
+            fingerprint: Digest::default(),
+            mesh,
+            positions: data.positions,
+            shape: OnceLock::new(),
+        };
+        let material = renderer.material(MaterialDesc::new(Vec3::new(0.5, 0.5, 0.5)));
+        self.fallback = Some(Fallback {
+            mesh,
+            material,
+            sound: placeholder::sound(),
+            environment: Environment::new(radiance, panorama, sampler, 1, [Vec3::ZERO; 9]),
+        });
+    }
+
+    fn fallback(&self) -> &Fallback {
+        self.fallback
+            .as_ref()
+            .expect("a committed library holds its fallback assets")
     }
 
     fn fingerprints(&self) -> Fingerprints {
@@ -409,62 +485,85 @@ impl Library {
     }
 }
 
+fn environment_sampler_desc() -> SamplerDesc {
+    SamplerDesc {
+        min_filter: dome_render::FilterMode::Linear,
+        mag_filter: dome_render::FilterMode::Linear,
+        mipmap_filter: dome_render::FilterMode::Linear,
+        address_mode_u: dome_render::AddressMode::Repeat,
+        address_mode_v: dome_render::AddressMode::ClampToEdge,
+        compare: None,
+    }
+}
+
+fn empty_texture(renderer: &Renderer, label: &str) -> Texture {
+    const EMPTY_TEXEL: &[u8] = &[0, 0, 0, 0, 0, 0, 0x00, 0x3C];
+    let texture = renderer.texture(
+        label,
+        1,
+        1,
+        1,
+        TextureFormat::Rgba16Float,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+    );
+    renderer.write_texture(&texture, &[EMPTY_TEXEL]);
+    texture
+}
+
 impl Assets for Library {
     fn mesh(&self, id: &str) -> Mesh {
         self.meshes
             .get(id)
-            .unwrap_or_else(|| panic!("the scene renders the mesh {id}, which it does not hold"))
-            .mesh
+            .map_or(self.fallback().mesh.mesh, |held| held.mesh)
     }
 
     fn material(&self, id: &str) -> Material {
         self.materials
             .get(id)
-            .unwrap_or_else(|| {
-                panic!("the scene renders the material {id}, which it does not hold")
-            })
-            .material
+            .map_or(self.fallback().material, |held| held.material)
     }
 
-    fn skin(&self, id: &str) -> SkinData {
-        self.skins
-            .get(id)
-            .unwrap_or_else(|| panic!("the scene deforms the skin {id}, which it does not hold"))
-            .data
-            .clone()
+    fn skin(&self, id: &str, node: &str) -> SkinData {
+        if let Some(held) = self.skins.get(id) {
+            return held.data.clone();
+        }
+        SkinData::new(vec![NodeId::new(node)], Arc::from([Mat4::IDENTITY]))
     }
 
     fn mesh_shape(&self, id: &str) -> Arc<TriangleMesh> {
-        let held = self
-            .meshes
-            .get(id)
-            .unwrap_or_else(|| panic!("the scene collides the mesh {id}, which it does not hold"));
+        let fallback = &self.fallback().mesh;
+        let held = self.meshes.get(id).unwrap_or(fallback);
         Arc::clone(
             held.shape
                 .get_or_init(|| Arc::new(TriangleMesh::from_positions(&held.positions))),
         )
     }
 
-    fn animation(&self, id: &str) -> Arc<Clip> {
-        Arc::clone(
-            &self
-                .animations
-                .get(id)
-                .unwrap_or_else(|| {
-                    panic!("the scene plays the animation {id}, which it does not hold")
-                })
-                .clip,
-        )
+    fn animation(&self, id: &str, targets: &[NodeId]) -> Arc<Clip> {
+        if let Some(held) = self.animations.get(id) {
+            return Arc::clone(&held.clip);
+        }
+        let tracks = targets
+            .iter()
+            .map(|target| {
+                Track::new(
+                    target.as_str(),
+                    Property::Translation,
+                    Interpolation::Linear,
+                    vec![0.0],
+                    vec![0.0, 0.0, 0.0],
+                )
+                .expect("a missing animation holds a valid placeholder track")
+            })
+            .collect();
+        Arc::new(Clip::new(tracks))
     }
 
     fn environment(&self, id: &str) -> Environment {
-        self.environments
-            .get(id)
-            .unwrap_or_else(|| {
-                panic!("the scene lights with the environment {id}, which it does not hold")
-            })
-            .environment
-            .clone()
+        self.environments.get(id).map_or_else(
+            || self.fallback().environment.clone(),
+            |held| held.environment.clone(),
+        )
     }
 
     fn capture(&self, id: &str) -> Option<dome_render::CaptureProbe> {
@@ -477,16 +576,25 @@ impl Assets for Library {
     fn sound(&self, id: &str) -> Source {
         self.sounds
             .get(id)
-            .unwrap_or_else(|| panic!("the scene plays the sound {id}, which it does not hold"))
-            .source
-            .clone()
+            .map_or_else(|| self.fallback().sound.clone(), |held| held.source.clone())
     }
 }
 
 impl Library {
     pub fn build(scene: &Scene, renderer: &mut Renderer) -> Library {
         let mut library = Library::new();
-        let refresh = library.refresh(scene, renderer);
+        let outcome = library.refresh(
+            scene,
+            renderer,
+            u64::MAX,
+            Instant::now() + Duration::from_secs(30),
+            || false,
+        );
+        let refresh = match outcome {
+            WaitOutcome::Ready(refresh) => refresh,
+            WaitOutcome::Timeout => panic!("the library loads its scene within its deadline"),
+            WaitOutcome::Cancelled => unreachable!("an uncancelled library load is not cancelled"),
+        };
         assert!(
             refresh.applied,
             "the library adopts the assets of its scene: {}",

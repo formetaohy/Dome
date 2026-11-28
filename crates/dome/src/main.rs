@@ -50,7 +50,10 @@ fn main() {
         Command::Launcher => {
             let editor = std::env::current_exe().expect("the launcher names its own executable");
             run_launcher(LauncherConfig {
-                catalog: Catalog::load(),
+                catalog: Catalog::load().unwrap_or_else(|error| {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }),
                 editor,
             });
         }
@@ -116,6 +119,7 @@ fn headless(project: Project, capture: Capture, debug: bool) {
         frames: capture.frames,
         realtime: capture.realtime,
         screenshot: capture.screenshot.is_some(),
+        ..Default::default()
     });
     if let Some(error) = app.reload_error() {
         eprintln!("{error}");
@@ -136,15 +140,15 @@ fn parse() -> Command {
     };
     match command.as_str() {
         "--project" => Command::Editor {
-            project: Project::open(project_root(&mut items, "--project")),
+            project: open_project(project_root(&mut items, "--project")),
             debug: debug_flag(&mut items, "--project"),
         },
         "--play" => Command::Play {
-            project: Project::open(project_root(&mut items, "--play")),
+            project: open_project(project_root(&mut items, "--play")),
             debug: debug_flag(&mut items, "--play"),
         },
         "--headless" => {
-            let project = Project::open(project_root(&mut items, "--headless"));
+            let project = open_project(project_root(&mut items, "--headless"));
             let mut capture = Capture::new();
             let mut debug = false;
             while let Some(item) = items.next() {
@@ -180,6 +184,13 @@ fn parse() -> Command {
         }
         other => panic!("the engine holds no command {other}"),
     }
+}
+
+fn open_project(root: PathBuf) -> Project {
+    Project::open(root).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(1);
+    })
 }
 
 fn project_root(items: &mut impl Iterator<Item = String>, command: &str) -> PathBuf {

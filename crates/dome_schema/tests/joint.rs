@@ -186,11 +186,15 @@ impl dome_schema::Assets for Mock {
         panic!("the joint scene renders no material")
     }
 
-    fn skin(&self, _id: &str) -> dome_scene::SkinData {
+    fn skin(&self, _id: &str, _node: &str) -> dome_scene::SkinData {
         panic!("the joint scene deforms no skin")
     }
 
-    fn animation(&self, _id: &str) -> std::sync::Arc<dome_animation::Clip> {
+    fn animation(
+        &self,
+        _id: &str,
+        _targets: &[dome_scene::NodeId],
+    ) -> std::sync::Arc<dome_animation::Clip> {
         panic!("the joint scene plays no animation")
     }
 }

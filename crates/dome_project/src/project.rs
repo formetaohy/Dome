@@ -13,49 +13,49 @@ pub struct Project {
 }
 
 impl Project {
-    pub fn create(root: impl AsRef<Path>, name: &str) -> Self {
+    pub fn create(root: impl AsRef<Path>, name: &str) -> Result<Self, String> {
         let name = name.trim();
-        assert!(!name.is_empty(), "a project holds a name");
-        let root = absolute(root.as_ref());
-        assert!(
-            vacant(&root),
-            "the project folder {} holds files",
-            root.display(),
-        );
+        if name.is_empty() {
+            return Err(String::from("a project holds a name"));
+        }
+        let root = absolute(root.as_ref())?;
+        if !vacant(&root) {
+            return Err(format!("the project folder {} holds files", root.display()));
+        }
         fs::create_dir_all(&root)
-            .unwrap_or_else(|error| panic!("the project folder {} opens: {error}", root.display()));
+            .map_err(|error| format!("the project folder {} opens: {error}", root.display()))?;
         for folder in Folder::ALL {
-            fs::create_dir_all(root.join(folder.name())).unwrap_or_else(|error| {
-                panic!(
+            fs::create_dir_all(root.join(folder.name())).map_err(|error| {
+                format!(
                     "the project folder {} opens: {error}",
                     root.join(folder.name()).display(),
                 )
-            });
+            })?;
         }
         let manifest = Manifest {
             name: String::from(name),
         };
-        write(&root.join(MANIFEST), &manifest.write());
-        starter::write(&root);
-        Self { root, manifest }
+        write(&root.join(MANIFEST), &manifest.write())?;
+        starter::write(&root)?;
+        Ok(Self { root, manifest })
     }
 
-    pub fn open(root: impl AsRef<Path>) -> Self {
-        let root = absolute(root.as_ref());
+    pub fn open(root: impl AsRef<Path>) -> Result<Self, String> {
+        let root = absolute(root.as_ref())?;
         let path = root.join(MANIFEST);
-        let text = fs::read_to_string(&path).unwrap_or_else(|error| {
-            panic!("the project {} reads no manifest: {error}", root.display())
-        });
-        let manifest = Manifest::parse(&text, &format!("the project manifest {}", path.display()))
-            .unwrap_or_else(|error| panic!("{error}"));
+        let text = fs::read_to_string(&path).map_err(|error| {
+            format!("the project {} reads no manifest: {error}", root.display())
+        })?;
+        let manifest = Manifest::parse(&text, &format!("the project manifest {}", path.display()))?;
         let entry = root.join(Folder::Scene.name()).join(ENTRY);
-        assert!(
-            entry.is_file(),
-            "the project {} holds no entry scene {}",
-            root.display(),
-            entry.display(),
-        );
-        Self { root, manifest }
+        if !entry.is_file() {
+            return Err(format!(
+                "the project {} holds no entry scene {}",
+                root.display(),
+                entry.display(),
+            ));
+        }
+        Ok(Self { root, manifest })
     }
 
     pub fn holds(root: impl AsRef<Path>) -> bool {
@@ -93,16 +93,13 @@ fn vacant(root: &Path) -> bool {
             .unwrap_or(false)
 }
 
-fn write(path: &Path, text: &str) {
-    fs::write(path, text).unwrap_or_else(|error| {
-        panic!("the project writes {}: {error}", path.display());
-    });
+fn write(path: &Path, text: &str) -> Result<(), String> {
+    fs::write(path, text).map_err(|error| format!("the project writes {}: {error}", path.display()))
 }
 
-fn absolute(path: &Path) -> PathBuf {
-    std::path::absolute(path).unwrap_or_else(|error| {
-        panic!("the project root {} resolves: {error}", path.display());
-    })
+fn absolute(path: &Path) -> Result<PathBuf, String> {
+    std::path::absolute(path)
+        .map_err(|error| format!("the project root {} resolves: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -123,7 +120,7 @@ nodes = []
     fn a_created_project_opens_the_entry_scene_it_scaffolds() {
         let root = std::env::temp_dir().join(format!("dome_project_{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        let project = Project::create(&root, "Test Game");
+        let project = Project::create(&root, "Test Game").expect("the project is created");
         assert_eq!(project.name(), "Test Game");
         for folder in Folder::ALL {
             assert!(
@@ -132,7 +129,7 @@ nodes = []
                 folder.name(),
             );
         }
-        let opened = Project::open(&root);
+        let opened = Project::open(&root).expect("the project opens");
         let scene = Scene::load(opened.entry(), opened.root(), Arc::new(Registry::default()))
             .expect("the entry scene parses");
         assert!(

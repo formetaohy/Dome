@@ -47,7 +47,7 @@ impl AnimationLibrary {
             if self.sources.contains_key(&entry.id) && !stale(&entry.id) {
                 continue;
             }
-            let clip = assets.animation(entry.id.as_str());
+            let clip = assets.animation(entry.id.as_str(), entry.asset.targets());
             let targets = entry
                 .asset
                 .targets()

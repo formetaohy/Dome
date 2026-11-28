@@ -13,9 +13,7 @@ use dome_scene::{SkinAsset, SkinEntry};
 use dome_scene::{Target, valid_id};
 use dome_schema::NodeComponents;
 use dome_schema::{AnimationRef, MeshRef, SkinRef};
-use std::any::Any;
 use std::collections::{HashMap, HashSet};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 
 pub trait Import {
     fn import_model(&mut self, id: &str, path: &str, place: Option<&str>)
@@ -57,13 +55,8 @@ impl Import for Edit<'_> {
             ),
             None => None,
         };
-        let model = catch_unwind(AssertUnwindSafe(|| Model::load(&file))).map_err(|payload| {
-            format!(
-                "the model {} loads: {}",
-                path.display(),
-                describe(payload.as_ref())
-            )
-        })?;
+        let model = Model::load(&file)
+            .map_err(|error| format!("the model {} loads: {error}", path.display()))?;
         if model.roots.is_empty() {
             return Err(format!("the model {} holds no root node", path.display()));
         }
@@ -525,14 +518,4 @@ fn visit(
     }
     state[index] = 2;
     Ok(())
-}
-
-fn describe(payload: &(dyn Any + Send)) -> String {
-    if let Some(text) = payload.downcast_ref::<&str>() {
-        return String::from(*text);
-    }
-    if let Some(text) = payload.downcast_ref::<String>() {
-        return text.clone();
-    }
-    String::from("panicked")
 }

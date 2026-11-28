@@ -2,7 +2,7 @@ use dome_animation::Clip;
 use dome_audio::Source;
 use dome_physics::TriangleMesh;
 use dome_render::{CaptureProbe, Environment, Material, Mesh};
-use dome_scene::SkinData;
+use dome_scene::{NodeId, SkinData};
 use std::sync::Arc;
 
 pub trait Assets {
@@ -18,9 +18,9 @@ pub trait Assets {
 
     fn material(&self, id: &str) -> Material;
 
-    fn skin(&self, id: &str) -> SkinData;
+    fn skin(&self, id: &str, node: &str) -> SkinData;
 
-    fn animation(&self, id: &str) -> Arc<Clip>;
+    fn animation(&self, id: &str, targets: &[NodeId]) -> Arc<Clip>;
 
     fn mesh_shape(&self, id: &str) -> Arc<TriangleMesh> {
         panic!("the assets hold no mesh shape {id}")

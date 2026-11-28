@@ -2,7 +2,7 @@ use super::prepare::{ImageBytes, MeshData};
 use super::work::EnvironmentData;
 use dome_animation::{Clip, Interpolation, Property, Track};
 use dome_audio::{Channels, Sound, Source};
-use dome_math::Mat4;
+use dome_math::{Mat4, Vec3};
 use dome_render::SkinVertexRecord;
 use dome_scene::{AnimationEntry, MaterialAsset, MaterialEntry, Scene, Shape, SkinData, SkinEntry};
 use std::sync::Arc;
@@ -50,10 +50,10 @@ pub(super) fn animation(scene: &Scene, entry: &AnimationEntry) -> Arc<Clip> {
         .targets()
         .iter()
         .map(|target| {
-            let index = scene
+            let translation = scene
                 .node_index(target.as_str())
-                .unwrap_or_else(|| panic!("the scene holds no node {target} for its animation"));
-            let translation = scene.transform(index).translation;
+                .map(|index| scene.transform(index).translation)
+                .unwrap_or(Vec3::ZERO);
             Track::new(
                 target.as_str(),
                 Property::Translation,
@@ -61,6 +61,7 @@ pub(super) fn animation(scene: &Scene, entry: &AnimationEntry) -> Arc<Clip> {
                 vec![0.0],
                 vec![translation.x, translation.y, translation.z],
             )
+            .expect("a placeholder animation track is valid")
         })
         .collect::<Vec<_>>();
     Arc::new(Clip::new(tracks))

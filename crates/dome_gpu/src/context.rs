@@ -143,6 +143,10 @@ impl Gpu {
         &self.device
     }
 
+    pub fn poll_events(&self) {
+        self.queue().poll_events();
+    }
+
     pub fn queue(&self) -> Queue {
         Queue {
             device: self.device.clone(),
@@ -309,6 +313,13 @@ impl Queue {
 
     pub fn device(&self) -> &Device {
         &self.device
+    }
+
+    pub fn poll_events(&self) {
+        if let Err(error) = self.poll(wgpu::PollType::Poll) {
+            self.device
+                .raise(format!("the graphics device processes its events: {error}"));
+        }
     }
 
     fn poll(&self, poll: wgpu::PollType) -> Result<wgpu::PollStatus, wgpu::PollError> {

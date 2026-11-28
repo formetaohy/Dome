@@ -7,5 +7,5 @@ mod watch;
 
 pub use digest::Digest;
 pub use import::Import;
-pub use library::{AssetError, ImageTexture, Library, Refresh};
+pub use library::{AssetError, ImageTexture, Library, Refresh, WaitOutcome};
 pub use watch::{Change, Watch};

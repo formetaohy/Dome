@@ -47,14 +47,14 @@ impl Sound {
         }
     }
 
-    pub fn load(path: impl AsRef<Path>) -> Self {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
         let path = path.as_ref();
         let bytes = fs::read(path)
-            .unwrap_or_else(|error| panic!("the sound {} reads no bytes: {error}", path.display()));
+            .map_err(|error| format!("the sound {} reads no bytes: {error}", path.display()))?;
         Self::decode(&bytes, &format!("the sound {}", path.display()))
     }
 
-    pub fn decode(bytes: &[u8], what: &str) -> Self {
+    pub fn decode(bytes: &[u8], what: &str) -> Result<Self, String> {
         if bytes.len() >= 4 && &bytes[..4] == b"OggS" {
             crate::vorbis::decode(bytes, what)
         } else {

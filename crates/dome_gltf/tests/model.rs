@@ -87,7 +87,7 @@ fn a_model_reads_a_binary_container_of_triangles_and_textures() {
         &serde_json::to_vec(&document).expect("a test writes JSON"),
         &binary,
     );
-    let model = Model::parse(&glb, Path::new("model.glb"));
+    let model = Model::parse(&glb, Path::new("model.glb")).expect("the model parses");
 
     assert_eq!(model.roots, vec![0]);
     assert_eq!(model.nodes.len(), 1);
@@ -216,7 +216,7 @@ fn a_model_reads_skins_and_animations() {
         &serde_json::to_vec(&document).expect("a test writes JSON"),
         &binary,
     );
-    let model = Model::parse(&glb, Path::new("skinned.glb"));
+    let model = Model::parse(&glb, Path::new("skinned.glb")).expect("the skinned model parses");
 
     assert_eq!(model.nodes[0].skin, Some(0));
     assert_eq!(model.skins.len(), 1);

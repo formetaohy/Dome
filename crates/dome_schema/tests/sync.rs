@@ -17,11 +17,11 @@ impl Assets for NoAssets {
         panic!("a synced scene renders no material")
     }
 
-    fn skin(&self, _id: &str) -> SkinData {
+    fn skin(&self, _id: &str, _node: &str) -> SkinData {
         panic!("a synced scene deforms no mesh")
     }
 
-    fn animation(&self, _id: &str) -> Arc<dome_animation::Clip> {
+    fn animation(&self, _id: &str, _targets: &[dome_scene::NodeId]) -> Arc<dome_animation::Clip> {
         panic!("a synced scene plays no animation")
     }
 }

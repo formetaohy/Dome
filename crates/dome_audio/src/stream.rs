@@ -474,7 +474,7 @@ mod tests {
             .flat_map(|at| [(at * 128) as i16, -((at * 128) as i16)])
             .collect::<Vec<_>>();
         fs::write(&path, wave(8_000, 2, &samples)).expect("a test writes its wave");
-        let sound = Sound::load(&path);
+        let sound = Sound::load(&path).expect("the wave loads");
         let stream = Stream::open(&path).expect("a test holds a wave stream");
         assert_eq!(stream.frame_count(), Some(sound.frame_count() as u64));
         let frames = drain(&stream, false, 0);
@@ -515,7 +515,7 @@ mod tests {
         let stream = Stream::open(TONE).expect("a test opens its vorbis stream");
         let mut track = stream.track(true, 0).expect("a test starts its track");
         let bytes = fs::read(TONE).expect("a test reads its vorbis file");
-        let sound = Sound::decode(&bytes, "the tone");
+        let sound = Sound::decode(&bytes, "the tone").expect("the tone decodes");
         let count = sound.frame_count();
         assert_eq!(track.period(), Some(count as u64));
         assert_eq!(track.total(), None);
@@ -564,7 +564,7 @@ mod tests {
         );
         assert!((frames[0][0] - frames[0][1]).abs() < 1e-6);
         let bytes = fs::read(TONE).expect("a test reads its vorbis file");
-        let sound = Sound::decode(&bytes, "the tone");
+        let sound = Sound::decode(&bytes, "the tone").expect("the tone decodes");
         assert_eq!(stream.frame_count(), Some(count as u64));
         assert_eq!(count, sound.frame_count());
         for (at, frame) in frames.iter().enumerate() {
@@ -576,7 +576,7 @@ mod tests {
     #[test]
     fn a_vorbis_file_decodes_into_a_sound() {
         let bytes = fs::read(TONE).expect("a test reads its vorbis file");
-        let sound = Sound::decode(&bytes, "the tone");
+        let sound = Sound::decode(&bytes, "the tone").expect("the tone decodes");
         assert_eq!(sound.sample_rate(), 44_100);
         assert_eq!(sound.channels(), Channels::Mono);
         assert!((43_900..=44_200).contains(&sound.frame_count()));

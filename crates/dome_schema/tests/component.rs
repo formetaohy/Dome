@@ -19,11 +19,11 @@ impl Assets for NoAssets {
         panic!("a health component renders no material")
     }
 
-    fn skin(&self, _id: &str) -> dome_scene::SkinData {
+    fn skin(&self, _id: &str, _node: &str) -> dome_scene::SkinData {
         panic!("a health component deforms no mesh")
     }
 
-    fn animation(&self, _id: &str) -> Arc<dome_animation::Clip> {
+    fn animation(&self, _id: &str, _targets: &[dome_scene::NodeId]) -> Arc<dome_animation::Clip> {
         panic!("a health component plays no animation")
     }
 }

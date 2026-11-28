@@ -20,7 +20,7 @@ system turn(spin: read Spin) {
 }
 "#;
 
-pub(crate) fn write(root: &Path) {
+pub(crate) fn write(root: &Path) -> Result<(), String> {
     let mut scene = Scene::with_schema(root.to_path_buf(), Arc::new(Registry::default()));
     scene
         .edit(|edit| {
@@ -58,18 +58,15 @@ pub(crate) fn write(root: &Path) {
             edit.insert_node(Node::new("cube").with(MeshRef::new("cube", "grey", Vec3::ONE)))?;
             Ok(())
         })
-        .expect("a new project builds its entry scene");
-    scene
-        .save(root.join(Folder::Scene.name()).join(ENTRY))
-        .unwrap_or_else(|error| panic!("{error}"));
-    write_script(root);
+        .map_err(|error| format!("a new project builds its entry scene: {error}"))?;
+    scene.save(root.join(Folder::Scene.name()).join(ENTRY))?;
+    write_script(root)
 }
 
-fn write_script(root: &Path) {
+fn write_script(root: &Path) -> Result<(), String> {
     let path = root.join(Folder::Script.name()).join("main.amp");
-    std::fs::write(&path, STARTER_SCRIPT).unwrap_or_else(|error| {
-        panic!("the project writes {}: {error}", path.display());
-    });
+    std::fs::write(&path, STARTER_SCRIPT)
+        .map_err(|error| format!("the project writes {}: {error}", path.display()))
 }
 
 fn placed(mut node: Node, transform: Transform) -> Node {

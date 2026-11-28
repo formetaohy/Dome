@@ -195,6 +195,7 @@ fn a_headless_run_renders_its_scene() {
             frames: Some(2),
             realtime: false,
             screenshot: true,
+            ..Default::default()
         })
         .expect("a captured headless run holds its frame");
 
@@ -245,6 +246,7 @@ fn a_headless_run_steps_its_fixed_schedule() {
         frames: Some(3),
         realtime: false,
         screenshot: false,
+        ..Default::default()
     });
 
     assert!(png.is_none(), "an uncaptured headless run holds no frame");
@@ -300,6 +302,7 @@ fn a_headless_run_follows_a_changed_prefab_and_keeps_the_last_good_scene() {
         frames: Some(60),
         realtime: true,
         screenshot: false,
+        ..Default::default()
     });
 
     let ids = node_ids(app.world());

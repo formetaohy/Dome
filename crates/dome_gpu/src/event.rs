@@ -77,6 +77,15 @@ pub struct GpuEventCursor {
 }
 
 impl GpuEventCursor {
+    pub fn unhealthy(&self) -> bool {
+        self.log
+            .events
+            .lock()
+            .expect("a graphics event log is never poisoned")
+            .iter()
+            .any(|event| event.device_lost() || event.fault().is_some())
+    }
+
     pub fn poll(&mut self) -> Vec<GpuEvent> {
         let events = self
             .log

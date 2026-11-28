@@ -1,14 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn read(uri: &str, base: &Path, what: &str) -> Vec<u8> {
+pub(crate) fn read(uri: &str, base: &Path, what: &str) -> Result<Vec<u8>, String> {
     if uri.starts_with("data:") {
         return data(uri, what);
     }
     let path = path(uri, base)
-        .unwrap_or_else(|error| panic!("{what} {error}"))
+        .map_err(|error| format!("{what} {error}"))?
         .expect("a file URI holds a path");
-    fs::read(&path).unwrap_or_else(|error| panic!("{what} reads {}: {error}", path.display()))
+    fs::read(&path).map_err(|error| format!("{what} reads {}: {error}", path.display()))
 }
 
 pub(crate) fn path(uri: &str, base: &Path) -> Result<Option<PathBuf>, String> {
@@ -23,18 +23,17 @@ pub(crate) fn path(uri: &str, base: &Path) -> Result<Option<PathBuf>, String> {
     Ok(Some(base.join(path)))
 }
 
-fn data(uri: &str, what: &str) -> Vec<u8> {
+fn data(uri: &str, what: &str) -> Result<Vec<u8>, String> {
     let (header, body) = uri
         .split_once(',')
-        .unwrap_or_else(|| panic!("{what} holds a data URI without a body"));
-    assert!(
-        header.starts_with("data:") && header.to_ascii_lowercase().ends_with(";base64"),
-        "{what} holds a data URI that is not base64",
-    );
+        .ok_or_else(|| format!("{what} holds a data URI without a body"))?;
+    if !header.starts_with("data:") || !header.to_ascii_lowercase().ends_with(";base64") {
+        return Err(format!("{what} holds a data URI that is not base64"));
+    }
     base64(body, what)
 }
 
-fn base64(text: &str, what: &str) -> Vec<u8> {
+fn base64(text: &str, what: &str) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::with_capacity(text.len() / 4 * 3);
     let mut held = 0u32;
     let mut bits = 0u32;
@@ -47,7 +46,7 @@ fn base64(text: &str, what: &str) -> Vec<u8> {
             b'/' => 63,
             b'=' => break,
             b'\r' | b'\n' | b' ' | b'\t' => continue,
-            _ => panic!("{what} holds the base64 byte {byte}"),
+            _ => return Err(format!("{what} holds the base64 byte {byte}")),
         };
         held = (held << 6) | u32::from(value);
         bits += 6;
@@ -56,7 +55,7 @@ fn base64(text: &str, what: &str) -> Vec<u8> {
             bytes.push((held >> bits) as u8);
         }
     }
-    bytes
+    Ok(bytes)
 }
 
 fn percent(uri: &str) -> Result<String, String> {
@@ -101,7 +100,8 @@ mod tests {
                 "data:application/octet-stream;base64,AAECAwQ=",
                 Path::new("."),
                 "a test URI"
-            ),
+            )
+            .expect("the data URI decodes"),
             [0, 1, 2, 3, 4],
         );
         assert_eq!(
@@ -109,7 +109,8 @@ mod tests {
                 "data:application/octet-stream;base64,//8=",
                 Path::new("."),
                 "a test URI"
-            ),
+            )
+            .expect("the data URI decodes"),
             [255, 255],
         );
     }

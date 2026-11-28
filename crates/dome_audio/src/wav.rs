@@ -148,13 +148,23 @@ pub(crate) fn header(reader: &mut (impl Read + Seek), what: &str) -> Result<Head
     }
 }
 
-pub(crate) fn decode(bytes: &[u8], what: &str) -> Sound {
+pub(crate) fn decode(bytes: &[u8], what: &str) -> Result<Sound, String> {
     let mut reader = Cursor::new(bytes);
-    let header = header(&mut reader, what).unwrap_or_else(|error| panic!("{error}"));
+    let header = header(&mut reader, what)?;
+    if header.pcm.sample_rate == 0 {
+        return Err(format!("{what} plays at no sample rate"));
+    }
+    if header.frames() == 0 {
+        return Err(format!("{what} holds no sample frame"));
+    }
     let start = header.offset as usize;
     let end = start + header.bytes as usize;
     let samples = samples(&header.pcm, &bytes[start..end]);
-    Sound::new(header.pcm.sample_rate, header.pcm.channels, samples)
+    Ok(Sound::new(
+        header.pcm.sample_rate,
+        header.pcm.channels,
+        samples,
+    ))
 }
 
 pub(crate) fn samples(pcm: &Pcm, data: &[u8]) -> Vec<f32> {
@@ -204,6 +214,12 @@ fn read_layout(bytes: &[u8], what: &str) -> Result<Pcm, String> {
             ));
         }
     };
+    if !matches!(
+        (tag, bits),
+        (PCM, 8) | (PCM, 16) | (PCM, 24) | (PCM, 32) | (IEEE_FLOAT, 32) | (IEEE_FLOAT, 64)
+    ) {
+        return Err(format!("{what} holds {bits} bit samples of format {tag}"));
+    }
     let bytes_per_sample = usize::from(bits).div_ceil(8);
     if block != channels.count() * bytes_per_sample {
         return Err(format!(
@@ -299,7 +315,7 @@ mod tests {
     #[test]
     fn a_pcm_wave_decodes_interleaved_frames() {
         let bytes = wave(&[[0i16, i16::MAX], [i16::MIN, 0]]);
-        let sound = Sound::decode(&bytes, "the test wave");
+        let sound = Sound::decode(&bytes, "the test wave").expect("the wave decodes");
         assert_eq!(sound.sample_rate(), 8_000);
         assert_eq!(sound.channels(), Channels::Stereo);
         assert_eq!(sound.frame_count(), 2);
@@ -337,7 +353,7 @@ mod tests {
         bytes.extend_from_slice(DATA);
         bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&data);
-        let sound = Sound::decode(&bytes, "the float wave");
+        let sound = Sound::decode(&bytes, "the float wave").expect("the wave decodes");
         assert_eq!(sound.channels(), Channels::Stereo);
         assert_eq!(sound.frame_count(), 2);
         assert_eq!(sound.samples(), frames);

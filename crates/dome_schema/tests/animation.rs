@@ -21,24 +21,27 @@ impl Assets for Mock {
         panic!("a skinned scene renders no material")
     }
 
-    fn skin(&self, id: &str) -> SkinData {
+    fn skin(&self, id: &str, _node: &str) -> SkinData {
         assert_eq!(id, "rig_skin_0");
         SkinData::new(vec![NodeId::new("joint")], Arc::from([Mat4::IDENTITY]))
     }
 
-    fn animation(&self, id: &str) -> Arc<Clip> {
+    fn animation(&self, id: &str, _targets: &[dome_scene::NodeId]) -> Arc<Clip> {
         let (start, end) = match id {
             "rig_animation_0" => (0.0, 1.0),
             "rig_animation_1" => (10.0, 11.0),
             other => panic!("the mock holds no animation {other}"),
         };
-        Arc::new(Clip::new(vec![Track::new(
-            "joint",
-            Property::Translation,
-            Interpolation::Linear,
-            vec![0.0, 1.0],
-            vec![start, 0.0, 0.0, end, 0.0, 0.0],
-        )]))
+        Arc::new(Clip::new(vec![
+            Track::new(
+                "joint",
+                Property::Translation,
+                Interpolation::Linear,
+                vec![0.0, 1.0],
+                vec![start, 0.0, 0.0, end, 0.0, 0.0],
+            )
+            .expect("the animation track is valid"),
+        ]))
     }
 }
 

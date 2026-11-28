@@ -17,9 +17,7 @@ use dome_scene::{EnvironmentEntry, EnvironmentSource};
 use dome_scene::{Geometry, MeshEntry};
 use dome_scene::{ImageEntry, ImageSource};
 use dome_scene::{SkinData, SkinEntry};
-use std::any::Any;
 use std::collections::{BTreeSet, HashMap};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -152,8 +150,7 @@ impl Models<'_> {
             .ok_or_else(|| format!("the scene holds no model {id}"))?;
         let path = self.scene.asset(&entry.path);
         let (_, bytes) = sources.read(&path)?;
-        catch_unwind(AssertUnwindSafe(|| Model::parse(&bytes, &path)))
-            .map_err(|payload| panic_message(payload.as_ref()))
+        Model::parse(&bytes, &path)
     }
 }
 
@@ -393,22 +390,20 @@ pub(super) fn animation_data(entry: &AnimationEntry, model: &Model) -> Result<Ar
             entry.asset.targets().len(),
         ));
     }
-    let tracks = catch_unwind(AssertUnwindSafe(|| {
-        held.channels
-            .iter()
-            .zip(entry.asset.targets())
-            .map(|(channel, target)| {
-                Track::new(
-                    target.as_str(),
-                    channel.property,
-                    channel.interpolation,
-                    channel.times.clone(),
-                    channel.values.clone(),
-                )
-            })
-            .collect::<Vec<_>>()
-    }))
-    .map_err(|payload| panic_message(payload.as_ref()))?;
+    let tracks = held
+        .channels
+        .iter()
+        .zip(entry.asset.targets())
+        .map(|(channel, target)| {
+            Track::new(
+                target.as_str(),
+                channel.property,
+                channel.interpolation,
+                channel.times.clone(),
+                channel.values.clone(),
+            )
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     if tracks.is_empty() {
         return Err(format!("the animation {} holds no track", entry.id));
     }
@@ -422,14 +417,10 @@ pub(super) fn sound_data(
 ) -> Result<dome_audio::Source, String> {
     let file = scene.asset(&entry.path);
     if entry.stream {
-        return catch_unwind(AssertUnwindSafe(|| dome_audio::Source::stream(file)))
-            .map_err(|payload| panic_message(payload.as_ref()))?;
+        return dome_audio::Source::stream(file);
     }
     let (_, bytes) = sources.read(&file)?;
-    let sound = catch_unwind(AssertUnwindSafe(|| {
-        Sound::decode(&bytes, &format!("the sound {}", file.display()))
-    }))
-    .map_err(|payload| panic_message(payload.as_ref()))?;
+    let sound = Sound::decode(&bytes, &format!("the sound {}", file.display()))?;
     Ok(dome_audio::Source::decoded(Arc::new(sound)))
 }
 
@@ -489,16 +480,6 @@ pub(super) fn environment_fingerprint(entry: &EnvironmentEntry, digest: Option<D
 
 fn positions(vertices: &[Vertex]) -> Vec<[f32; 3]> {
     vertices.iter().map(|vertex| vertex.position).collect()
-}
-
-pub(super) fn panic_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(text) = payload.downcast_ref::<String>() {
-        return text.clone();
-    }
-    if let Some(text) = payload.downcast_ref::<&str>() {
-        return String::from(*text);
-    }
-    String::from("the asset fails")
 }
 
 pub(super) fn image_fingerprint(entry: &ImageEntry, source: Option<Digest>) -> Digest {

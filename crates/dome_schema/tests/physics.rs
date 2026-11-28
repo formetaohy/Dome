@@ -139,11 +139,15 @@ impl dome_schema::Assets for Mock {
         panic!("the physics scene renders no material")
     }
 
-    fn skin(&self, _id: &str) -> dome_scene::SkinData {
+    fn skin(&self, _id: &str, _node: &str) -> dome_scene::SkinData {
         panic!("the physics scene deforms no skin")
     }
 
-    fn animation(&self, _id: &str) -> std::sync::Arc<dome_animation::Clip> {
+    fn animation(
+        &self,
+        _id: &str,
+        _targets: &[dome_scene::NodeId],
+    ) -> std::sync::Arc<dome_animation::Clip> {
         panic!("the physics scene plays no animation")
     }
 }
@@ -264,11 +268,15 @@ impl dome_schema::Assets for Meshes {
         panic!("the mesh scene renders no material")
     }
 
-    fn skin(&self, _id: &str) -> dome_scene::SkinData {
+    fn skin(&self, _id: &str, _node: &str) -> dome_scene::SkinData {
         panic!("the mesh scene deforms no skin")
     }
 
-    fn animation(&self, _id: &str) -> std::sync::Arc<dome_animation::Clip> {
+    fn animation(
+        &self,
+        _id: &str,
+        _targets: &[dome_scene::NodeId],
+    ) -> std::sync::Arc<dome_animation::Clip> {
         panic!("the mesh scene plays no animation")
     }
 

@@ -5,8 +5,6 @@ use dome_gpu::{Gpu, GpuFailure, GpuRequest, Submission};
 use dome_math::Vec2;
 use dome_project::{Catalog, Project};
 use dome_window::{Event, Flow, Handler, KeyCode, Waker, Window, WindowConfig, run as run_window};
-use std::any::Any;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -86,8 +84,10 @@ impl Launcher {
                 self.select(&path);
             }
             Action::Forget(index) => {
-                if index < self.catalog.entries().len() {
-                    self.catalog.forget(index);
+                if index < self.catalog.entries().len()
+                    && let Err(error) = self.catalog.forget(index)
+                {
+                    self.error = Some(error);
                 }
             }
             Action::Choose => {
@@ -111,16 +111,17 @@ impl Launcher {
     }
 
     fn select(&mut self, path: &Path) {
+        self.launch = None;
         if !Project::holds(path) {
             self.error = Some(format!("{} holds no project", path.display()));
             return;
         }
-        match catch_unwind(AssertUnwindSafe(|| Project::open(path))) {
-            Ok(project) => {
-                self.catalog.record(&project);
-                self.launch = Some(project);
-            }
-            Err(payload) => self.error = Some(message(payload.as_ref())),
+        match Project::open(path) {
+            Ok(project) => match self.catalog.record(&project) {
+                Ok(()) => self.launch = Some(project),
+                Err(error) => self.error = Some(error),
+            },
+            Err(error) => self.error = Some(error),
         }
     }
 
@@ -149,13 +150,17 @@ impl Launcher {
         if Project::vacant(&path)
             && let Some(name) = path.file_name().and_then(|name| name.to_str())
         {
-            match catch_unwind(AssertUnwindSafe(|| Project::create(&path, name))) {
-                Ok(project) => {
-                    self.catalog.record(&project);
-                    self.launch = Some(project);
-                }
-                Err(payload) => {
-                    self.error = Some(message(payload.as_ref()));
+            match Project::create(&path, name) {
+                Ok(project) => match self.catalog.record(&project) {
+                    Ok(()) => self.launch = Some(project),
+                    Err(error) => {
+                        self.error = Some(error);
+                        dialog.invalid = true;
+                        self.dialog = Some(dialog);
+                    }
+                },
+                Err(error) => {
+                    self.error = Some(error);
                     dialog.invalid = true;
                     self.dialog = Some(dialog);
                 }
@@ -347,14 +352,4 @@ impl Handler for Launcher {
             let _ = child.wait();
         }
     }
-}
-
-fn message(payload: &(dyn Any + Send)) -> String {
-    if let Some(text) = payload.downcast_ref::<String>() {
-        return text.clone();
-    }
-    if let Some(text) = payload.downcast_ref::<&str>() {
-        return String::from(*text);
-    }
-    String::from("the launcher fails")
 }

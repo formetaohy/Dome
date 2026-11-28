@@ -58,12 +58,12 @@ impl SceneComponent for SkinRef {
     fn install(
         &self,
         _scene: &dome_scene::Scene,
-        _node: &str,
+        node: &str,
         world: &mut World,
         entity: Entity,
         assets: &dyn Assets,
     ) {
-        let data = assets.skin(self.skin.as_str());
+        let data = assets.skin(self.skin.as_str(), node);
         let nodes = world
             .resource::<crate::install::NodeMap>()
             .expect("a scene installs the nodes its skin joints name");

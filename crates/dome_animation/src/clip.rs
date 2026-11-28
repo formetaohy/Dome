@@ -85,33 +85,37 @@ impl Track {
         interpolation: Interpolation,
         times: Vec<f32>,
         values: Vec<f32>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let target = target.into();
-        assert!(
-            !target.is_empty(),
-            "an animation track of {property:?} targets no node",
-        );
-        assert!(!times.is_empty(), "the track of {target} holds no key",);
-        assert!(
-            times.iter().all(|time| time.is_finite()),
-            "the track of {target} holds a time that is no finite number",
-        );
-        assert!(
-            times.windows(2).all(|window| window[0] < window[1]),
-            "the track of {target} holds times out of order",
-        );
+        if target.is_empty() {
+            return Err(format!(
+                "an animation track of {property:?} targets no node"
+            ));
+        }
+        if times.is_empty() {
+            return Err(format!("the track of {target} holds no key"));
+        }
+        if !times.iter().all(|time| time.is_finite()) {
+            return Err(format!(
+                "the track of {target} holds a time that is no finite number"
+            ));
+        }
+        if !times.windows(2).all(|window| window[0] < window[1]) {
+            return Err(format!("the track of {target} holds times out of order"));
+        }
         let components = property.components();
         let expected = times.len() * components * interpolation.stride();
-        assert_eq!(
-            values.len(),
-            expected,
-            "the track of {target} holds {} values where {expected} stand",
-            values.len(),
-        );
-        assert!(
-            values.iter().all(|value| value.is_finite()),
-            "the track of {target} holds a value that is no finite number",
-        );
+        if values.len() != expected {
+            return Err(format!(
+                "the track of {target} holds {} values where {expected} stand",
+                values.len(),
+            ));
+        }
+        if !values.iter().all(|value| value.is_finite()) {
+            return Err(format!(
+                "the track of {target} holds a value that is no finite number"
+            ));
+        }
         let mut track = Self {
             target,
             property,
@@ -122,7 +126,7 @@ impl Track {
         if property == Property::Rotation {
             track.normalize_rotations();
         }
-        track
+        Ok(track)
     }
 
     pub fn target(&self) -> &str {

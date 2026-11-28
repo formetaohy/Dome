@@ -6,11 +6,11 @@ pub struct Image {
 }
 
 impl Image {
-    pub(crate) fn decode(bytes: &[u8], what: &str, sampler: Sampler) -> Self {
-        Self {
-            held: dome_image::Image::decode(bytes, what).unwrap_or_else(|error| panic!("{error}")),
+    pub(crate) fn decode(bytes: &[u8], what: &str, sampler: Sampler) -> Result<Self, String> {
+        Ok(Self {
+            held: dome_image::Image::decode(bytes, what)?,
             sampler,
-        }
+        })
     }
 
     pub fn width(&self) -> u32 {

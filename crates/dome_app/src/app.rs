@@ -1,5 +1,5 @@
 use crate::time::Time;
-use dome_asset::{Change, Library, Watch};
+use dome_asset::{Change, Library, WaitOutcome, Watch};
 use dome_audio::Audio;
 use dome_ecs::{Entity, Schedule, System, World, propagate, propagate_step, snapshot};
 use dome_gpu::{
@@ -51,6 +51,7 @@ pub struct HeadlessConfig {
     pub frames: Option<u64>,
     pub realtime: bool,
     pub screenshot: bool,
+    pub asset_timeout: Duration,
 }
 
 impl Default for HeadlessConfig {
@@ -61,11 +62,18 @@ impl Default for HeadlessConfig {
             frames: None,
             realtime: false,
             screenshot: false,
+            asset_timeout: Duration::from_secs(30),
         }
     }
 }
 
 pub struct Exit;
+
+#[derive(Clone, Copy)]
+struct AssetLoad {
+    blocking: bool,
+    timeout: Duration,
+}
 
 pub struct ClearColor(pub [f32; 4]);
 
@@ -109,6 +117,18 @@ struct Session {
     height: u32,
     format: TextureFormat,
     live: Option<LiveScene>,
+}
+
+struct GpuHealth<'a> {
+    context: &'a Gpu,
+    events: &'a GpuEventCursor,
+}
+
+impl GpuHealth<'_> {
+    fn unhealthy(&self) -> bool {
+        self.context.poll_events();
+        self.events.unhealthy()
+    }
 }
 
 const ASSET_UPLOAD_BYTES: u64 = 8 << 20;
@@ -163,26 +183,45 @@ impl LiveScene {
         file: SceneConfig,
         registry: &Arc<Registry>,
         renderer: &mut Renderer,
+        health: &GpuHealth<'_>,
         world: &mut World,
-        blocking: bool,
+        load: AssetLoad,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let scene = Scene::load(&file.path, file.root.clone(), registry.clone())?;
         let mut assets = Library::new();
         let mut sync = SceneSync::new(registry.clone());
         let mut messages = Vec::new();
-        let (wanted, requested) = if blocking {
-            let refresh = assets.refresh(&scene, renderer);
-            assert!(
-                refresh.applied,
-                "the library adopts the assets of its scene: {}",
-                refresh.message(),
+        let (wanted, requested) = if load.blocking {
+            let outcome = assets.refresh(
+                &scene,
+                renderer,
+                ASSET_UPLOAD_BYTES,
+                Instant::now() + load.timeout,
+                || health.unhealthy(),
             );
-            if !refresh.errors.is_empty() {
-                messages.push(refresh.message());
+            match outcome {
+                WaitOutcome::Ready(refresh) => {
+                    assert!(
+                        refresh.applied,
+                        "the library adopts the assets of its scene: {}",
+                        refresh.message(),
+                    );
+                    if !refresh.errors.is_empty() {
+                        messages.push(refresh.message());
+                    }
+                    sync.sync(&scene, world, &assets, &Changed::none());
+                    (None, None)
+                }
+                WaitOutcome::Timeout => {
+                    return Err(format!(
+                        "the scene {} loads its assets within {:?}",
+                        file.path.display(),
+                        load.timeout,
+                    ));
+                }
+                WaitOutcome::Cancelled => (Some(scene.clone()), Some(scene.clone())),
             }
-            sync.sync(&scene, world, &assets, &Changed::none());
-            (None, None)
         } else {
             assert!(assets.request(&scene), "a new library loads its scene");
             (Some(scene.clone()), Some(scene.clone()))
@@ -208,7 +247,8 @@ impl LiveScene {
         world: &mut World,
         registry: &Arc<Registry>,
         renderer: &mut Renderer,
-        blocking: bool,
+        health: &GpuHealth<'_>,
+        load: AssetLoad,
     ) -> Option<Reload> {
         if let Some(report) = self.watch.changed() {
             if let Some(errors) = report.errors
@@ -237,15 +277,24 @@ impl LiveScene {
         {
             self.requested = Some(wanted);
         }
-        let refresh = if blocking {
-            let mut held = None;
-            while self.assets.loading() {
-                if let Some(refresh) = self.assets.poll(renderer, u64::MAX) {
-                    held = Some(refresh);
-                    break;
-                }
+        let refresh = if load.blocking {
+            if !self.assets.loading() {
+                return None;
             }
-            held?
+            match self.assets.wait(
+                renderer,
+                ASSET_UPLOAD_BYTES,
+                Instant::now() + load.timeout,
+                || health.unhealthy(),
+            ) {
+                WaitOutcome::Ready(refresh) => refresh,
+                WaitOutcome::Timeout => panic!(
+                    "the scene {} reloads its assets within {:?}",
+                    self.path.display(),
+                    load.timeout,
+                ),
+                WaitOutcome::Cancelled => return None,
+            }
         } else {
             self.assets.poll(renderer, ASSET_UPLOAD_BYTES)?
         };
@@ -367,9 +416,13 @@ impl Session {
         world: &mut World,
         file: &SceneConfig,
         registry: &Arc<Registry>,
-        blocking: bool,
+        load: AssetLoad,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<(), String> {
+        let health = GpuHealth {
+            context: &self.context,
+            events: &self.events,
+        };
         let live = LiveScene::new(
             SceneConfig {
                 path: file.path.clone(),
@@ -377,8 +430,9 @@ impl Session {
             },
             registry,
             &mut self.renderer,
+            &health,
             world,
-            blocking,
+            load,
             wake,
         )?;
         self.live = Some(live);
@@ -389,10 +443,14 @@ impl Session {
         &mut self,
         world: &mut World,
         registry: &Arc<Registry>,
-        blocking: bool,
+        load: AssetLoad,
     ) -> Option<Reload> {
         let live = self.live.as_mut()?;
-        live.update(world, registry, &mut self.renderer, blocking)
+        let health = GpuHealth {
+            context: &self.context,
+            events: &self.events,
+        };
+        live.update(world, registry, &mut self.renderer, &health, load)
     }
 
     fn take_change(&mut self) -> Option<Change> {
@@ -579,8 +637,12 @@ impl App {
             config.frames.is_none_or(|frames| frames > 0),
             "a headless run walks at least one frame"
         );
+        assert!(
+            config.asset_timeout > Duration::ZERO,
+            "a headless run waits for its assets"
+        );
         let mut session = Session::headless(config.width, config.height, &self.config.gpu);
-        self.start(&mut session, true);
+        self.start(&mut session, true, config.asset_timeout);
         let fixed = self
             .world
             .resource::<Time>()
@@ -602,7 +664,7 @@ impl App {
                 }
                 GpuCondition::Fault(message) => panic!("the graphics device fails: {message}"),
             }
-            self.reload_scene(&mut session);
+            self.reload_scene(&mut session, config.asset_timeout);
             let loading = session
                 .live
                 .as_ref()
@@ -668,12 +730,15 @@ impl App {
     fn restart_headless(&mut self, config: &HeadlessConfig) -> Session {
         self.reset();
         let mut session = Session::headless(config.width, config.height, &self.config.gpu);
-        self.start(&mut session, true);
+        self.start(&mut session, true, config.asset_timeout);
         session
     }
 
-    fn start(&mut self, session: &mut Session, focused: bool) {
-        let blocking = self.headless;
+    fn start(&mut self, session: &mut Session, focused: bool, asset_timeout: Duration) {
+        let load = AssetLoad {
+            blocking: self.headless,
+            timeout: asset_timeout,
+        };
         assert!(
             !self.started,
             "a resumed application rebuilds the world a lost surface owned"
@@ -693,7 +758,7 @@ impl App {
         };
         let mut loaded = false;
         if let Some(file) = &self.config.scene {
-            match session.load_scene(&mut self.world, file, &self.config.registry, blocking, wake) {
+            match session.load_scene(&mut self.world, file, &self.config.registry, load, wake) {
                 Ok(()) => {
                     loaded = true;
                     self.reload = session.live.as_mut().and_then(LiveScene::take_error);
@@ -705,7 +770,7 @@ impl App {
                 }
             }
         }
-        if !blocking && loaded {
+        if !load.blocking && loaded {
             let camera = self.world.spawn();
             self.world.insert(
                 camera,
@@ -715,10 +780,10 @@ impl App {
                 .insert(camera, Camera::new(std::f32::consts::FRAC_PI_2, 0.1, 100.0));
             self.loading_camera = Some(camera);
         }
-        if blocking || !loaded {
-            self.settle_startup(session);
-        } else {
+        if loaded && !session.scene_ready() {
             self.startup_pending = !self.startup.is_empty();
+        } else {
+            self.settle_startup(session);
         }
         self.started = true;
     }
@@ -786,8 +851,15 @@ impl App {
         propagate(&mut self.world);
     }
 
-    fn reload_scene(&mut self, session: &mut Session) {
-        let reload = session.reload(&mut self.world, &self.config.registry, self.headless);
+    fn reload_scene(&mut self, session: &mut Session, asset_timeout: Duration) {
+        let reload = session.reload(
+            &mut self.world,
+            &self.config.registry,
+            AssetLoad {
+                blocking: self.headless,
+                timeout: asset_timeout,
+            },
+        );
         let Some(reload) = reload else {
             return;
         };
@@ -822,7 +894,7 @@ impl Handler for App {
     fn opened(&mut self, window: &Window, waker: Waker) {
         self.wake = Some(waker);
         let mut session = Session::window(window, &self.config.gpu);
-        self.start(&mut session, window.has_focus());
+        self.start(&mut session, window.has_focus(), Duration::ZERO);
         self.session = Some(session);
     }
 
@@ -874,7 +946,7 @@ impl App {
         drop(session);
         self.reset();
         let mut session = Session::window(window, &self.config.gpu);
-        self.start(&mut session, window.has_focus());
+        self.start(&mut session, window.has_focus(), Duration::ZERO);
         self.session = Some(session);
     }
 
@@ -884,7 +956,7 @@ impl App {
         window: &Window,
         real: Duration,
     ) -> Result<Flow, GpuFailure> {
-        self.reload_scene(session);
+        self.reload_scene(session, Duration::ZERO);
         let (width, height) = window.size();
         if window.is_minimized() || width == 0 || height == 0 {
             return Ok(Flow::Idle);

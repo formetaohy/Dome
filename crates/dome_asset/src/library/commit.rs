@@ -6,8 +6,7 @@ use super::{AssetError, ImageRecord, ImageTexture, Library, MaterialRecord, Mesh
 use dome_image::ColorSpace;
 use dome_render::environment::BakeRequest;
 use dome_render::{
-    Environment, Renderer, Sampler, SamplerDesc, SkinVertexRecord, Texture, TextureFormat,
-    TextureUsages, Vertex,
+    Environment, Renderer, Sampler, SkinVertexRecord, Texture, TextureFormat, TextureUsages, Vertex,
 };
 use dome_scene::Changed;
 use std::collections::{HashMap, HashSet};
@@ -16,7 +15,6 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 const ITEM_LIMIT: usize = 64;
-const EMPTY_TEXEL: &[u8] = &[0, 0, 0, 0, 0, 0, 0x00, 0x3C];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
@@ -74,6 +72,7 @@ impl Commit {
         renderer: &mut Renderer,
         budget: u64,
     ) -> Option<Refresh> {
+        library.ensure_fallback(renderer);
         self.spent = 0;
         self.items = 0;
         loop {
@@ -242,21 +241,12 @@ impl Commit {
 
     fn submit_environment(&mut self, library: &mut Library, renderer: &mut Renderer) {
         let item = &self.prepared.environments[self.index];
-        let sampler = library.sampler(
-            renderer,
-            SamplerDesc {
-                min_filter: dome_render::FilterMode::Linear,
-                mag_filter: dome_render::FilterMode::Linear,
-                mipmap_filter: dome_render::FilterMode::Linear,
-                address_mode_u: dome_render::AddressMode::Repeat,
-                address_mode_v: dome_render::AddressMode::ClampToEdge,
-                compare: None,
-            },
-        );
+        let sampler = library.sampler(renderer, super::environment_sampler_desc());
         let (panorama, background, atmosphere) = match &item.data {
             EnvironmentData::Empty => {
-                let radiance = empty_texture(renderer, &item.entry.id);
-                let panorama = empty_texture(renderer, &format!("{}.panorama", item.entry.id));
+                let radiance = super::empty_texture(renderer, &item.entry.id);
+                let panorama =
+                    super::empty_texture(renderer, &format!("{}.panorama", item.entry.id));
                 library.environments.insert(
                     item.entry.id.clone(),
                     super::EnvironmentRecord {
@@ -478,19 +468,6 @@ fn environment_bytes(item: &PreparedEnvironment) -> u64 {
         }
         EnvironmentData::Atmosphere(_) => 0,
     }
-}
-
-fn empty_texture(renderer: &Renderer, label: &str) -> Texture {
-    let texture = renderer.texture(
-        label,
-        1,
-        1,
-        1,
-        TextureFormat::Rgba16Float,
-        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-    );
-    renderer.write_texture(&texture, &[EMPTY_TEXEL]);
-    texture
 }
 
 fn mesh_bytes(item: &PreparedMesh) -> u64 {

@@ -16,7 +16,7 @@ fn clip(start: f32, target: Entity) -> Arc<ClipSource> {
     );
     Arc::new(ClipSource::new(
         "clip",
-        Arc::new(Clip::new(vec![track])),
+        Arc::new(Clip::new(vec![track.expect("the track is valid")])),
         Arc::from([target]),
     ))
 }

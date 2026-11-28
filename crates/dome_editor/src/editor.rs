@@ -1710,7 +1710,7 @@ mod tests {
             NEXT.fetch_add(1, Ordering::Relaxed),
         ));
         let _ = fs::remove_dir_all(&root);
-        let project = Project::create(&root, "Editor Test");
+        let project = Project::create(&root, "Editor Test").expect("the project is created");
         (Editor::new(EditorConfig::new(project)), Cleanup(root))
     }
 
@@ -1746,10 +1746,10 @@ mod tests {
             NEXT.fetch_add(1, Ordering::Relaxed),
         ));
         let _ = fs::remove_dir_all(&root);
-        let project = Project::create(&root, "Broken");
+        let project = Project::create(&root, "Broken").expect("the project is created");
         fs::write(project.entry(), "format = \"dome_scene\"\nimages = ")
             .expect("a broken entry scene holds its text");
-        let opened = Project::open(&root);
+        let opened = Project::open(&root).expect("the project opens");
         let mut editor = Editor::new(EditorConfig::new(opened));
         let message = editor
             .message

@@ -1,4 +1,3 @@
-use super::prepare::panic_message;
 use super::{AssetError, TextureKey};
 use crate::digest::Digest;
 use crate::source::Sources;
@@ -16,9 +15,7 @@ use dome_scene::ReferenceKind;
 use dome_scene::Scene;
 use dome_scene::SoundEntry;
 use dome_scene::{SkinData, SkinEntry};
-use std::any::Any;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -241,9 +238,7 @@ impl Worker {
             .name(String::from("dome assets"))
             .spawn(move || {
                 while let Ok(job) = held.recv() {
-                    let result = catch_unwind(AssertUnwindSafe(|| super::plan::plan(job)))
-                        .map(|prepared| Outcome::Prepared(Box::new(prepared)))
-                        .unwrap_or_else(|payload| Outcome::Failed(describe(payload.as_ref())));
+                    let result = Outcome::Prepared(Box::new(super::plan::plan(job)));
                     if outcome.send(result).is_err() {
                         break;
                     }
@@ -268,8 +263,4 @@ impl Worker {
             ))),
         }
     }
-}
-
-fn describe(payload: &(dyn Any + Send)) -> String {
-    panic_message(payload)
 }
