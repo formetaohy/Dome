@@ -71,6 +71,13 @@ impl EventLog {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GpuCondition {
+    Healthy,
+    Lost,
+    Fault(String),
+}
+
 pub struct GpuEventCursor {
     log: EventLog,
     next: usize,
@@ -86,6 +93,22 @@ impl GpuEventCursor {
             .any(|event| event.device_lost() || event.fault().is_some())
     }
 
+    pub fn condition(&mut self) -> GpuCondition {
+        let mut fault = None;
+        for event in self.poll() {
+            if event.device_lost() {
+                return GpuCondition::Lost;
+            }
+            if let Some(message) = event.fault() {
+                fault = Some(String::from(message));
+            }
+        }
+        match fault {
+            Some(message) => GpuCondition::Fault(message),
+            None => GpuCondition::Healthy,
+        }
+    }
+
     pub fn poll(&mut self) -> Vec<GpuEvent> {
         let events = self
             .log
@@ -95,5 +118,23 @@ impl GpuEventCursor {
         let unread = events.get(self.next..).unwrap_or(&[]).to_vec();
         self.next = events.len();
         unread
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_device_loss_outranks_the_errors_it_raises() {
+        let log = EventLog::default();
+        log.emit(GpuEvent::Fault(String::from(
+            "wgpu: the device is lost before it submits",
+        )));
+        log.emit(GpuEvent::DeviceLost {
+            reason: wgpu::DeviceLostReason::Destroyed,
+            message: String::new(),
+        });
+        assert_eq!(log.cursor().condition(), GpuCondition::Lost);
     }
 }

@@ -1,9 +1,10 @@
 use crate::action::Action;
 use crate::session::Session;
 use crate::stage::{self, State};
-use dome_gpu::{Gpu, GpuFailure, GpuRequest, Submission};
+use dome_gpu::{Gpu, GpuCondition, GpuFailure, GpuRequest, Submission};
 use dome_math::Vec2;
 use dome_project::{Catalog, Project};
+use dome_ui::Ui;
 use dome_window::{Event, Flow, Handler, KeyCode, Waker, Window, WindowConfig, run as run_window};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -60,17 +61,28 @@ impl Launcher {
     }
 
     fn open(&mut self, window: &Window) {
+        self.open_with(window, None);
+    }
+
+    fn open_with(&mut self, window: &Window, held: Option<Ui<Action>>) {
         let context = Gpu::open_window(&GpuRequest::default(), window.target())
             .unwrap_or_else(|error| panic!("the launcher opens its render device: {error}"));
         let (width, height) = window.size();
         let surface = context.surface(width, height);
-        self.session = Some(Session::new(context, surface));
+        self.session = Some(Session::new(context, surface, held));
         self.ime = false;
     }
 
     fn rebuild(&mut self, window: &Window) {
-        self.session = None;
-        self.open(window);
+        let held = self.session.take().map(|session| session.ui);
+        self.open_with(window, held);
+        self.redraw = true;
+    }
+
+    fn resurface(&mut self, window: &Window) {
+        if let Some(session) = self.session.as_mut() {
+            session.resurface(window);
+        }
         self.redraw = true;
     }
 
@@ -185,13 +197,13 @@ impl Launcher {
 
     fn frame(&mut self, window: &Window, _real: Duration) -> Flow {
         let lost = match self.session.as_mut() {
-            Some(session) => {
-                let events = session.events.poll();
-                if let Some(event) = events.iter().find(|event| event.fault().is_some()) {
-                    panic!("{event}");
+            Some(session) => match session.events.condition() {
+                GpuCondition::Healthy => false,
+                GpuCondition::Lost => true,
+                GpuCondition::Fault(message) => {
+                    panic!("the graphics device fails: {message}")
                 }
-                events.iter().any(|event| event.device_lost())
-            }
+            },
             None => false,
         };
         if lost {
@@ -238,9 +250,6 @@ impl Launcher {
         let Some(session) = self.session.as_mut() else {
             return Flow::Idle;
         };
-        if !session.adopts() {
-            session.renew();
-        }
         let element = {
             let mut ctx = session.ui.build();
             stage::build(&mut ctx, &state)
@@ -251,7 +260,7 @@ impl Launcher {
             Err(
                 GpuFailure::SurfaceOutdated | GpuFailure::SurfaceLost | GpuFailure::SurfaceFormat,
             ) => {
-                self.rebuild(window);
+                self.resurface(window);
                 return Flow::Continuous;
             }
             Err(GpuFailure::Fault(message)) => panic!("the graphics device fails: {message}"),
@@ -262,7 +271,7 @@ impl Launcher {
         };
         if frame.format() != session.ui.format() {
             frame.discard();
-            self.rebuild(window);
+            self.resurface(window);
             return Flow::Continuous;
         }
         let Session { context, ui, .. } = session;

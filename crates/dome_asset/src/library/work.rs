@@ -18,8 +18,9 @@ use dome_scene::{SkinData, SkinEntry};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::thread;
+use std::time::Duration;
 
 pub(super) struct Job {
     pub(super) scene: Scene,
@@ -259,6 +260,16 @@ impl Worker {
             Ok(outcome) => Some(outcome),
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => Some(Outcome::Failed(String::from(
+                "the asset worker stops before it loads the scene",
+            ))),
+        }
+    }
+
+    pub(super) fn wait(&self, timeout: Duration) -> Option<Outcome> {
+        match self.results.recv_timeout(timeout) {
+            Ok(outcome) => Some(outcome),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => Some(Outcome::Failed(String::from(
                 "the asset worker stops before it loads the scene",
             ))),
         }

@@ -8,7 +8,7 @@ use crate::gizmo::{Mode, Space};
 use crate::stage::State;
 
 pub(crate) fn build(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let metrics = theme.metrics;
 
     let outliner_role = if state.outliner_open {
@@ -26,7 +26,7 @@ pub(crate) fn build(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Elemen
         Mode::Scale => 2,
     };
     let modes = widget::icon_segmented(
-        &theme,
+        theme,
         &[
             (Icon::Fit, "Move (W)"),
             (Icon::Reset, "Rotate (E)"),

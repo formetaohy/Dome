@@ -186,6 +186,7 @@ impl Input {
                 }
                 Event::Cancel => {
                     self.cancelled = true;
+                    self.preedit = None;
                     for state in &mut self.buttons {
                         state.down = false;
                     }

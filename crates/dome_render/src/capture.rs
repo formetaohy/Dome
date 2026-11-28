@@ -66,6 +66,10 @@ impl CaptureProbe {
     pub fn captured(&mut self, transform: Transform) {
         self.captured = Some(transform);
     }
+
+    pub fn forget(&mut self) {
+        self.captured = None;
+    }
 }
 
 pub struct Capture {

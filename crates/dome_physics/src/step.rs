@@ -174,8 +174,8 @@ impl Simulation {
             cache::contact_key(
                 bodies[held.first].entity,
                 bodies[held.second].entity,
-                held.first_part,
-                held.second_part,
+                bodies[held.first].parts[held.first_part].entity,
+                bodies[held.second].parts[held.second_part].entity,
                 0,
             )
         });
@@ -206,21 +206,24 @@ impl Simulation {
             joint_solver::settle(self.table.bodies_mut(), &mut self.constraints);
         }
         self.links.clear();
-        self.links
-            .extend(self.contacts.iter().map(|held| (held.first, held.second)));
+        self.links.extend(
+            self.contacts
+                .iter()
+                .filter(|held| held.touching())
+                .map(|held| (held.first, held.second)),
+        );
         self.links.extend_from_slice(&self.pairs);
         self.islands
             .settle(self.table.bodies_mut(), &self.links, &self.driven, delta);
         self.cache.clear();
+        let bodies = self.table.bodies();
         for at in 0..self.contacts.len() {
             let held = &self.contacts[at];
-            let first = self.table.bodies()[held.first].entity;
-            let second = self.table.bodies()[held.second].entity;
             self.cache.insert(
-                first,
-                second,
-                held.first_part,
-                held.second_part,
+                bodies[held.first].entity,
+                bodies[held.second].entity,
+                bodies[held.first].parts[held.first_part].entity,
+                bodies[held.second].parts[held.second_part].entity,
                 solver::cache(held),
             );
         }

@@ -32,6 +32,8 @@ use work::Job;
 use work::Outcome;
 use work::Worker;
 
+const WAIT_SLICE: Duration = Duration::from_millis(50);
+
 pub struct Library {
     meshes: HashMap<String, MeshRecord>,
     materials: HashMap<String, MaterialRecord>,
@@ -187,6 +189,15 @@ impl Library {
     }
 
     pub fn poll(&mut self, renderer: &mut Renderer, budget: u64) -> Option<Refresh> {
+        self.poll_ready(renderer, budget, None)
+    }
+
+    fn poll_ready(
+        &mut self,
+        renderer: &mut Renderer,
+        budget: u64,
+        ready: Option<Outcome>,
+    ) -> Option<Refresh> {
         if let Some(mut held) = self.commit.take() {
             match held.run(self, renderer, budget) {
                 Some(refresh) => return Some(refresh),
@@ -199,7 +210,10 @@ impl Library {
         if !self.loading {
             return None;
         }
-        let outcome = self.worker.outcome()?;
+        let outcome = match ready {
+            Some(outcome) => outcome,
+            None => self.worker.outcome()?,
+        };
         self.loading = false;
         match outcome {
             Outcome::Prepared(prepared) => {
@@ -248,16 +262,24 @@ impl Library {
     ) -> WaitOutcome {
         assert!(self.loading(), "a library waits for the scene it loads");
         loop {
-            if cancelled() {
-                return WaitOutcome::Cancelled;
-            }
-            if Instant::now() >= deadline {
-                return WaitOutcome::Timeout;
-            }
             if let Some(refresh) = self.poll(renderer, budget) {
                 return WaitOutcome::Ready(refresh);
             }
-            std::thread::sleep(Duration::from_micros(100));
+            if self.commit.is_some() {
+                continue;
+            }
+            if cancelled() {
+                return WaitOutcome::Cancelled;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return WaitOutcome::Timeout;
+            }
+            if let Some(outcome) = self.worker.wait(remaining.min(WAIT_SLICE))
+                && let Some(refresh) = self.poll_ready(renderer, budget, Some(outcome))
+            {
+                return WaitOutcome::Ready(refresh);
+            }
         }
     }
 

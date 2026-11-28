@@ -293,6 +293,7 @@ impl Table {
 
     pub(crate) fn pairs(&mut self) {
         self.pairs.clear();
+        let bodies = &self.bodies;
         for index in 0..self.active.len() {
             let (at, aabb) = self.active[index];
             self.tree.query(aabb, &mut self.found, &mut self.stack);
@@ -300,7 +301,7 @@ impl Table {
                 if *other == at {
                     continue;
                 }
-                let pair = if *other < at {
+                let pair = if bodies[*other as usize].entity < bodies[at as usize].entity {
                     (*other, at)
                 } else {
                     (at, *other)
@@ -308,7 +309,12 @@ impl Table {
                 self.pairs.push(pair);
             }
         }
-        self.pairs.sort_unstable();
+        self.pairs.sort_unstable_by_key(|(first, second)| {
+            (
+                bodies[*first as usize].entity,
+                bodies[*second as usize].entity,
+            )
+        });
         self.pairs.dedup();
     }
 

@@ -265,12 +265,12 @@ pub fn combo<'a, A>(
     selected: usize,
     message: impl Fn(usize) -> A + 'static,
 ) -> Element<'a, A> {
-    let theme = *theme;
     let shown = labels.get(selected).cloned().unwrap_or_default();
     let height = theme.metrics.control_height;
     let label_font = theme.font(Level::Label);
     let text = theme.palette.on_surface;
     let chevron = theme.palette.on_surface_variant;
+    let painted = theme.clone();
     let anchor_width = match width {
         Length::Auto => Length::Fixed(120.0),
         _ => Length::Fill,
@@ -280,6 +280,7 @@ pub fn combo<'a, A>(
         ..Layout::row()
     })
     .view(shown, move |value: &String, painter, info| {
+        let theme = &painted;
         let look = theme
             .surface(Role::Field, State::Rest)
             .lerp(theme.surface(Role::Field, State::Hover), info.hover);
@@ -310,7 +311,7 @@ pub fn combo<'a, A>(
     let mut rows = Vec::with_capacity(labels.len());
     for (index, label) in labels.iter().enumerate() {
         rows.push(
-            super::menu_row(&theme, label, index == selected)
+            super::menu_row(theme, label, index == selected)
                 .key(Key::index(key_name.to_string(), index))
                 .press(message(index)),
         );

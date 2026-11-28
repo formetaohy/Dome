@@ -39,6 +39,14 @@ pub(crate) struct ContactPoint {
     rebound: f32,
 }
 
+impl Contact {
+    pub(crate) fn touching(&self) -> bool {
+        self.points
+            .iter()
+            .any(|point| point.separation <= LINEAR_SLOP)
+    }
+}
+
 pub(crate) fn contact(
     first: usize,
     second: usize,
@@ -73,8 +81,8 @@ pub(crate) fn contact(
             let cached = cache.take(
                 held.entity,
                 other.entity,
-                first_part,
-                second_part,
+                held.parts[first_part].entity,
+                other.parts[second_part].entity,
                 point.feature,
             );
             let (normal_impulse, tangent_impulse, carried) = match cached {

@@ -17,7 +17,7 @@ pub use binding::{BindGroup, BindGroupLayout, Binding, Resource};
 pub use buffer::{BufferBinding, BufferRange, BufferUsages, GpuBuffer};
 pub use command::{Count, DepthLoad, DepthOps, Draw, Pass, Scissor, Submission, Viewport};
 pub use context::{Device, Gpu, GpuRequest, GpuUnavailable, Queue};
-pub use event::{GpuEvent, GpuEventCursor};
+pub use event::{GpuCondition, GpuEvent, GpuEventCursor};
 pub use failure::GpuFailure;
 pub use identity::ResourceId;
 pub use pipeline::{ComputePipeline, GraphicsPipeline, PipelineState};

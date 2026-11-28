@@ -88,7 +88,7 @@ pub(crate) fn build(
         );
         let head = crate::outliner::header(ctx, state);
         let content = crate::outliner::body(ctx, state);
-        layers.push(sheet(*ctx.theme(), "outliner", rect, head, content));
+        layers.push(sheet(ctx.theme(), "outliner", rect, head, content));
     }
 
     if inspector_t > 0.005
@@ -102,7 +102,7 @@ pub(crate) fn build(
         );
         let head = crate::inspector::header(ctx, state, target);
         let content = crate::inspector::body(ctx, state, target);
-        layers.push(sheet(*ctx.theme(), "inspector", rect, head, content));
+        layers.push(sheet(ctx.theme(), "inspector", rect, head, content));
     }
 
     if let Some(dialog) = state.dialog {
@@ -123,7 +123,7 @@ pub(crate) fn build(
 }
 
 fn sheet(
-    theme: dome_ui::Theme,
+    theme: &dome_ui::Theme,
     name: &str,
     rect: Rect,
     header: Element<'static, Action>,

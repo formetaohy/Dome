@@ -50,7 +50,7 @@ fn a_user_interface_paints_its_surfaces_glyphs_and_scene() {
     ui.update(Vec2::splat(SIDE as f32), 1.0, 0.0);
     let element = {
         let ctx = ui.build();
-        let theme = *ctx.theme();
+        let theme = ctx.theme();
         Element::column()
             .key(Key::new("root"))
             .width(Length::Fill)

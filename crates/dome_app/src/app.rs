@@ -3,7 +3,8 @@ use dome_asset::{Change, Library, WaitOutcome, Watch};
 use dome_audio::Audio;
 use dome_ecs::{Entity, Schedule, System, World, propagate, propagate_step, snapshot};
 use dome_gpu::{
-    Gpu, GpuEventCursor, GpuFailure, GpuRequest, Surface, Texture, TextureFormat, TextureUsages,
+    Gpu, GpuCondition, GpuEventCursor, GpuFailure, GpuRequest, Surface, Texture, TextureFormat,
+    TextureUsages,
 };
 use dome_math::{Transform, Vec3};
 use dome_render::{Camera, Lines, Renderer, Target};
@@ -132,6 +133,7 @@ impl GpuHealth<'_> {
 }
 
 const ASSET_UPLOAD_BYTES: u64 = 8 << 20;
+const RECOVERY_POLL: Duration = Duration::from_millis(2);
 
 struct LiveScene {
     path: PathBuf,
@@ -145,37 +147,12 @@ struct LiveScene {
     requested: Option<Scene>,
     renew: bool,
     change: Change,
+    recovering: bool,
 }
 
 struct Reload {
     renew: bool,
     error: Option<String>,
-}
-
-enum GpuCondition {
-    Healthy,
-    Lost,
-    Fault(String),
-}
-
-fn gpu_condition(events: &mut GpuEventCursor) -> GpuCondition {
-    let events = events.poll();
-    let mut lost = false;
-    let mut fault = None;
-    for event in events {
-        lost |= event.device_lost();
-        if let Some(message) = event.fault() {
-            fault = Some(String::from(message));
-        }
-    }
-    if let Some(message) = fault {
-        return GpuCondition::Fault(message);
-    }
-    if lost {
-        GpuCondition::Lost
-    } else {
-        GpuCondition::Healthy
-    }
 }
 
 impl LiveScene {
@@ -239,7 +216,70 @@ impl LiveScene {
             requested,
             renew: false,
             change: Change::default(),
+            recovering: false,
         })
+    }
+
+    fn unload(&mut self) {
+        self.assets = Library::new();
+        self.sync.invalidate();
+        self.wanted = None;
+        self.requested = None;
+    }
+
+    fn recover(
+        &mut self,
+        renderer: &mut Renderer,
+        health: &GpuHealth<'_>,
+        world: &mut World,
+        load: AssetLoad,
+    ) -> Result<(), String> {
+        self.unload();
+        self.recovering = true;
+        if !load.blocking {
+            assert!(
+                self.assets.request(&self.scene),
+                "a recovered library loads its scene"
+            );
+            self.wanted = Some(self.scene.clone());
+            self.requested = Some(self.scene.clone());
+            return Ok(());
+        }
+        let outcome = self.assets.refresh(
+            &self.scene,
+            renderer,
+            ASSET_UPLOAD_BYTES,
+            Instant::now() + load.timeout,
+            || health.unhealthy(),
+        );
+        match outcome {
+            WaitOutcome::Ready(refresh) => {
+                assert!(
+                    refresh.applied,
+                    "a recovered library adopts the assets of its scene: {}",
+                    refresh.message(),
+                );
+                if !refresh.errors.is_empty() {
+                    self.messages.push(refresh.message());
+                }
+                self.sync
+                    .sync(&self.scene, world, &self.assets, &Changed::none());
+                for (_, probe) in world.iter_mut::<dome_render::CaptureProbe>() {
+                    probe.forget();
+                }
+                self.recovering = false;
+                Ok(())
+            }
+            WaitOutcome::Timeout => Err(format!(
+                "the scene {} recovers its assets within {:?}",
+                self.path.display(),
+                load.timeout,
+            )),
+            WaitOutcome::Cancelled => Err(format!(
+                "the scene {} recovers its assets while its device holds",
+                self.path.display(),
+            )),
+        }
     }
 
     fn update(
@@ -301,6 +341,12 @@ impl LiveScene {
         let failed = self.requested.take();
         if !refresh.applied {
             assert!(
+                !self.recovering,
+                "the scene {} adopts the assets it recovers: {}",
+                self.path.display(),
+                refresh.message(),
+            );
+            assert!(
                 self.sync.applied().is_some(),
                 "the library adopts the assets of its scene: {}",
                 refresh.message(),
@@ -321,6 +367,12 @@ impl LiveScene {
             self.sync
                 .sync(&requested, world, &self.assets, &refresh.changed);
             self.scene = requested.clone();
+            if self.recovering {
+                for (_, probe) in world.iter_mut::<dome_render::CaptureProbe>() {
+                    probe.forget();
+                }
+            }
+            self.recovering = false;
         }
         if self.wanted.as_ref() == Some(&requested) {
             self.wanted = None;
@@ -439,6 +491,21 @@ impl Session {
         Ok(())
     }
 
+    fn recover_scene(
+        &mut self,
+        mut live: LiveScene,
+        world: &mut World,
+        load: AssetLoad,
+    ) -> Result<(), String> {
+        let health = GpuHealth {
+            context: &self.context,
+            events: &self.events,
+        };
+        live.recover(&mut self.renderer, &health, world, load)?;
+        self.live = Some(live);
+        Ok(())
+    }
+
     fn reload(
         &mut self,
         world: &mut World,
@@ -467,6 +534,18 @@ impl Session {
         self.live
             .as_ref()
             .is_some_and(|live| live.sync.applied().is_some())
+    }
+
+    fn recovering(&self) -> bool {
+        self.live.as_ref().is_some_and(|live| live.recovering)
+    }
+
+    fn resurface(&mut self, window: &Window) -> bool {
+        let (width, height) = window.size();
+        let surface = self.context.surface(width, height);
+        let adopted = surface.format() == self.format;
+        self.presentation = Presentation::Window(Box::new(surface));
+        adopted
     }
 
     fn draw_window(
@@ -648,18 +727,14 @@ impl App {
             .resource::<Time>()
             .expect("an application keeps its time")
             .fixed_delta();
-        let mut started = Instant::now();
+        let started = Instant::now();
         let mut frame = 0u64;
         let mut screenshot = None;
         loop {
-            match gpu_condition(&mut session.events) {
+            match session.events.condition() {
                 GpuCondition::Healthy => {}
                 GpuCondition::Lost => {
-                    drop(session);
-                    session = self.restart_headless(&config);
-                    started = Instant::now();
-                    frame = 0;
-                    screenshot = None;
+                    session = self.restart_headless(&config, session);
                     continue;
                 }
                 GpuCondition::Fault(message) => panic!("the graphics device fails: {message}"),
@@ -693,14 +768,10 @@ impl App {
             }
             dome_render::install_captures(&mut self.world, session.renderer.take_captures());
             if last {
-                match gpu_condition(&mut session.events) {
+                match session.events.condition() {
                     GpuCondition::Healthy => break,
                     GpuCondition::Lost => {
-                        drop(session);
-                        session = self.restart_headless(&config);
-                        started = Instant::now();
-                        frame = 0;
-                        screenshot = None;
+                        session = self.restart_headless(&config, session);
                         continue;
                     }
                     GpuCondition::Fault(message) => {
@@ -719,18 +790,25 @@ impl App {
         screenshot
     }
 
-    fn reset(&mut self) {
-        self.world = Self::fresh_world(self.config.fixed_hz);
-        self.reload = None;
-        self.started = false;
-        self.startup_pending = false;
-        self.loading_camera = None;
-    }
-
-    fn restart_headless(&mut self, config: &HeadlessConfig) -> Session {
-        self.reset();
+    fn restart_headless(&mut self, config: &HeadlessConfig, mut previous: Session) -> Session {
+        let mut live = previous.live.take();
+        if let Some(live) = &mut live {
+            live.unload();
+        }
+        drop(previous);
         let mut session = Session::headless(config.width, config.height, &self.config.gpu);
-        self.start(&mut session, true, config.asset_timeout);
+        if let Some(live) = live {
+            session
+                .recover_scene(
+                    live,
+                    &mut self.world,
+                    AssetLoad {
+                        blocking: true,
+                        timeout: config.asset_timeout,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
         session
     }
 
@@ -902,7 +980,7 @@ impl Handler for App {
         let Some(mut session) = self.session.take() else {
             return Flow::Continuous;
         };
-        match gpu_condition(&mut session.events) {
+        match session.events.condition() {
             GpuCondition::Healthy => {}
             GpuCondition::Lost => {
                 self.recover_window(window, session);
@@ -915,9 +993,15 @@ impl Handler for App {
                 self.session = Some(session);
                 flow
             }
-            Err(
-                GpuFailure::SurfaceOutdated | GpuFailure::SurfaceLost | GpuFailure::SurfaceFormat,
-            ) => {
+            Err(GpuFailure::SurfaceOutdated | GpuFailure::SurfaceLost) => {
+                if session.resurface(window) {
+                    self.session = Some(session);
+                } else {
+                    self.recover_window(window, session);
+                }
+                Flow::Continuous
+            }
+            Err(GpuFailure::SurfaceFormat) => {
                 self.recover_window(window, session);
                 Flow::Continuous
             }
@@ -942,11 +1026,25 @@ impl Handler for App {
 }
 
 impl App {
-    fn recover_window(&mut self, window: &Window, session: Session) {
-        drop(session);
-        self.reset();
+    fn recover_window(&mut self, window: &Window, mut previous: Session) {
+        let mut live = previous.live.take();
+        if let Some(live) = &mut live {
+            live.unload();
+        }
+        drop(previous);
         let mut session = Session::window(window, &self.config.gpu);
-        self.start(&mut session, window.has_focus(), Duration::ZERO);
+        if let Some(live) = live {
+            session
+                .recover_scene(
+                    live,
+                    &mut self.world,
+                    AssetLoad {
+                        blocking: false,
+                        timeout: Duration::ZERO,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
         self.session = Some(session);
     }
 
@@ -981,6 +1079,9 @@ impl App {
             .expect("an application keeps its clear color")
             .0;
         self.sync_debug();
+        if session.recovering() {
+            return Ok(Flow::Wait(RECOVERY_POLL));
+        }
         session.draw_window(&mut self.world, clear, width, height)?;
         dome_render::install_captures(&mut self.world, session.renderer.take_captures());
         Ok(if exit { Flow::Exit } else { Flow::Continuous })

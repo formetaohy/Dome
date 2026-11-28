@@ -68,12 +68,12 @@ pub struct Queue {
 }
 
 pub(crate) type Recreate =
-    Box<dyn Fn() -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError>>;
+    Arc<dyn Fn() -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError>>;
 
 pub struct Gpu {
     device: Device,
     surface: Mutex<Option<wgpu::Surface<'static>>>,
-    recreate: Mutex<Option<Recreate>>,
+    recreate: Option<Recreate>,
 }
 
 static INSTANCE: LazyLock<wgpu::Instance> = LazyLock::new(|| {
@@ -109,7 +109,7 @@ impl Gpu {
             return Ok(Self {
                 device: Device { state },
                 surface: Mutex::new(None),
-                recreate: Mutex::new(None),
+                recreate: None,
             });
         }
         let device = Device::open(request, None)?;
@@ -117,7 +117,7 @@ impl Gpu {
         Ok(Self {
             device,
             surface: Mutex::new(None),
-            recreate: Mutex::new(None),
+            recreate: None,
         })
     }
 
@@ -133,9 +133,9 @@ impl Gpu {
         Ok(Self {
             device,
             surface: Mutex::new(Some(surface)),
-            recreate: Mutex::new(Some(Box::new(move || {
+            recreate: Some(Arc::new(move || {
                 crate::surface::create(instance, held.clone())
-            }))),
+            })),
         })
     }
 
@@ -166,19 +166,27 @@ impl Gpu {
     }
 
     pub fn surface(&self, width: u32, height: u32) -> Surface {
-        let native = self
+        let recreate = self
+            .recreate
+            .clone()
+            .expect("a swapchain device recreates its surface");
+        let native = match self
             .surface
             .lock()
             .expect("a present surface is never poisoned")
             .take()
-            .expect("a device opens one swapchain for its window");
-        let recreate = self
-            .recreate
-            .lock()
-            .expect("a present surface recreation is never poisoned")
-            .take()
-            .expect("a swapchain device recreates its surface");
-        Surface::new(self.device.clone(), native, recreate, width, height)
+        {
+            Some(native) => native,
+            None => (recreate)()
+                .unwrap_or_else(|error| panic!("the present surface reopens its window: {error}")),
+        };
+        Surface::new(
+            self.device.clone(),
+            native,
+            Arc::clone(&recreate),
+            width,
+            height,
+        )
     }
 }
 
@@ -202,7 +210,9 @@ impl Device {
             )));
         }
         let limits = adapter.limits();
-        let tables = crate::table::TableCapacity::of(&limits);
+        let tables = crate::table::TableCapacity::of(&limits).ok_or_else(|| {
+            GpuUnavailable::NoAdapter(format!("the adapter binds no resource tables: {limits:?}"))
+        })?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("dome"),
             required_features: REQUIRED_FEATURES,

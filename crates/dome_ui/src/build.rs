@@ -6,15 +6,11 @@ use crate::geometry::{Band, Edges};
 use crate::icon::{Icon, IconStyle};
 use crate::style::Surface;
 use crate::text::TextStyle;
-use crate::theme::{Role, Theme, TypeStyle};
+use crate::theme::{Role, TypeStyle};
 use crate::ui::BuildContext;
 use crate::widget;
 
 impl<'a, A> BuildContext<'a, A> {
-    fn copy(&self) -> Theme {
-        *self.theme()
-    }
-
     pub fn text<'e>(&self, value: impl Into<String>, style: TextStyle) -> Element<'e, A> {
         text(value, style)
     }
@@ -34,11 +30,11 @@ impl<'a, A> BuildContext<'a, A> {
     }
 
     pub fn button<'e>(&self, label: &str, role: Role) -> Element<'e, A> {
-        widget::button(&self.copy(), label, role)
+        widget::button(self.theme(), label, role)
     }
 
     pub fn button_width<'e>(&self, label: &str, role: Role, width: Length) -> Element<'e, A> {
-        widget::button_width(&self.copy(), label, role, width)
+        widget::button_width(self.theme(), label, role, width)
     }
 
     pub fn button_enabled<'e>(
@@ -48,11 +44,11 @@ impl<'a, A> BuildContext<'a, A> {
         width: Length,
         enabled: bool,
     ) -> Element<'e, A> {
-        widget::button_enabled(&self.copy(), label, role, width, enabled)
+        widget::button_enabled(self.theme(), label, role, width, enabled)
     }
 
     pub fn action_button<'e>(&self, symbol: Icon, label: &str, role: Role) -> Element<'e, A> {
-        widget::action_button(&self.copy(), symbol, label, role)
+        widget::action_button(self.theme(), symbol, label, role)
     }
 
     pub fn icon_button<'e>(
@@ -69,7 +65,7 @@ impl<'a, A> BuildContext<'a, A> {
     where
         A: Clone,
     {
-        widget::split_button(&self.copy(), spec)
+        widget::split_button(self.theme(), spec)
     }
 
     pub fn field<'e>(
@@ -90,7 +86,7 @@ impl<'a, A> BuildContext<'a, A> {
         logarithmic: bool,
         readout: &str,
     ) -> Element<'e, A> {
-        widget::slider_readout(&self.copy(), label, value, range, logarithmic, readout)
+        widget::slider_readout(self.theme(), label, value, range, logarithmic, readout)
     }
 
     pub fn slider_sized<'e>(
@@ -101,7 +97,7 @@ impl<'a, A> BuildContext<'a, A> {
         logarithmic: bool,
         width: Length,
     ) -> Element<'e, A> {
-        widget::slider_sized(&self.copy(), label, value, range, logarithmic, width)
+        widget::slider_sized(self.theme(), label, value, range, logarithmic, width)
     }
 
     pub fn range_slider<'e>(
@@ -115,7 +111,7 @@ impl<'a, A> BuildContext<'a, A> {
     }
 
     pub fn drag_value<'e>(&self, value: f32, decimals: usize) -> Element<'e, A> {
-        widget::drag_value(&self.copy(), value, decimals)
+        widget::drag_value(self.theme(), value, decimals)
     }
 
     pub fn progress<'e>(&self, fraction: f32, width: f32) -> Element<'e, A> {
@@ -127,39 +123,39 @@ impl<'a, A> BuildContext<'a, A> {
     }
 
     pub fn toggle<'e>(&self, value: bool) -> Element<'e, A> {
-        widget::toggle(&self.copy(), value)
+        widget::toggle(self.theme(), value)
     }
 
     pub fn toggle_row<'e>(&self, label: &str, value: bool) -> Element<'e, A> {
-        widget::toggle_row(&self.copy(), label, value)
+        widget::toggle_row(self.theme(), label, value)
     }
 
     pub fn checkbox<'e>(&self, label: &str, value: bool) -> Element<'e, A> {
-        widget::checkbox(&self.copy(), label, value)
+        widget::checkbox(self.theme(), label, value)
     }
 
     pub fn segmented<'e>(&self, options: &[&str], selected: usize) -> Element<'e, A> {
-        widget::segmented(&self.copy(), options, selected)
+        widget::segmented(self.theme(), options, selected)
     }
 
     pub fn segmented_fill<'e>(&self, options: &[&str], selected: usize) -> Element<'e, A> {
-        widget::segmented_fill(&self.copy(), options, selected)
+        widget::segmented_fill(self.theme(), options, selected)
     }
 
     pub fn icon_segmented<'e>(&self, options: &[(Icon, &str)], selected: usize) -> Element<'e, A> {
-        widget::icon_segmented(&self.copy(), options, selected)
+        widget::icon_segmented(self.theme(), options, selected)
     }
 
     pub fn tabs<'e>(&self, options: &[&str], selected: usize) -> Element<'e, A> {
-        widget::tabs(&self.copy(), options, selected)
+        widget::tabs(self.theme(), options, selected)
     }
 
     pub fn caption<'e>(&self, text: &str) -> Element<'e, A> {
-        widget::caption(&self.copy(), text)
+        widget::caption(self.theme(), text)
     }
 
     pub fn weak<'e>(&self, text: &str) -> Element<'e, A> {
-        widget::weak(&self.copy(), text)
+        widget::weak(self.theme(), text)
     }
 
     pub fn badge<'e>(&self, label: &str, tint: Color) -> Element<'e, A> {
@@ -167,7 +163,7 @@ impl<'a, A> BuildContext<'a, A> {
     }
 
     pub fn labelled<'e>(&self, label: &str, value: &str) -> Element<'e, A> {
-        widget::labelled(&self.copy(), label, value)
+        widget::labelled(self.theme(), label, value)
     }
 
     pub fn spinner<'e>(&self, size: f32) -> Element<'e, A> {
@@ -184,13 +180,13 @@ impl<'a, A> BuildContext<'a, A> {
 
     pub fn label_style(&self) -> TextStyle {
         TextStyle::new(
-            self.copy().label_font(),
-            self.copy().palette.on_surface_variant,
+            self.theme().label_font(),
+            self.theme().palette.on_surface_variant,
         )
     }
 
     pub fn font(&self, level: crate::theme::Level) -> TypeStyle {
-        self.copy().font(level)
+        self.theme().font(level)
     }
 
     pub fn action_row<'e>(
@@ -199,7 +195,7 @@ impl<'a, A> BuildContext<'a, A> {
         label: &str,
         shortcut: Option<&str>,
     ) -> Element<'e, A> {
-        widget::action_row(&self.copy(), symbol, label, shortcut)
+        widget::action_row(self.theme(), symbol, label, shortcut)
     }
 
     pub fn disclosure_row<'e>(
@@ -211,11 +207,11 @@ impl<'a, A> BuildContext<'a, A> {
         angle: f32,
         band: Band,
     ) -> Element<'e, A> {
-        widget::disclosure_row(&self.copy(), symbol, label, detail, open, angle, band)
+        widget::disclosure_row(self.theme(), symbol, label, detail, open, angle, band)
     }
 
     pub fn menu_row<'e>(&self, label: &str, checked: bool) -> Element<'e, A> {
-        widget::menu_row(&self.copy(), label, checked)
+        widget::menu_row(self.theme(), label, checked)
     }
 
     pub fn card<'e>(
@@ -225,7 +221,7 @@ impl<'a, A> BuildContext<'a, A> {
         gap: f32,
         children: impl IntoIterator<Item = Element<'e, A>>,
     ) -> Element<'e, A> {
-        widget::card(&self.copy(), role, padding, gap, children)
+        widget::card(self.theme(), role, padding, gap, children)
     }
 
     pub fn group_card<'e>(
@@ -236,11 +232,11 @@ impl<'a, A> BuildContext<'a, A> {
         gap: f32,
         children: impl IntoIterator<Item = Element<'e, A>>,
     ) -> Element<'e, A> {
-        widget::group_card(&self.copy(), slot, active, padding, gap, children)
+        widget::group_card(self.theme(), slot, active, padding, gap, children)
     }
 
     pub fn group_surface(&self, slot: (usize, usize), active: bool) -> Surface {
-        widget::group_surface(&self.copy(), slot, active)
+        widget::group_surface(self.theme(), slot, active)
     }
 
     pub fn card_title<'e>(
@@ -249,18 +245,18 @@ impl<'a, A> BuildContext<'a, A> {
         title: &str,
         detail: Option<&str>,
     ) -> Element<'e, A> {
-        widget::card_title(&self.copy(), symbol, title, detail)
+        widget::card_title(self.theme(), symbol, title, detail)
     }
 
     pub fn section_header<'e>(&self, title: &str, detail: Option<&str>) -> Element<'e, A> {
-        widget::section_header(&self.copy(), title, detail)
+        widget::section_header(self.theme(), title, detail)
     }
 
     pub fn form_row<'e>(&self, width: f32, label: &str, content: Element<'e, A>) -> Element<'e, A> {
-        widget::form_row(&self.copy(), width, label, content)
+        widget::form_row(self.theme(), width, label, content)
     }
 
     pub fn empty_state<'e>(&self, symbol: Icon, title: &str) -> Element<'e, A> {
-        widget::empty_state(&self.copy(), symbol, title)
+        widget::empty_state(self.theme(), symbol, title)
     }
 }

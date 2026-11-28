@@ -267,7 +267,7 @@ impl Typography {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     pub palette: Palette,
     pub typography: Typography,

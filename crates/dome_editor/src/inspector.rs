@@ -14,7 +14,7 @@ pub(crate) fn header(
     state: &State<'_>,
     target: &Target,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let palette = theme.palette;
     let id = target_id(target);
     let (symbol, is_prefab) = match target {
@@ -122,7 +122,7 @@ fn inspect_node(
     target: &Target,
     id: &str,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme().clone();
     let Some(index) = state.scene.node_index(id) else {
         return Element::column();
     };
@@ -180,7 +180,7 @@ fn spatial_card(
     target: &Target,
     index: usize,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let node = &scene.nodes()[index];
     let mut rows = Vec::new();
 
@@ -202,7 +202,7 @@ fn spatial_card(
             let selected = values.iter().position(|id| *id == current).unwrap_or(0);
             let t = target.clone();
             let parent_combo = widget::combo(
-                &theme,
+                theme,
                 Key::new(format!("node.parent.{}", node.id)),
                 Length::Fill,
                 210.0,
@@ -254,7 +254,7 @@ fn component_card(
     spec: &'static ComponentSpec,
     slot: (usize, usize),
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme().clone();
     let section_id = format!("{target}.{}", spec.name);
     let open = !state.collapsed_sections.contains(&section_id);
     let angle = ctx.animate(
@@ -312,10 +312,10 @@ fn add_component_menu(
     target: &Target,
     specs: &[&'static ComponentSpec],
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let anchor = Key::new(format!("inspector.add_comp.{target}"));
     let open = ctx.popup_open(anchor);
-    let button = widget::action_button(&theme, Icon::Plus, "Component", Role::Tonal)
+    let button = widget::action_button(theme, Icon::Plus, "Component", Role::Tonal)
         .key(anchor)
         .width(Length::Fill)
         .shaped(if open {
@@ -328,7 +328,7 @@ fn add_component_menu(
     let mut items = Vec::with_capacity(specs.len());
     for spec in specs {
         items.push(
-            widget::action_row(&theme, component_icon(spec.name), spec.label, None)
+            widget::action_row(theme, component_icon(spec.name), spec.label, None)
                 .key(Key::new(format!(
                     "inspector.add_comp.{target}.{}",
                     spec.name
@@ -349,7 +349,7 @@ fn inspect_asset(
     state: &State<'_>,
     target: &Target,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let enabled = state.scene.prefab_owner(target).is_none();
     let mut blocks = Vec::new();
 
@@ -363,7 +363,7 @@ fn inspect_asset(
             _ => 148.0,
         };
         blocks.push(widget::thumbnail(
-            &theme,
+            theme,
             &texture,
             Length::Fill,
             Length::Fixed(height),
@@ -390,7 +390,7 @@ fn inspect_asset(
             let mut cards = Vec::with_capacity(groups.len());
             for (slot, group) in groups.into_iter().enumerate() {
                 cards.push(widget::group_card(
-                    &theme,
+                    theme,
                     (slot, groups.len()),
                     false,
                     Edges::all(10.0),
@@ -421,7 +421,7 @@ fn inspect_asset(
                             .width(Length::Fill)
                             .padding(Edges::all(12.0))
                             .background(theme.surface(Role::Card, UiState::Rest))
-                            .children([widget::labelled(&theme, "Source", model.as_str())]),
+                            .children([widget::labelled(theme, "Source", model.as_str())]),
                     );
                 }
             }
@@ -492,7 +492,7 @@ fn asset_card(
     fields: &[dome_scene::Field],
     enabled: bool,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     Element::column()
         .width(Length::Fill)
         .padding(Edges::all(10.0))

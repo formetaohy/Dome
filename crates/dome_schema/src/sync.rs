@@ -38,6 +38,10 @@ impl SceneSync {
         self.applied.as_ref()
     }
 
+    pub fn invalidate(&mut self) {
+        self.applied = None;
+    }
+
     pub fn entity(&self, index: usize) -> Option<Entity> {
         self.entities.get(index).copied()
     }

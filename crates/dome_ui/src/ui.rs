@@ -117,6 +117,12 @@ impl<A: Clone> Ui<A> {
         }
     }
 
+    pub fn rebind(&mut self, device: &Device, queue: &Queue, format: TextureFormat) {
+        self.renderer = Renderer::new(device, queue, format);
+        self.textures = Textures::new(device, queue);
+        self.invalidate();
+    }
+
     pub fn theme(&self) -> &Theme {
         &self.theme
     }

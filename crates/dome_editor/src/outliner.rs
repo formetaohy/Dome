@@ -11,12 +11,12 @@ pub(crate) fn header(
     ctx: &BuildContext<'_, Action>,
     state: &State<'_>,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let tab_index = match state.tab {
         Tab::Scene => 0,
         Tab::Asset => 1,
     };
-    let switcher = widget::tabs(&theme, &["Nodes", "Assets"], tab_index)
+    let switcher = widget::tabs(theme, &["Nodes", "Assets"], tab_index)
         .key(Key::new("outliner.tabs"))
         .width(Length::Fill)
         .on_segment(|at| {
@@ -48,56 +48,56 @@ pub(crate) fn header(
             204.0,
             [
                 menu_action(
-                    &theme,
+                    theme,
                     "add.node.mesh",
                     Icon::Cube,
                     "Mesh",
                     Action::CreateNode(NodeKind::Mesh),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.node.sun",
                     Icon::Sparkles,
                     "Directional Light",
                     Action::CreateNode(NodeKind::Sun),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.node.lamp",
                     Icon::Record,
                     "Point Light",
                     Action::CreateNode(NodeKind::PointLight),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.node.camera",
                     Icon::Camera,
                     "Camera",
                     Action::CreateNode(NodeKind::Camera),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.node.probe",
                     Icon::Globe,
                     "Environment Probe",
                     Action::CreateNode(NodeKind::Probe),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.node.empty",
                     Icon::Layers,
                     "Empty",
                     Action::CreateNode(NodeKind::Empty),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.node.prefab",
                     Icon::Folder,
                     "Prefab…",
                     Action::OpenDialog(PathKind::Prefab),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.node.model",
                     Icon::Export,
                     "Model…",
@@ -109,42 +109,42 @@ pub(crate) fn header(
         Tab::Asset => {
             let mut items = vec![
                 menu_action(
-                    &theme,
+                    theme,
                     "add.asset.mesh",
                     Icon::Cube,
                     "Mesh",
                     Action::CreateAsset(AssetKind::Mesh),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.asset.material",
                     Icon::Sliders,
                     "Material",
                     Action::CreateAsset(AssetKind::Material),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.asset.atmosphere",
                     Icon::Sparkles,
                     "Sky Atmosphere",
                     Action::CreateAsset(AssetKind::Atmosphere),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.asset.panorama",
                     Icon::Globe,
                     "Panorama…",
                     Action::OpenDialog(PathKind::Panorama),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.asset.image",
                     Icon::Camera,
                     "Image…",
                     Action::OpenDialog(PathKind::Image),
                 ),
                 menu_action(
-                    &theme,
+                    theme,
                     "add.asset.sound",
                     Icon::Channel,
                     "Sound…",
@@ -153,7 +153,7 @@ pub(crate) fn header(
             ];
             if !state.scene.animations().is_empty() {
                 items.push(menu_action(
-                    &theme,
+                    theme,
                     "add.asset.graph",
                     Icon::Chart,
                     "Animation Graph",
@@ -220,12 +220,12 @@ fn walk_visible(
 }
 
 fn nodes_tree(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let palette = theme.palette;
     let metrics = theme.metrics;
     let visible = collect_visible(state.scene, state.collapsed_branches);
     if visible.is_empty() {
-        return empty_icon(&theme, Icon::Layers);
+        return empty_icon(theme, Icon::Layers);
     }
     let count = visible.len();
     let mut rows = Vec::with_capacity(count);
@@ -457,7 +457,7 @@ impl Category {
 }
 
 fn assets_list(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let palette = theme.palette;
     let metrics = theme.metrics;
     let mut groups = Vec::new();
@@ -490,7 +490,7 @@ fn assets_list(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Element<'st
                 }),
                 ..base
             };
-            let lead = asset_lead(&theme, state.scene, &target, selected);
+            let lead = asset_lead(theme, state.scene, &target, selected);
             let text_color = if selected {
                 palette.on_primary_container
             } else {
@@ -547,7 +547,7 @@ fn assets_list(ctx: &BuildContext<'_, Action>, state: &State<'_>) -> Element<'st
     }
 
     if groups.is_empty() {
-        return empty_icon(&theme, Icon::Folder);
+        return empty_icon(theme, Icon::Folder);
     }
 
     Element::column()

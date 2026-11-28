@@ -7,12 +7,12 @@ use std::time::{Duration, Instant};
 use dome_animation::{Comparison, Parameter};
 use dome_asset::{Import, Watch};
 use dome_ecs::Entity;
-use dome_gpu::{Gpu, GpuFailure, GpuRequest, Submission};
+use dome_gpu::{Gpu, GpuCondition, GpuFailure, GpuRequest, Submission};
 use dome_math::{Quat, Rect, Transform, Vec2, Vec3};
 use dome_project::Project;
 use dome_scene::{Atmosphere, Delta, Node, ReferenceKind, Scene, Shape, Target, Value};
 use dome_schema::Registry;
-use dome_ui::InputKey as Key;
+use dome_ui::{InputKey as Key, Ui};
 use dome_window::{
     Event, Flow, Handler, KeyCode, ModifiersState, MouseButton, Waker, Window, WindowConfig,
     run as run_window,
@@ -193,24 +193,45 @@ impl Editor {
     }
 
     fn open(&mut self, window: &Window) {
+        self.open_with(window, None);
+    }
+
+    fn open_with(&mut self, window: &Window, held: Option<Ui<Action>>) {
         let context = Gpu::open_window(&GpuRequest::default(), window.target())
             .unwrap_or_else(|error| panic!("the editor opens its render device: {error}"));
         let (width, height) = window.size();
         let surface = context.surface(width, height);
         let mut preview = Preview::new(&context, &self.scene, Arc::clone(&self.registry));
         preview.set_debug(self.debug);
-        self.session = Some(Session::new(context, surface, preview, &self.scene));
+        self.session = Some(Session::new(context, surface, preview, &self.scene, held));
         self.ime = false;
         self.sync_title(window);
     }
 
     fn rebuild(&mut self, window: &Window) {
+        self.settle_editing();
         self.viewport_texture = None;
         self.viewport_rendered = None;
         self.textures_at = None;
-        self.session = None;
-        self.open(window);
+        let held = self.session.take().map(|session| session.ui);
+        self.open_with(window, held);
         self.redraw = true;
+    }
+
+    fn resurface(&mut self, window: &Window) {
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        if session.resurface(window, &self.scene) {
+            self.textures_at = None;
+        }
+        self.redraw = true;
+    }
+
+    fn settle_editing(&mut self) {
+        self.finish_drag();
+        self.commit();
+        self.finish_property();
     }
 
     fn fail(&mut self, text: impl Into<String>) {
@@ -285,9 +306,7 @@ impl Editor {
     }
 
     fn write(&mut self, over: bool) -> bool {
-        self.finish_drag();
-        self.commit();
-        self.finish_property();
+        self.settle_editing();
         let written = if over {
             self.document.write_over(&self.scene)
         } else {
@@ -313,9 +332,7 @@ impl Editor {
     }
 
     fn reread(&mut self) {
-        self.finish_drag();
-        self.commit();
-        self.finish_property();
+        self.settle_editing();
         let registry = self.scene.schema_arc();
         let name = self
             .path
@@ -1069,13 +1086,13 @@ impl Editor {
             return Flow::Exit;
         }
         let lost = match self.session.as_mut() {
-            Some(session) => {
-                let events = session.events.poll();
-                if let Some(event) = events.iter().find(|event| event.fault().is_some()) {
-                    panic!("{event}");
+            Some(session) => match session.events.condition() {
+                GpuCondition::Healthy => false,
+                GpuCondition::Lost => true,
+                GpuCondition::Fault(message) => {
+                    panic!("the graphics device fails: {message}")
                 }
-                events.iter().any(|event| event.device_lost())
-            }
+            },
             None => false,
         };
         if lost {
@@ -1110,12 +1127,6 @@ impl Editor {
             self.fail(error);
         }
         self.sync_title(window);
-        if let Some(session) = self.session.as_mut()
-            && !session.adopts()
-        {
-            session.renew(&self.scene);
-            redraw = true;
-        }
         let busy = self.session.as_ref().is_some_and(|session| {
             session.preview.loading() || session.preview.capturing() || session.preview.playing()
         });
@@ -1242,7 +1253,7 @@ impl Editor {
             Err(
                 GpuFailure::SurfaceOutdated | GpuFailure::SurfaceLost | GpuFailure::SurfaceFormat,
             ) => {
-                self.rebuild(window);
+                self.resurface(window);
                 return Flow::Continuous;
             }
             Err(GpuFailure::Fault(message)) => panic!("the graphics device fails: {message}"),
@@ -1253,7 +1264,7 @@ impl Editor {
         };
         if frame.format() != session.ui.format() {
             frame.discard();
-            self.rebuild(window);
+            self.resurface(window);
             return Flow::Continuous;
         }
         let Session { context, ui, .. } = session;

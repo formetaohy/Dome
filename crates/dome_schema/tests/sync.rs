@@ -104,6 +104,21 @@ fn a_scene_sync_follows_the_structure_it_edits() {
     assert!(world.is_alive(c));
     assert_eq!(world.get::<Parent>(b).map(Parent::entity), Some(c));
 
+    world.insert(
+        a,
+        LocalTransform(Transform::from_translation(Vec3::new(9.0, 0.0, 0.0))),
+    );
+    sync.invalidate();
+    sync.sync(&scene, &mut world, &NoAssets, &Changed::none());
+    assert_eq!(sync.id("a"), Some(a));
+    assert_eq!(world.get::<Ticks>(a), Some(&Ticks(7)));
+    assert_eq!(
+        world.get::<LocalTransform>(a),
+        Some(&LocalTransform(Transform::from_translation(Vec3::new(
+            2.0, 0.0, 0.0
+        )))),
+    );
+
     edit(&mut scene, |edit| {
         edit.insert_node(dome_scene::Node::new("d"))
     })

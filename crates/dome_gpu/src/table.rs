@@ -18,17 +18,13 @@ pub struct TableCapacity {
 }
 
 impl TableCapacity {
-    pub fn of(limits: &wgpu::Limits) -> Self {
+    pub fn of(limits: &wgpu::Limits) -> Option<Self> {
         let textures = (limits.max_binding_array_elements_per_shader_stage / ARRAYS_PER_STAGE)
             .min(TEXTURE_TABLE_CAPACITY);
         let samplers = (limits.max_binding_array_sampler_elements_per_shader_stage
             / ARRAYS_PER_STAGE)
             .min(SAMPLER_TABLE_CAPACITY);
-        assert!(
-            textures > 0 && samplers > 0,
-            "the device binds {textures} images and {samplers} samplers through its resource tables",
-        );
-        Self { textures, samplers }
+        (textures > 0 && samplers > 0).then_some(Self { textures, samplers })
     }
 
     pub fn texture_count(self) -> Option<NonZeroU32> {

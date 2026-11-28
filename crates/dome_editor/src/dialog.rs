@@ -17,7 +17,7 @@ pub(crate) fn toast(
     screen: Vec2,
     message: &Message,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let palette = theme.palette;
     let (container, ink, symbol) = match message.kind() {
         MessageKind::Error => (
@@ -71,7 +71,7 @@ pub(crate) fn confirm(
     screen: Vec2,
     confirm: Confirm,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let palette = theme.palette;
     let heading = Element::row()
         .width(Length::Fill)
@@ -106,11 +106,11 @@ pub(crate) fn confirm(
         .align(Align::Center)
         .gap(8.0)
         .children([
-            widget::button(&theme, "Cancel", Role::Standard)
+            widget::button(theme, "Cancel", Role::Standard)
                 .key(Key::new("confirm.cancel"))
                 .press(Action::DismissConfirm),
             widget::button(
-                &theme,
+                theme,
                 confirm.confirm_label(),
                 if confirm.loses_edits() {
                     Role::Standard
@@ -153,7 +153,7 @@ pub(crate) fn modal(
     screen: Vec2,
     dialog: &PathDialog,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let palette = theme.palette;
     let (symbol, title) = match dialog.kind {
         PathKind::Model => (Icon::Export, "Model"),
@@ -221,10 +221,10 @@ pub(crate) fn modal(
         .align(Align::Center)
         .gap(8.0)
         .children([
-            widget::button(&theme, "Cancel", Role::Standard)
+            widget::button(theme, "Cancel", Role::Standard)
                 .key(Key::new("dialog.cancel"))
                 .press(Action::CloseDialog),
-            widget::action_button(&theme, Icon::Check, "Open", Role::Filled)
+            widget::action_button(theme, Icon::Check, "Open", Role::Filled)
                 .key(Key::new("dialog.confirm"))
                 .press(Action::SubmitDialog),
         ]);

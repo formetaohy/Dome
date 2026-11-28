@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 pub(crate) struct ContactCache {
-    points: HashMap<(Entity, Entity, usize, usize, u64), CachedPoint>,
+    points: HashMap<(Entity, Entity, Entity, Entity, u64), CachedPoint>,
 }
 
 #[derive(Clone, Copy)]
@@ -27,8 +27,8 @@ impl ContactCache {
         &mut self,
         first: Entity,
         second: Entity,
-        first_part: usize,
-        second_part: usize,
+        first_part: Entity,
+        second_part: Entity,
         feature: u64,
     ) -> Option<CachedPoint> {
         self.points.remove(&contact_key(
@@ -44,8 +44,8 @@ impl ContactCache {
         &mut self,
         first: Entity,
         second: Entity,
-        first_part: usize,
-        second_part: usize,
+        first_part: Entity,
+        second_part: Entity,
         points: impl IntoIterator<Item = (u64, CachedPoint)>,
     ) {
         for (feature, point) in points {
@@ -60,10 +60,10 @@ impl ContactCache {
 pub(crate) fn contact_key(
     first: Entity,
     second: Entity,
-    first_part: usize,
-    second_part: usize,
+    first_part: Entity,
+    second_part: Entity,
     feature: u64,
-) -> (Entity, Entity, usize, usize, u64) {
+) -> (Entity, Entity, Entity, Entity, u64) {
     if first <= second {
         (first, second, first_part, second_part, feature)
     } else {

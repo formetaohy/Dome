@@ -36,7 +36,7 @@ pub(crate) fn build(
 }
 
 fn body(ctx: &mut BuildContext<'_, Action>, state: &State<'_>) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let palette = theme.palette;
     let rows = state.catalog.entries().len();
     let content = if rows == 0 {
@@ -45,7 +45,7 @@ fn body(ctx: &mut BuildContext<'_, Action>, state: &State<'_>) -> Element<'stati
             .height(Length::Fill)
             .align(Align::Center)
             .justify(Align::Center)
-            .children([widget::empty_state(&theme, Icon::Folder, "No projects yet")])
+            .children([widget::empty_state(theme, Icon::Folder, "No projects yet")])
     } else {
         ctx.scroll(
             Key::new("launcher.projects"),
@@ -60,7 +60,7 @@ fn body(ctx: &mut BuildContext<'_, Action>, state: &State<'_>) -> Element<'stati
                         Element::column()
                             .width(Length::Fill)
                             .height(Length::Fixed(ROW))
-                            .children([card(&theme, index, recent.name(), recent.path())])
+                            .children([card(theme, index, recent.name(), recent.path())])
                     })
                     .collect()
             },
@@ -73,7 +73,7 @@ fn body(ctx: &mut BuildContext<'_, Action>, state: &State<'_>) -> Element<'stati
         .padding(Edges::symmetric(32.0, 26.0))
         .gap(18.0)
         .background(Surface::fill(palette.surface_dim))
-        .children([header(&theme), content, footer(&theme)])
+        .children([header(theme), content, footer(theme)])
 }
 
 fn header(theme: &dome_ui::Theme) -> Element<'static, Action> {
@@ -179,7 +179,7 @@ fn modal(
     screen: Vec2,
     dialog: &Dialog,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let palette = theme.palette;
     let width = (screen.x - 96.0).clamp(360.0, 560.0);
     let verdict = verdict(&dialog.input);
@@ -266,10 +266,10 @@ fn modal(
         .align(Align::Center)
         .gap(8.0)
         .children([
-            widget::button(&theme, "Cancel", Role::Standard)
+            widget::button(theme, "Cancel", Role::Standard)
                 .key(Key::new("launcher.cancel"))
                 .press(Action::CloseDialog),
-            widget::action_button(&theme, Icon::Check, label, Role::Filled)
+            widget::action_button(theme, Icon::Check, label, Role::Filled)
                 .key(Key::new("launcher.submit"))
                 .enabled(usable)
                 .press(Action::Submit),
@@ -299,7 +299,7 @@ fn toast(
     screen: Vec2,
     message: &str,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let palette = theme.palette;
     let style = TextStyle::new(
         theme.font(dome_ui::Level::Label),

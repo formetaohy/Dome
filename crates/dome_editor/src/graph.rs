@@ -24,13 +24,13 @@ pub(crate) fn inspect(
     id: &str,
     enabled: bool,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let Some(entry) = scene.graph(id) else {
         return Element::column();
     };
     let target = Target::Graph(String::from(id));
     let scope = Scope {
-        theme: &theme,
+        theme,
         target: &target,
         entry,
         enabled,

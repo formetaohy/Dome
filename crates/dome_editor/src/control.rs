@@ -24,7 +24,7 @@ pub(crate) fn transform_rows(
     target: &Target,
     enabled: bool,
 ) -> Element<'static, Action> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let specs = [
         (
             Icon::Fit,
@@ -74,7 +74,7 @@ pub(crate) fn transform_rows(
                 theme.palette.on_surface_variant,
                 IconStyle::REGULAR,
             )]);
-        let pills = axis_pills(&theme, target, path, value, spec, enabled);
+        let pills = axis_pills(theme, target, path, value, spec, enabled);
         rows.push(
             Element::row()
                 .width(Length::Fill)
@@ -207,7 +207,7 @@ fn field_control(
     field: &Field,
     enabled: bool,
 ) -> Option<Element<'static, Action>> {
-    let theme = *ctx.theme();
+    let theme = ctx.theme();
     let value = scene.property(target, path)?;
     let title = display_label(target, field);
     let unit = unit_symbol(field.units());
@@ -231,7 +231,7 @@ fn field_control(
                 let p = String::from(path);
                 Some(
                     widget::slider_readout(
-                        &theme,
+                        theme,
                         Some(title),
                         held,
                         range[0]..=range[1],
@@ -249,7 +249,7 @@ fn field_control(
             } else {
                 let t = target.clone();
                 let p = String::from(path);
-                let scrub = widget::drag_value(&theme, held, dec)
+                let scrub = widget::drag_value(theme, held, dec)
                     .key(Key::new(format!("field.{target}.{path}")))
                     .width(Length::Fill)
                     .unit(unit)
@@ -259,7 +259,7 @@ fn field_control(
                         path: p.clone(),
                         value: Value::Number(next.clamp(range[0], range[1])),
                     });
-                Some(widget::form_row(&theme, FORM_LABEL, title, scrub))
+                Some(widget::form_row(theme, FORM_LABEL, title, scrub))
             }
         }
         FieldKind::Bool => {
@@ -267,7 +267,7 @@ fn field_control(
             let t = target.clone();
             let p = String::from(path);
             Some(
-                widget::toggle_row(&theme, title, held)
+                widget::toggle_row(theme, title, held)
                     .key(Key::new(format!("field.{target}.{path}")))
                     .enabled(enabled)
                     .on_toggle(move |next| Action::Property {
@@ -295,7 +295,7 @@ fn field_control(
                 path: p.clone(),
                 value: Value::Text(String::from(next)),
             });
-            Some(widget::form_row(&theme, FORM_LABEL, title, input))
+            Some(widget::form_row(theme, FORM_LABEL, title, input))
         }
         FieldKind::Choice(options) => {
             let held = value
@@ -311,7 +311,7 @@ fn field_control(
             let p = String::from(path);
             let choices: Vec<&'static str> = options.to_vec();
             let control = if options.len() <= 3 {
-                widget::segmented_fill(&theme, options, selected)
+                widget::segmented_fill(theme, options, selected)
                     .key(Key::new(format!("field.{target}.{path}")))
                     .enabled(enabled)
                     .on_segment(move |at| Action::Property {
@@ -322,7 +322,7 @@ fn field_control(
             } else {
                 let labels: Vec<String> = options.iter().map(|s| String::from(*s)).collect();
                 widget::combo(
-                    &theme,
+                    theme,
                     Key::new(format!("field.{target}.{path}")),
                     Length::Fill,
                     200.0,
@@ -336,12 +336,12 @@ fn field_control(
                 )
                 .enabled(enabled)
             };
-            Some(widget::form_row(&theme, FORM_LABEL, title, control))
+            Some(widget::form_row(theme, FORM_LABEL, title, control))
         }
         FieldKind::Vector { range, speed } | FieldKind::Rotation { range, speed } => {
             let held = value.vector().ok()?;
             let pills = axis_pills(
-                &theme,
+                theme,
                 target,
                 path,
                 held,
@@ -359,14 +359,14 @@ fn field_control(
         FieldKind::Color | FieldKind::Tint => {
             let rgba = value.rgba().ok()?;
             let rgb = [rgba.x, rgba.y, rgba.z];
-            Some(color_row(&theme, target, path, title, rgb, enabled))
+            Some(color_row(theme, target, path, title, rgb, enabled))
         }
         FieldKind::Bits { count } => {
             let held = value.number().ok()? as u32;
-            Some(bits_grid(&theme, target, path, title, held, count, enabled))
+            Some(bits_grid(theme, target, path, title, held, count, enabled))
         }
         FieldKind::Reference(_) | FieldKind::OptionalReference(_) => {
-            reference_row(&theme, scene, target, path, field, value, enabled)
+            reference_row(theme, scene, target, path, field, value, enabled)
         }
     }
 }
