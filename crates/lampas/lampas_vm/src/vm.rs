@@ -31,6 +31,7 @@ pub struct Vm {
     pub(crate) frames: Vec<Frame>,
     pub(crate) globals: Vec<Value>,
     pub(crate) written: Vec<(usize, Value)>,
+    pub(crate) logged: Vec<bool>,
 }
 
 impl Vm {
@@ -44,6 +45,7 @@ impl Vm {
                 .map(|global| Value::constant(&global.value))
                 .collect(),
             written: Vec::new(),
+            logged: vec![false; module.globals.len()],
         }
     }
 
@@ -114,6 +116,9 @@ impl Vm {
     }
 
     fn settle(&mut self, outcome: Result<Outcome, Trap>) -> Result<Outcome, Trap> {
+        for (index, _) in self.written.iter() {
+            self.logged[*index] = false;
+        }
         match outcome {
             Ok(outcome) => {
                 self.written.clear();

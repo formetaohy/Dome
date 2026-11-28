@@ -443,7 +443,7 @@ fn color_row(
         .width(Length::Fixed(52.0))
         .height(Length::Fixed(24.0))
         .enabled(enabled)
-        .hit_target();
+        .anchor();
 
     let picker_target = target.clone();
     let picker_path = String::from(path);

@@ -282,7 +282,7 @@ fn parameters_section(
                 "Add Parameter",
             )
             .key(add_key)
-            .hit_target(),
+            .anchor(),
         );
         top.push(
             popup(

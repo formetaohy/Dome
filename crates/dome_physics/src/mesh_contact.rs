@@ -7,7 +7,9 @@ use dome_math::{Aabb, Vec3};
 
 pub(crate) fn collide(first: &Solid, second: &Solid, gap: f32, contacts: &mut Vec<Manifold>) {
     match (&first.shape, &second.shape) {
-        (Shape::Mesh { .. }, Shape::Mesh { .. }) => {}
+        (Shape::Mesh { .. }, Shape::Mesh { .. }) => {
+            panic!("two mesh colliders meet where a mesh collides with convex shapes alone")
+        }
         (Shape::Mesh { .. }, _) => mesh_convex(first, second, false, gap, contacts),
         (_, Shape::Mesh { .. }) => mesh_convex(second, first, true, gap, contacts),
         _ => panic!("a convex pair dispatches no mesh contact"),
@@ -15,9 +17,10 @@ pub(crate) fn collide(first: &Solid, second: &Solid, gap: f32, contacts: &mut Ve
 }
 
 pub(crate) fn intersects(mesh: &Solid, other: &Solid) -> bool {
-    if matches!(&other.shape, Shape::Mesh { .. }) {
-        return false;
-    }
+    assert!(
+        !matches!(&other.shape, Shape::Mesh { .. }),
+        "two mesh colliders meet where a mesh collides with convex shapes alone",
+    );
     let mut contacts = Vec::new();
     mesh_convex(mesh, other, false, CONTACT_GAP, &mut contacts);
     contacts

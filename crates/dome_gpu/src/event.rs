@@ -38,34 +38,56 @@ impl Display for GpuEvent {
     }
 }
 
+const LOG_CAPACITY: usize = 64;
+
+#[derive(Default)]
+struct Ledger {
+    base: u64,
+    events: Vec<GpuEvent>,
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct EventLog {
-    events: Arc<Mutex<Vec<GpuEvent>>>,
+    log: Arc<Mutex<Ledger>>,
 }
 
 impl EventLog {
     pub(crate) fn emit(&self, event: GpuEvent) {
-        let mut events = self
-            .events
+        let mut log = self
+            .log
             .lock()
             .expect("a graphics event log is never poisoned");
-        if event.device_lost() && events.iter().any(GpuEvent::device_lost) {
+        if event.device_lost() && log.events.iter().any(GpuEvent::device_lost) {
             return;
         }
-        events.push(event);
+        log.events.push(event);
+        if log.events.len() > LOG_CAPACITY {
+            let dropped = log.events.len() - LOG_CAPACITY;
+            log.events.drain(..dropped);
+            log.base += dropped as u64;
+        }
     }
 
     pub(crate) fn cursor(&self) -> GpuEventCursor {
+        let next = {
+            let log = self
+                .log
+                .lock()
+                .expect("a graphics event log is never poisoned");
+            log.base + log.events.len() as u64
+        };
         GpuEventCursor {
             log: self.clone(),
-            next: 0,
+            next,
+            lost: false,
         }
     }
 
     pub(crate) fn device_lost(&self) -> bool {
-        self.events
+        self.log
             .lock()
             .expect("a graphics event log is never poisoned")
+            .events
             .iter()
             .any(|event| matches!(event, GpuEvent::DeviceLost { .. }))
     }
@@ -80,17 +102,23 @@ pub enum GpuCondition {
 
 pub struct GpuEventCursor {
     log: EventLog,
-    next: usize,
+    next: u64,
+    lost: bool,
 }
 
 impl GpuEventCursor {
     pub fn unhealthy(&self) -> bool {
-        self.log
-            .events
+        let log = self
+            .log
+            .log
             .lock()
-            .expect("a graphics event log is never poisoned")
-            .iter()
-            .any(|event| event.device_lost() || event.fault().is_some())
+            .expect("a graphics event log is never poisoned");
+        (!self.lost && log.events.iter().any(GpuEvent::device_lost))
+            || log
+                .events
+                .iter()
+                .skip(self.next.saturating_sub(log.base) as usize)
+                .any(|event| event.fault().is_some())
     }
 
     pub fn condition(&mut self) -> GpuCondition {
@@ -110,13 +138,23 @@ impl GpuEventCursor {
     }
 
     pub fn poll(&mut self) -> Vec<GpuEvent> {
-        let events = self
+        let log = self
             .log
-            .events
+            .log
             .lock()
             .expect("a graphics event log is never poisoned");
-        let unread = events.get(self.next..).unwrap_or(&[]).to_vec();
-        self.next = events.len();
+        let start = self
+            .next
+            .saturating_sub(log.base)
+            .min(log.events.len() as u64);
+        let mut unread = log.events[start as usize..].to_vec();
+        self.next = log.base + log.events.len() as u64;
+        if !self.lost
+            && let Some(loss) = log.events.iter().find(|event| event.device_lost())
+        {
+            self.lost = true;
+            unread.push(loss.clone());
+        }
         unread
     }
 }
@@ -136,5 +174,21 @@ mod tests {
             message: String::new(),
         });
         assert_eq!(log.cursor().condition(), GpuCondition::Lost);
+    }
+
+    #[test]
+    fn a_fault_reaches_only_the_cursor_that_was_open_when_it_rose() {
+        let log = EventLog::default();
+        let mut watching = log.cursor();
+        log.emit(GpuEvent::Fault(String::from("a lost binding")));
+        assert_eq!(
+            watching.condition(),
+            GpuCondition::Fault(String::from("a lost binding")),
+        );
+        assert_eq!(
+            log.cursor().condition(),
+            GpuCondition::Healthy,
+            "a cursor opened after a recovered fault starts at the head of its log",
+        );
     }
 }

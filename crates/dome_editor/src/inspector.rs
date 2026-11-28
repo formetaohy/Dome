@@ -323,7 +323,7 @@ fn add_component_menu(
         } else {
             Corners::capsule()
         })
-        .hit_target();
+        .anchor();
 
     let mut items = Vec::with_capacity(specs.len());
     for spec in specs {

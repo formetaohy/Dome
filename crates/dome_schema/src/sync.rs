@@ -10,14 +10,14 @@ use dome_scene::Changed;
 use dome_scene::Node;
 use dome_scene::Scene;
 use dome_scene::{Reach, ReferenceKind};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 pub struct SceneSync {
     registry: Arc<Registry>,
     applied: Option<Scene>,
     entities: Vec<Entity>,
-    ids: HashMap<String, Entity>,
+    stale: bool,
 }
 
 impl SceneSync {
@@ -26,7 +26,7 @@ impl SceneSync {
             registry,
             applied: None,
             entities: Vec::new(),
-            ids: HashMap::new(),
+            stale: false,
         }
     }
 
@@ -39,7 +39,7 @@ impl SceneSync {
     }
 
     pub fn invalidate(&mut self) {
-        self.applied = None;
+        self.stale = true;
     }
 
     pub fn entity(&self, index: usize) -> Option<Entity> {
@@ -47,7 +47,17 @@ impl SceneSync {
     }
 
     pub fn id(&self, id: &str) -> Option<Entity> {
-        self.ids.get(id).copied()
+        let applied = self.applied.as_ref()?;
+        self.entities.get(applied.node_index(id)?).copied()
+    }
+
+    fn node_map(&self) -> NodeMap {
+        NodeMap::new(
+            self.applied
+                .clone()
+                .expect("a synced scene holds the nodes it installs"),
+            self.entities.clone(),
+        )
     }
 
     pub fn sync(
@@ -59,54 +69,50 @@ impl SceneSync {
     ) {
         let registry = Arc::clone(&self.registry);
         registry.check(scene);
-        if !changed.any() && self.applied.as_ref() == Some(scene) {
+        if !changed.any() && !self.stale && self.applied.as_ref() == Some(scene) {
             return;
         }
-        let scene_changed = self.applied.as_ref() != Some(scene);
+        let scene_changed = self.stale || self.applied.as_ref() != Some(scene);
+        let stale = self.stale;
         let applied = self.applied.as_ref();
         let changed = self.graphs_changed(scene, changed);
-        let mut ids = HashMap::with_capacity(scene.nodes().len());
         let mut entities = Vec::with_capacity(scene.nodes().len());
+        let mut fresh = Vec::with_capacity(scene.nodes().len());
         for node in scene.nodes() {
-            let held = self.ids.get(&node.id).copied();
-            let reused = held.is_some_and(|entity| world.is_alive(entity));
+            let held = self.id(&node.id).filter(|entity| world.is_alive(*entity));
             let entity = match held {
-                Some(entity) if reused => entity,
-                _ => world.spawn(),
+                Some(entity) => entity,
+                None => world.spawn(),
             };
-            assert!(
-                ids.insert(node.id.clone(), entity).is_none(),
-                "the scene holds the node {} twice",
-                node.id,
-            );
-            entities.push((entity, reused));
+            entities.push(entity);
+            fresh.push(held.is_none());
         }
-        let retained = ids.values().copied().collect::<HashSet<_>>();
+        let retained = entities.iter().copied().collect::<HashSet<_>>();
         let mut damaged = Vec::new();
         for (index, node) in scene.nodes().iter().enumerate() {
-            let (entity, _) = entities[index];
+            let entity = entities[index];
             match node.parent.as_deref() {
                 Some(parent) => {
-                    let parent = *ids.get(parent).unwrap_or_else(|| {
+                    let parent = scene.node_index(parent).unwrap_or_else(|| {
                         panic!(
                             "the scene parents {} to {parent}, which it does not hold",
                             node.id,
                         )
                     });
-                    set_parent(world, entity, parent);
+                    set_parent(world, entity, entities[parent]);
                 }
                 None => {
                     clear_parent(world, entity);
                 }
             }
         }
-        for entity in self.ids.values() {
+        for entity in &self.entities {
             if !retained.contains(entity) {
                 world.despawn(*entity);
                 damaged.push(*entity);
             }
         }
-        let nodes = NodeMap::new(ids.clone());
+        let nodes = NodeMap::new(scene.clone(), entities.clone());
         if scene_changed
             || world.resource::<GraphLibrary>().is_none()
             || changed.holds(ReferenceKind::Animation)
@@ -130,21 +136,25 @@ impl SceneSync {
         let visual = Visual::of(scene, &changed);
         let mut sky = visual.sky;
         for (index, node) in scene.nodes().iter().enumerate() {
-            let (entity, reused) = entities[index];
+            let entity = entities[index];
+            let reused = !fresh[index];
             let previous = previous(applied, index, node);
-            let shared = previous.is_some_and(|held| std::ptr::eq(held, node));
+            let shared = !stale && previous.is_some_and(|held| std::ptr::eq(held, node));
             let mut touched = !reused;
             if let Some(previous) = previous {
                 touched |= previous.parent != node.parent;
                 touched |= previous.transform() != node.transform();
             }
-            world.insert(
-                entity,
-                SceneNode {
-                    id: node.id.clone(),
-                },
-            );
-            if !reused || previous.is_none_or(|held| held.transform() != node.transform()) {
+            if !reused {
+                world.insert(
+                    entity,
+                    SceneNode {
+                        id: node.id.clone(),
+                    },
+                );
+            }
+            if !reused || stale || previous.is_none_or(|held| held.transform() != node.transform())
+            {
                 crate::runtime::transform::install(world, entity, node.transform());
             }
             for registration in registry.registrations() {
@@ -180,8 +190,8 @@ impl SceneSync {
             }
         }
         self.applied = Some(scene.clone());
-        self.entities = entities.into_iter().map(|(entity, _)| entity).collect();
-        self.ids = ids;
+        self.entities = entities;
+        self.stale = false;
         publish(world, damaged, sky);
         dome_animation::settle(world);
         propagate(world);
@@ -211,7 +221,7 @@ impl SceneSync {
         let Some(node) = scene.nodes().get(index) else {
             return;
         };
-        let Some(entity) = self.ids.get(&node.id).copied() else {
+        let Some(entity) = self.id(&node.id) else {
             return;
         };
         if !world.is_alive(entity) {
@@ -222,13 +232,13 @@ impl SceneSync {
                 .node_index(&node.id)
                 .and_then(|at| applied.nodes().get(at))
         });
-        let shared = previous.is_some_and(|held| std::ptr::eq(held, node));
+        let shared = !self.stale && previous.is_some_and(|held| std::ptr::eq(held, node));
         let shifted = previous.is_none_or(|held| held.transform() != node.transform());
         let mut touched = shifted || previous.is_some_and(|held| held.parent != node.parent);
         let mut sky = false;
         match node.parent.as_deref() {
             Some(parent) => {
-                let Some(parent) = self.ids.get(parent).copied() else {
+                let Some(parent) = self.id(parent) else {
                     return;
                 };
                 set_parent(world, entity, parent);
@@ -268,6 +278,7 @@ impl SceneSync {
         {
             applied.remember_node(at, handle);
         }
+        world.insert_resource(self.node_map());
         publish(world, touched.then_some(entity).into_iter().collect(), sky);
         dome_animation::settle(world);
         propagate(world);

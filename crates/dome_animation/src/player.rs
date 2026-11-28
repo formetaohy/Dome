@@ -11,6 +11,7 @@ use std::sync::Arc;
 pub(crate) struct AnimationPlayer {
     layers: Vec<AnimationLayer>,
     primary: usize,
+    ended: bool,
 }
 
 impl AnimationPlayer {
@@ -20,6 +21,7 @@ impl AnimationPlayer {
                 source, 0.0, speed, looped, playing, 1.0,
             )],
             primary: 0,
+            ended: false,
         }
     }
 
@@ -35,8 +37,8 @@ impl AnimationPlayer {
         self.primary_layer_mut().set_time(time);
     }
 
-    pub(crate) fn finished(&self) -> bool {
-        self.primary_layer().finished()
+    pub(crate) fn take_ended(&mut self) -> bool {
+        std::mem::take(&mut self.ended)
     }
 
     pub(crate) fn set_playing(&mut self, playing: bool) {
@@ -57,6 +59,7 @@ impl AnimationPlayer {
             "an animation fade of {duration} is no finite non-negative span",
         );
         let primary = self.primary;
+        self.ended = false;
         if duration == 0.0 {
             self.layers.clear();
             self.layers
@@ -101,6 +104,10 @@ impl AnimationPlayer {
         for layer in &mut self.layers {
             changed |= layer.advance(delta);
         }
+        self.ended |= self
+            .layers
+            .get(self.primary)
+            .is_some_and(AnimationLayer::finished);
         let mut index = 0;
         while index < self.layers.len() {
             if self.layers[index].retiring() {

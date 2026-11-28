@@ -666,6 +666,11 @@ impl<'a, A> Element<'a, A> {
         self
     }
 
+    pub fn anchor(mut self) -> Self {
+        self.interaction = Interaction::Anchor;
+        self
+    }
+
     pub fn on_drag(mut self, axis: Axis, handler: impl Fn(f32) -> Option<A> + 'static) -> Self {
         self.interaction = Interaction::Drag {
             axis,
@@ -841,6 +846,7 @@ pub enum Interaction<A> {
         handler: Box<dyn Fn(Vec2) -> Option<A>>,
     },
     Hit,
+    Anchor,
     Color {
         action: Box<dyn Fn([f32; 3]) -> A>,
     },
@@ -861,6 +867,7 @@ impl<A> Interaction<A> {
                 | Self::Segment { .. }
                 | Self::DragValue { .. }
                 | Self::Field { .. }
+                | Self::Anchor
                 | Self::Color { .. }
         )
     }

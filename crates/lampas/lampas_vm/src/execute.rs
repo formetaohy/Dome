@@ -41,8 +41,11 @@ impl Vm {
                 Op::StoreGlobal => {
                     let value = self.stack[base + instruction.b as usize].clone();
                     let index = instruction.imm as usize;
-                    self.written
-                        .push((index, std::mem::replace(&mut self.globals[index], value)));
+                    let previous = std::mem::replace(&mut self.globals[index], value);
+                    if !self.logged[index] {
+                        self.logged[index] = true;
+                        self.written.push((index, previous));
+                    }
                 }
                 Op::Move => {
                     if instruction.a != instruction.low() {

@@ -145,6 +145,79 @@ fn a_condition_transitions_and_blends_between_states() {
     );
 }
 
+fn timed_clip(name: &str, duration: f32, target: Entity) -> Arc<ClipSource> {
+    let track = Track::new(
+        "bone",
+        Property::Translation,
+        Interpolation::Linear,
+        vec![0.0, duration],
+        vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+    );
+    Arc::new(ClipSource::new(
+        name,
+        Arc::new(Clip::new(vec![track.expect("the track is valid")])),
+        Arc::from([target]),
+    ))
+}
+
+#[test]
+fn a_state_exits_on_the_wrap_it_ends_while_its_predecessor_fades() {
+    let mut world = World::new();
+    let joint = world.spawn();
+    world.insert(joint, LocalTransform(Transform::IDENTITY));
+    let graph = Arc::new(AnimationGraph::new(
+        "chain",
+        vec![ParameterDesc {
+            name: String::from("go"),
+            default: Parameter::Number(0.0),
+        }],
+        vec![
+            state("warm", timed_clip("warm", 1.0, joint), true),
+            state("spin", timed_clip("spin", 0.5, joint), true),
+            state("done", timed_clip("done", 1.0, joint), true),
+        ],
+        vec![
+            TransitionDesc {
+                from: String::from("warm"),
+                to: String::from("spin"),
+                fade: 1.2,
+                exit: 0.0,
+                conditions: vec![ConditionDesc {
+                    parameter: String::from("go"),
+                    comparison: Comparison::Above,
+                    value: Parameter::Number(0.5),
+                }],
+            },
+            TransitionDesc {
+                from: String::from("spin"),
+                to: String::from("done"),
+                fade: 0.0,
+                exit: 0.9,
+                conditions: Vec::new(),
+            },
+        ],
+        0,
+    ));
+    let machine = world.spawn();
+    world.insert(machine, AnimationMachine::new(graph, true, 0.0));
+    advance(&mut world, 0.01);
+    let mut held = world
+        .remove::<AnimationMachine>(machine)
+        .expect("a machine");
+    held.set_parameter("go", Parameter::Number(1.0))
+        .expect("the graph holds its parameter");
+    world.insert(machine, held);
+    advance(&mut world, 0.01);
+    assert_eq!(state_id(&world, machine), "spin");
+    advance(&mut world, 1.0);
+    advance(&mut world, 0.3);
+    assert_eq!(
+        state_id(&world, machine),
+        "done",
+        "a wrap reached inside a fade still exits once the fade settles",
+    );
+}
+
 #[test]
 fn a_looping_state_exits_when_a_frame_crosses_its_exit_time() {
     let mut frequent = World::new();

@@ -156,10 +156,10 @@ impl AnimationMachine {
             return changed;
         }
         let reach = self.reach();
-        let finished = self.player.finished();
+        let ended = self.player.take_ended();
         let mut chosen = None;
         for transition in self.graph.transitions() {
-            let exited = transition.exit() == 0.0 || reach >= transition.exit() || finished;
+            let exited = transition.exit() == 0.0 || reach >= transition.exit() || ended;
             if transition.from() == self.current && exited && transition.holds(&self.values) {
                 chosen = Some((transition.to(), transition.fade()));
                 break;

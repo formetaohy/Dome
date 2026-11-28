@@ -67,6 +67,14 @@ impl<'a> Edit<'a> {
 
     pub(crate) fn insert_nodes(&mut self, at: usize, nodes: Vec<Node>) {
         assert!(!nodes.is_empty(), "an edit inserts at least one node");
+        let mut inserted_ids = BTreeSet::new();
+        for node in &nodes {
+            assert!(
+                self.scene.node_index(&node.id).is_none() && inserted_ids.insert(node.id.as_str()),
+                "the scene holds the node {} twice",
+                node.id,
+            );
+        }
         let inserted = nodes.into_iter().map(Arc::new).collect::<Vec<_>>();
         self.scene.nodes.splice(at, 0, inserted.clone());
         self.delta.push(Step::Nodes(Splice::insert(at, inserted)));

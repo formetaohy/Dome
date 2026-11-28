@@ -84,10 +84,10 @@ fn fragment(input: FragmentIn) -> @location(0) vec4<f32> {
     let k = tap(at, step, 1.0, 1.0);
     let l = tap(at, step, -1.0, -1.0);
     let m = tap(at, step, 1.0, -1.0);
-    let gathered = karis(d, e, i, j) * 0.5
-        + karis(a, b, f, g) * 0.125
-        + karis(b, c, g, h) * 0.125
-        + karis(f, g, k, l) * 0.125
-        + karis(g, h, l, m) * 0.125;
+    let gathered = karis(a, b, d, e) * 0.125
+        + karis(b, c, e, f) * 0.125
+        + karis(d, e, g, h) * 0.125
+        + karis(e, f, h, i) * 0.125
+        + karis(j, k, l, m) * 0.5;
     return thresholded(gathered, setup.threshold, setup.knee);
 }

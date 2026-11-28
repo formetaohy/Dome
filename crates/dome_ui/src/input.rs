@@ -182,6 +182,7 @@ impl Input {
                     let state = &mut self.buttons[button.index()];
                     state.down = false;
                     state.released = true;
+                    self.press[button.index()] = None;
                     self.release[button.index()] = Some(self.position);
                 }
                 Event::Cancel => {
@@ -190,6 +191,7 @@ impl Input {
                     for state in &mut self.buttons {
                         state.down = false;
                     }
+                    self.press = [None; 3];
                 }
                 Event::Leave => self.inside = false,
                 Event::Scroll(delta) => {

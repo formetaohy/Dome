@@ -96,6 +96,11 @@ impl Texture {
             mip_levels > 0 && mip_levels <= Self::full_mip_levels(width, height),
             "a {label} texture of {width} by {height} texels holds {mip_levels} mip levels",
         );
+        let extent = device.limits().max_texture_dimension_2d;
+        assert!(
+            width <= extent && height <= extent,
+            "a {label} texture of {width} by {height} texels outruns the {extent} texel side its device holds",
+        );
         assert!(!usages.is_empty(), "a {label} texture names no use");
         assert!(
             !format.is_depth() || !usages.contains(TextureUsages::COPY_DST),

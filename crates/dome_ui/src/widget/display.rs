@@ -304,7 +304,7 @@ pub fn combo<'a, A>(
         );
     })
     .key(key)
-    .hit_target()
+    .anchor()
     .cursor(crate::input::Cursor::Pointing)
     .focus_ring(Corners::all(theme.metrics.corner_sm));
     let key_name = key.id();

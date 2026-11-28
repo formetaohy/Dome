@@ -185,6 +185,14 @@ fn a_scene_sync_follows_the_structure_it_edits() {
         )))),
         "an applied node installs the component its scene changed",
     );
+    let nodes = world
+        .resource::<dome_schema::NodeMap>()
+        .expect("a synced scene holds the nodes it installs");
+    assert_eq!(
+        nodes.id("a"),
+        Some(a),
+        "an applied node keeps the table its sync installed",
+    );
     let held = world
         .resource::<SceneDamage>()
         .expect("a synced scene carries its damage")

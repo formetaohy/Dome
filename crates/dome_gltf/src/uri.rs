@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn read(uri: &str, base: &Path, what: &str) -> Result<Vec<u8>, String> {
     if uri.starts_with("data:") {
@@ -20,7 +20,29 @@ pub(crate) fn path(uri: &str, base: &Path) -> Result<Option<PathBuf>, String> {
     if !path.is_relative() {
         return Err(format!("names the absolute resource {uri}"));
     }
-    Ok(Some(base.join(path)))
+    Ok(Some(base.join(relative(path)?)))
+}
+
+fn relative(path: &Path) -> Result<PathBuf, String> {
+    let mut held = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => held.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !held.pop() {
+                    return Err(format!(
+                        "names {}, which leaves the folder of its model",
+                        path.display(),
+                    ));
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("names the absolute resource {}", path.display()));
+            }
+        }
+    }
+    Ok(held)
 }
 
 fn data(uri: &str, what: &str) -> Result<Vec<u8>, String> {
@@ -90,8 +112,8 @@ fn digit(byte: u8) -> Result<u8, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::read;
-    use std::path::Path;
+    use super::{path, read};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn a_data_uri_holds_the_bytes_its_base64_names() {
@@ -112,6 +134,27 @@ mod tests {
             )
             .expect("the data URI decodes"),
             [255, 255],
+        );
+    }
+
+    #[test]
+    fn a_resource_uri_stays_inside_the_folder_of_its_model() {
+        let base = Path::new("assets");
+        assert_eq!(
+            path("sub/buffer.bin", base).expect("a nested resource resolves"),
+            Some(PathBuf::from("assets").join("sub").join("buffer.bin")),
+        );
+        assert_eq!(
+            path("sub/../buffer.bin", base).expect("a relative step stays inside"),
+            Some(PathBuf::from("assets").join("buffer.bin")),
+        );
+        assert!(
+            path("../buffer.bin", base).is_err(),
+            "a model reads no resource above its own folder",
+        );
+        assert!(
+            path("sub/../../buffer.bin", base).is_err(),
+            "a model reads no resource above its own folder",
         );
     }
 }

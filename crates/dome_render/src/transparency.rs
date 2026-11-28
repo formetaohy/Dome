@@ -200,6 +200,10 @@ const _: () = assert!(
     SETTINGS_BYTES == 16,
     "the transparent settings pack the layers, viewport and vertical direction",
 );
+const _: () = assert!(
+    TRANSPARENT_LAYERS == 4,
+    "the transparency resolve shader sorts the four layers its LAYERS array holds",
+);
 
 fn layers_of(budget: u64, pixels: u64) -> u32 {
     let layer = pixels.max(1) * WORD_BYTES;

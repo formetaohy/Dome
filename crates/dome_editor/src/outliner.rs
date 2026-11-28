@@ -40,7 +40,7 @@ pub(crate) fn header(
     } else {
         Corners::capsule()
     })
-    .hit_target();
+    .anchor();
 
     let menu = match state.tab {
         Tab::Scene => popup(

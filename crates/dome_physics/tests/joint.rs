@@ -231,6 +231,44 @@ fn a_spherical_joint_holds_its_anchor() {
 }
 
 #[test]
+fn a_misaligned_hinge_pulls_its_axes_back_into_line() {
+    let mut world = world();
+    world.insert_resource(Gravity(Vec3::ZERO));
+    let anchor = node(&mut world, Vec3::new(0.0, 2.0, 0.0));
+    let tilt = Quat::from_rotation_x(0.08);
+    let transform =
+        Transform::from_scale_rotation_translation(Vec3::ONE, tilt, Vec3::new(0.0, 2.0, 0.0));
+    let body = world.spawn();
+    world.insert(body, LocalTransform(transform));
+    world.insert(body, transform);
+    world.insert(body, RigidBody::new(BodyKind::Dynamic));
+    world.insert(body, Collider::new(Shape::sphere(0.5)));
+    world.insert(
+        anchor,
+        Joint::hinge(
+            body,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::Z,
+            Vec3::Z,
+            Quat::IDENTITY,
+            Quat::IDENTITY,
+        ),
+    );
+    settle(&mut world, 12);
+    let held = world
+        .get::<Transform>(body)
+        .expect("the jointed body holds its transform")
+        .rotation
+        .rotate_vec3(Vec3::Z);
+    let drift = held.dot(Vec3::Z).clamp(-1.0, 1.0).acos();
+    assert!(
+        drift < 0.01,
+        "a hinge closes its axis drift of 0.08 to {drift}",
+    );
+}
+
+#[test]
 fn a_hinge_motor_drives_its_coordinate_into_its_limit() {
     let mut world = world();
     let anchor = node(&mut world, Vec3::new(0.0, 3.0, 0.0));

@@ -364,12 +364,12 @@ impl SceneComponent for ColliderRef {
             let mut at = Some(index);
             while let Some(current) = at {
                 let held = &scene.nodes()[current];
-                if held
-                    .component::<BodyRef>()
-                    .is_some_and(|body| body.kind == BodyKind::Dynamic)
+                if let Some(body) = held.component::<BodyRef>()
+                    && body.kind != BodyKind::Static
                 {
                     return Err(format!(
-                        "the mesh collider of node {node} sits on the dynamic body of node {}",
+                        "the mesh collider of node {node} sits on the {} body of node {}",
+                        body.kind.name(),
                         held.id,
                     ));
                 }

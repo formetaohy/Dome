@@ -578,24 +578,20 @@ fn angular_error(
     axis: Vec3,
 ) -> f32 {
     match constraint.kind {
-        JointKind::Fixed => {
+        JointKind::Hinge | JointKind::Prismatic if index < 2 => {
+            axis_error(first, second, constraint).dot(axis)
+        }
+        JointKind::Fixed | JointKind::Hinge | JointKind::Prismatic => {
             rotation_error(first.rotation, second.rotation, constraint.reference).dot(axis)
-        }
-        JointKind::Hinge => {
-            let held = first.rotation.rotate_vec3(constraint.axis);
-            let other = second.rotation.rotate_vec3(constraint.other_axis);
-            other.cross(held).dot(axis)
-        }
-        JointKind::Prismatic if index == 2 => {
-            rotation_error(first.rotation, second.rotation, constraint.reference).dot(axis)
-        }
-        JointKind::Prismatic => {
-            let held = first.rotation.rotate_vec3(constraint.axis);
-            let other = second.rotation.rotate_vec3(constraint.other_axis);
-            other.cross(held).dot(axis)
         }
         JointKind::Spherical | JointKind::Distance => 0.0,
     }
+}
+
+fn axis_error(first: &Body, second: &Body, constraint: &JointConstraint) -> Vec3 {
+    let held = first.rotation.rotate_vec3(constraint.axis);
+    let other = second.rotation.rotate_vec3(constraint.other_axis);
+    held.cross(other)
 }
 
 fn rotation_error(first: Quat, second: Quat, reference: Quat) -> Vec3 {
