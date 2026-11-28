@@ -70,6 +70,7 @@ pub(crate) fn confirm(
     ctx: &BuildContext<'_, Action>,
     screen: Vec2,
     confirm: Confirm,
+    can_save: bool,
 ) -> Element<'static, Action> {
     let theme = ctx.theme();
     let palette = theme.palette;
@@ -100,27 +101,31 @@ pub(crate) fn confirm(
         TextStyle::new(theme.font(Level::Body), palette.on_surface_variant),
     )
     .width(Length::Fill);
+    let mut choices = vec![
+        widget::button(theme, "Cancel", Role::Standard)
+            .key(Key::new("confirm.cancel"))
+            .press(Action::DismissConfirm),
+    ];
+    if let Some(label) = confirm.discard_label() {
+        choices.push(
+            widget::button(theme, label, Role::Destructive)
+                .key(Key::new("confirm.discard"))
+                .press(Action::DiscardConfirm),
+        );
+    }
+    if !confirm.saves() || can_save {
+        choices.push(
+            widget::button(theme, confirm.accept_label(), Role::Filled)
+                .key(Key::new("confirm.accept"))
+                .press(Action::ResolveConfirm),
+        );
+    }
     let actions = Element::row()
         .width(Length::Fill)
         .justify(Align::End)
         .align(Align::Center)
         .gap(8.0)
-        .children([
-            widget::button(theme, "Cancel", Role::Standard)
-                .key(Key::new("confirm.cancel"))
-                .press(Action::DismissConfirm),
-            widget::button(
-                theme,
-                confirm.confirm_label(),
-                if confirm.loses_edits() {
-                    Role::Standard
-                } else {
-                    Role::Filled
-                },
-            )
-            .key(Key::new("confirm.accept"))
-            .press(Action::ResolveConfirm),
-        ]);
+        .children(choices);
     let card_rect = Rect::from_center_size(
         screen * 0.5,
         Vec2::new(

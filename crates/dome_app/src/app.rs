@@ -361,18 +361,20 @@ impl LiveScene {
         if !refresh.errors.is_empty() {
             self.messages.push(refresh.message());
         }
-        let changed =
-            self.sync.applied().is_none() || requested != self.scene || refresh.changed.any();
+        let recovered = std::mem::take(&mut self.recovering);
+        let changed = recovered
+            || self.sync.applied().is_none()
+            || requested != self.scene
+            || refresh.changed.any();
         if changed {
             self.sync
                 .sync(&requested, world, &self.assets, &refresh.changed);
             self.scene = requested.clone();
-            if self.recovering {
+            if recovered {
                 for (_, probe) in world.iter_mut::<dome_render::CaptureProbe>() {
                     probe.forget();
                 }
             }
-            self.recovering = false;
         }
         if self.wanted.as_ref() == Some(&requested) {
             self.wanted = None;

@@ -36,6 +36,7 @@ pub(crate) struct State<'a> {
     pub(crate) collapsed_sections: &'a HashSet<String>,
     pub(crate) dialog: Option<&'a PathDialog>,
     pub(crate) confirm: Option<Confirm>,
+    pub(crate) can_save: bool,
     pub(crate) message: Option<&'a crate::message::Message>,
     pub(crate) camera: Transform,
     pub(crate) origin: Vec3,
@@ -110,7 +111,7 @@ pub(crate) fn build(
     }
 
     if let Some(confirm) = state.confirm {
-        layers.push(crate::dialog::confirm(ctx, screen, confirm));
+        layers.push(crate::dialog::confirm(ctx, screen, confirm, state.can_save));
     }
 
     if let Some(message) = state.message {

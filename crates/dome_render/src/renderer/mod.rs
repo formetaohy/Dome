@@ -38,7 +38,7 @@ use crate::line::Lines;
 use crate::material::{AlphaMode, Material, MaterialDesc, MaterialLibrary};
 use crate::mesh::{Mesh, MeshLibrary};
 use crate::palette::Palettes;
-use crate::pick::{PickBatch, PickFrame, PickResources, Picker};
+use crate::pick::{Pick, PickBatch, PickFrame, PickResources, Picker};
 use crate::point_shadow::{POINT_SHADOW_NONE, PointShadowFrame, PointShadows};
 use crate::post::Post;
 use crate::probe::Probes;
@@ -458,30 +458,28 @@ impl Renderer {
     }
 
     fn release_retired(&mut self) {
-        if self.retired.is_empty() {
-            return;
+        let mut ready = 0;
+        while ready < self.retired.len() {
+            let submission = self.retired[ready].0.clone();
+            let complete = self
+                .queue
+                .complete(submission)
+                .unwrap_or_else(|failure| panic!("{failure}"));
+            if !complete {
+                break;
+            }
+            ready += 1;
         }
-        let mut held = Vec::new();
-        let mut waiting = false;
-        for (submission, resource) in self.retired.drain(..) {
-            if !waiting {
-                waiting = !self.queue.complete(submission.clone()).unwrap_or(false);
-            }
-            if waiting {
-                held.push((submission, resource));
-                continue;
-            }
+        for (_, resource) in self.retired.drain(..ready) {
             match resource {
                 Retired::Mesh(mesh) => self.meshes.remove(mesh),
                 Retired::Material(material) => self.materials.remove(material),
             }
         }
-        self.retired = held;
     }
 
     pub fn update_mesh(&mut self, mesh: Mesh, vertices: &[crate::abi::Vertex]) {
         self.meshes.update(&self.queue, mesh, vertices, None);
-        self.pick_frame = None;
     }
 
     pub fn update_skinned_mesh(
@@ -502,7 +500,6 @@ impl Renderer {
             "a skinned mesh of no vertex names no geometry",
         );
         self.meshes.update(&self.queue, mesh, vertices, Some(skin));
-        self.pick_frame = None;
     }
 
     pub fn texture(
@@ -770,7 +767,14 @@ impl Renderer {
         let mut submission = Submission::new(&self.device, "dome frame");
         if collection.total == 0 {
             self.main_batches = 0;
-            self.pick_frame = None;
+            self.pick_frame = Some(PickFrame {
+                clip: view.clip,
+                palette_base: self.palettes.base(),
+                width: texture.width(),
+                height: texture.height(),
+                batches: Vec::new(),
+                entities: Vec::new(),
+            });
             let sky_groups = [self.sky_view.clone(), self.sky_shade.clone()];
             let mut debug_draws = Vec::new();
             if sky {
@@ -927,8 +931,10 @@ impl Renderer {
         self.captures.pending().is_some()
     }
 
-    pub fn pick(&mut self, point: Vec2) -> Option<Entity> {
-        let frame = self.pick_frame.as_ref()?;
+    pub fn pick(&mut self, point: Vec2) -> Pick {
+        let Some(frame) = self.pick_frame.as_ref() else {
+            return Pick::Stale;
+        };
         let resources = PickResources {
             visible: self.main_visible.buffer(),
             instances: self.instance_buffer.buffer(),

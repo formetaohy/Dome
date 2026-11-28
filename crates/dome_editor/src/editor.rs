@@ -10,6 +10,7 @@ use dome_ecs::Entity;
 use dome_gpu::{Gpu, GpuCondition, GpuFailure, GpuRequest, Submission};
 use dome_math::{Quat, Rect, Transform, Vec2, Vec3};
 use dome_project::Project;
+use dome_render::Pick;
 use dome_scene::{Atmosphere, Delta, Node, ReferenceKind, Scene, Shape, Target, Value};
 use dome_schema::Registry;
 use dome_ui::{InputKey as Key, Ui};
@@ -429,6 +430,13 @@ impl Editor {
                 self.confirm = None;
             }
             None => {}
+        }
+    }
+
+    fn discard_confirm(&mut self) {
+        if self.confirm == Some(Confirm::Close) {
+            self.confirm = None;
+            self.exiting = true;
         }
     }
 
@@ -924,6 +932,7 @@ impl Editor {
             }
             Action::Reload => self.request_reload(),
             Action::ResolveConfirm => self.resolve_confirm(),
+            Action::DiscardConfirm => self.discard_confirm(),
             Action::DismissConfirm => self.confirm = None,
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
@@ -1171,6 +1180,7 @@ impl Editor {
             collapsed_sections: &self.collapsed_sections,
             dialog: self.dialog.as_ref(),
             confirm: self.confirm,
+            can_save: self.document.writable(),
             message: self.message.as_ref(),
             camera,
             origin,
@@ -1420,8 +1430,11 @@ impl Editor {
         };
         let point = (self.pointer - self.viewport.min) * scale;
         match session.preview.pick(point) {
-            Some(id) => self.selected = Some(Target::Node(id)),
-            None => self.selected = None,
+            Pick::Hit(entity) => {
+                self.selected = session.preview.node(entity).map(Target::Node);
+            }
+            Pick::Miss => self.selected = None,
+            Pick::Stale => {}
         }
     }
 

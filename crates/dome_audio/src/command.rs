@@ -9,12 +9,6 @@ pub(crate) struct Voice {
 }
 
 #[derive(Debug)]
-pub(crate) struct Topology {
-    pub(crate) layout: Arc<Layout>,
-    pub(crate) params: Arc<Vec<BusParams>>,
-}
-
-#[derive(Debug)]
 pub(crate) enum Command {
     Play {
         voice: Voice,
@@ -41,7 +35,13 @@ pub(crate) enum Command {
     Stop {
         voice: Voice,
     },
-    Topology(Topology),
+    Layout {
+        layout: Arc<Layout>,
+        params: Arc<Vec<BusParams>>,
+    },
+    Params {
+        params: Arc<Vec<BusParams>>,
+    },
     Master {
         gain: f32,
     },

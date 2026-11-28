@@ -1,5 +1,5 @@
 use crate::bus::decibels;
-use crate::command::{Command, Topology, Voice};
+use crate::command::{Command, Voice};
 use crate::effect::{Compressor, Filter, Reverb};
 use crate::garbage::{self, Garbage};
 use crate::graph::{BLOCK_FRAMES, BusParams, Layout, MAX_BUSES};
@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub(crate) const MAX_VOICES: usize = 256;
 
 struct Bus {
+    id: Arc<str>,
     buffer: Vec<f32>,
     gain: f32,
     gain_target: f32,
@@ -24,8 +25,9 @@ struct Bus {
 }
 
 impl Bus {
-    fn new(rate: u32) -> Self {
+    fn new(rate: u32, id: Arc<str>) -> Self {
         Self {
+            id,
             buffer: vec![0.0; BLOCK_FRAMES * 2],
             gain: 1.0,
             gain_target: 1.0,
@@ -48,6 +50,16 @@ impl Bus {
         self.filter.reset();
         self.compressor.reset();
         self.reverb.reset();
+    }
+
+    fn follow(&mut self, params: BusParams) {
+        self.params = params;
+        self.gain_target = if params.mute {
+            0.0
+        } else {
+            decibels(params.gain_db)
+        };
+        self.send_target = decibels(params.send_db);
     }
 }
 
@@ -93,8 +105,8 @@ pub(crate) struct Mixer {
     playback: Arc<Playback>,
     voices: Box<[Slot; MAX_VOICES]>,
     buses: Vec<Bus>,
+    spares: Vec<Bus>,
     layout: Arc<Layout>,
-    used: usize,
     active: Arc<AtomicUsize>,
     master: f32,
     master_target: f32,
@@ -111,7 +123,14 @@ impl Mixer {
         active: Arc<AtomicUsize>,
     ) -> Self {
         let layout = Arc::new(Layout::master());
-        let buses = (0..MAX_BUSES).map(|_| Bus::new(rate)).collect::<Vec<_>>();
+        let vacant = || Arc::from("");
+        let buses = vec![Bus::new(
+            rate,
+            Arc::clone(&layout.buses()[layout.root()].id),
+        )];
+        let spares = (1..MAX_BUSES)
+            .map(|_| Bus::new(rate, vacant()))
+            .collect::<Vec<_>>();
         assert_eq!(
             playback.len(),
             MAX_VOICES,
@@ -126,8 +145,8 @@ impl Mixer {
             playback,
             voices: Box::new(std::array::from_fn(|_| Slot::new())),
             buses,
+            spares,
             layout,
-            used: 1,
             active,
             master: 1.0,
             master_target: 1.0,
@@ -202,7 +221,7 @@ impl Mixer {
     fn render_block(&mut self, out: &mut [f32], layout: &Layout) {
         let frames = out.len() / 2;
         let samples = frames * 2;
-        for bus in &mut self.buses[..self.used] {
+        for bus in &mut self.buses {
             bus.buffer[..samples].fill(0.0);
         }
         for slot in self.voices.iter_mut() {
@@ -285,6 +304,60 @@ impl Mixer {
         }
     }
 
+    fn adopt(&mut self, layout: &Arc<Layout>, params: &[BusParams]) {
+        let used = layout.len();
+        assert_eq!(
+            params.len(),
+            used,
+            "an audio layout of {used} buses carries {} parameter sets",
+            params.len(),
+        );
+        assert!(
+            used <= MAX_BUSES,
+            "an audio layout of {used} buses outruns the {MAX_BUSES} the mixer holds",
+        );
+        let mut pool = std::mem::take(&mut self.buses)
+            .into_iter()
+            .map(Some)
+            .collect::<Vec<_>>();
+        let mut matched = vec![None; used];
+        for at in 0..used {
+            let id = &layout.buses()[at].id;
+            matched[at] = pool.iter().enumerate().position(|(index, held)| {
+                matched.iter().flatten().all(|taken| *taken != index)
+                    && held.as_ref().is_some_and(|bus| bus.id == *id)
+            });
+        }
+        for held in pool.iter_mut().enumerate().filter_map(|(index, held)| {
+            (!matched.contains(&Some(index)))
+                .then(|| held.take())
+                .flatten()
+        }) {
+            self.spares.push(held);
+        }
+        let mut buses = Vec::with_capacity(MAX_BUSES);
+        for at in 0..used {
+            let node = &layout.buses()[at];
+            let mut bus = match matched[at] {
+                Some(index) => pool[index]
+                    .take()
+                    .expect("a bus migrates to the layout entry that names it"),
+                None => {
+                    let mut spare = self
+                        .spares
+                        .pop()
+                        .expect("a layout of at most every bus leaves one vacant");
+                    spare.reset();
+                    spare
+                }
+            };
+            bus.id = Arc::clone(&node.id);
+            bus.follow(params[at]);
+            buses.push(bus);
+        }
+        self.buses = buses;
+    }
+
     fn apply(&mut self, command: Command) {
         match command {
             Command::Play {
@@ -313,7 +386,7 @@ impl Mixer {
                     pitch,
                     start,
                 };
-                let index = bus_index(bus.as_deref(), &self.layout, self.used);
+                let index = bus_index(bus.as_deref(), &self.layout);
                 let mut state = State::Pending;
                 self.playback
                     .publish(slot, voice.token, &mut state, State::Playing, start);
@@ -358,31 +431,23 @@ impl Mixer {
                     self.retire(assigned);
                 }
             }
-            Command::Topology(topology) => {
-                let Topology { layout, params } = topology;
-                self.used = layout.len();
-                for bus in &mut self.buses[..self.used] {
-                    bus.reset();
-                }
-                for (bus, params) in self.buses[..self.used].iter_mut().zip(params.iter()) {
-                    bus.params = *params;
-                    bus.gain_target = if params.mute {
-                        0.0
-                    } else {
-                        decibels(params.gain_db)
-                    };
-                    bus.send_target = decibels(params.send_db);
-                }
-                let used = self.used;
+            Command::Layout { layout, params } => {
+                self.adopt(&layout, &params);
                 for assigned in self
                     .voices
                     .iter_mut()
                     .flat_map(|slot| slot.active.iter_mut().chain(slot.retiring.iter_mut()))
                 {
-                    assigned.index = bus_index(assigned.bus.as_deref(), &layout, used);
+                    assigned.index = bus_index(assigned.bus.as_deref(), &layout);
                 }
                 let replaced = std::mem::replace(&mut self.layout, layout);
                 self.garbage.discard(Garbage::Layout(replaced));
+                self.garbage.discard(Garbage::Params(params));
+            }
+            Command::Params { params } => {
+                for (bus, held) in self.buses.iter_mut().zip(params.iter()) {
+                    bus.follow(*held);
+                }
                 self.garbage.discard(Garbage::Params(params));
             }
             Command::Master { gain } => {
@@ -421,10 +486,9 @@ fn slot_of(voice: Voice) -> Option<usize> {
     (slot < MAX_VOICES).then_some(slot)
 }
 
-fn bus_index(bus: Option<&str>, layout: &Layout, used: usize) -> usize {
+fn bus_index(bus: Option<&str>, layout: &Layout) -> usize {
     bus.and_then(|id| layout.index(id))
         .unwrap_or_else(|| layout.root())
-        .min(used.saturating_sub(1))
 }
 
 fn mix_into(target: &mut [f32], source: &[f32]) {
@@ -476,11 +540,17 @@ mod tests {
         Arc::new(crate::graph::layout_of(&links).expect("the test buses hold a graph"))
     }
 
-    fn topology(layout: Arc<Layout>, params: Vec<BusParams>) -> Command {
-        Command::Topology(Topology {
+    fn layout_of(layout: Arc<Layout>, params: Vec<BusParams>) -> Command {
+        Command::Layout {
             layout,
             params: Arc::new(params),
-        })
+        }
+    }
+
+    fn params_of(params: Vec<BusParams>) -> Command {
+        Command::Params {
+            params: Arc::new(params),
+        }
     }
 
     fn mixer(
@@ -725,7 +795,7 @@ mod tests {
         let mut params = vec![BusParams::default(); 3];
         params[2].reverb = crate::bus::AudioReverb::new(true, 0.9, 0.3, 1.0);
         producer
-            .send(topology(layout, params))
+            .send(layout_of(layout, params))
             .expect("the mixer accepts its topology");
         producer
             .send(Command::Play {
@@ -758,7 +828,7 @@ mod tests {
         params[1].gain_db = -12.0;
         params[1].filter = AudioFilter::new(true, FilterKind::LowPass, 200.0, 0.707, 0.0);
         producer
-            .send(topology(Arc::clone(&layout), params.clone()))
+            .send(layout_of(Arc::clone(&layout), params.clone()))
             .expect("the mixer accepts its topology");
         producer
             .send(command(1, tone(vec![1.0; 4_800]), Some("quiet")))
@@ -771,7 +841,7 @@ mod tests {
         params[1].filter.set_enabled(false);
         params[1].mute = true;
         producer
-            .send(topology(layout, params))
+            .send(params_of(params))
             .expect("the mixer accepts muted parameters");
         for _ in 0..8 {
             mixer.render(&mut block);
@@ -779,5 +849,34 @@ mod tests {
         let muted = (block[958].abs() + block[959].abs()) / 2.0;
         assert!(quiet < 0.3, "a quiet bus of {quiet} holds its gain");
         assert!(muted < 0.001, "a muted bus of {muted} holds silence");
+    }
+
+    #[test]
+    fn a_parameter_change_keeps_the_bus_it_speaks_to() {
+        let (mut producer, _playback, _bin, mut mixer, _active) = mixer(64);
+        let layout = buses(&[("master", None, None), ("quiet", Some("master"), None)]);
+        let mut params = vec![BusParams::default(); 2];
+        params[1].gain_db = -24.0;
+        producer
+            .send(layout_of(layout, params.clone()))
+            .expect("the mixer accepts its topology");
+        producer
+            .send(command(1, tone(vec![1.0; 48_000]), Some("quiet")))
+            .expect("the mixer accepts a voice");
+        let mut block = [0.0f32; 960];
+        for _ in 0..8 {
+            mixer.render(&mut block);
+        }
+        let held = (block[958].abs() + block[959].abs()) / 2.0;
+        params[1].send_db = -6.0;
+        producer
+            .send(params_of(params))
+            .expect("the mixer accepts a send change");
+        mixer.render(&mut block);
+        let stepped = (block[0].abs() + block[1].abs()) / 2.0;
+        assert!(
+            stepped <= held * 1.5,
+            "a bus of {held} keeps the level a send change leaves at {stepped}",
+        );
     }
 }

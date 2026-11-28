@@ -155,12 +155,14 @@ impl<H: Handler> ApplicationHandler<Wake> for Host<H> {
         event: WindowEvent,
     ) {
         if let WindowEvent::CloseRequested = event {
-            if self
+            let closing = self
                 .window
                 .as_ref()
-                .is_none_or(|window| self.handler.closing(window))
-            {
+                .is_none_or(|window| self.handler.closing(window));
+            if closing {
                 self.close(event_loop);
+            } else {
+                self.redraw();
             }
             return;
         }

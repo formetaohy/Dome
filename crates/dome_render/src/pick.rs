@@ -20,6 +20,13 @@ const INSTANCE_BYTES: u64 = size_of::<crate::abi::InstanceRecord>() as u64;
 const CLEAR: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 const ID_LIMIT: usize = 1 << 24;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Hit(Entity),
+    Miss,
+    Stale,
+}
+
 pub(crate) struct PickBatch {
     pub(crate) mesh: Mesh,
     pub(crate) base: u32,
@@ -93,7 +100,7 @@ impl Picker {
         frame: &PickFrame,
         resources: &PickResources<'_>,
         point: Vec2,
-    ) -> Option<Entity> {
+    ) -> Pick {
         assert!(
             point.x >= 0.0
                 && point.y >= 0.0
@@ -180,10 +187,14 @@ impl Picker {
             .unwrap_or_else(|failure| panic!("{failure}"));
         let pixel = &bytes[..4];
         if pixel[3] == 0 {
-            return None;
+            return Pick::Miss;
         }
         let order = u32::from(pixel[0]) | (u32::from(pixel[1]) << 8) | (u32::from(pixel[2]) << 16);
-        frame.entities.get(order as usize).copied()
+        frame
+            .entities
+            .get(order as usize)
+            .copied()
+            .map_or(Pick::Miss, Pick::Hit)
     }
 }
 

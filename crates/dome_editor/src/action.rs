@@ -83,7 +83,7 @@ impl Confirm {
         }
     }
 
-    pub(crate) fn confirm_label(self) -> &'static str {
+    pub(crate) fn accept_label(self) -> &'static str {
         match self {
             Self::Close => "Save and close",
             Self::Reload => "Discard edits",
@@ -91,8 +91,15 @@ impl Confirm {
         }
     }
 
-    pub(crate) fn loses_edits(self) -> bool {
-        self != Self::Close
+    pub(crate) fn discard_label(self) -> Option<&'static str> {
+        match self {
+            Self::Close => Some("Discard"),
+            Self::Reload | Self::Overwrite => None,
+        }
+    }
+
+    pub(crate) fn saves(self) -> bool {
+        self != Self::Reload
     }
 }
 
@@ -139,6 +146,7 @@ pub enum Action {
     SubmitDialog,
     CloseDialog,
     ResolveConfirm,
+    DiscardConfirm,
     DismissConfirm,
     DismissMessage,
     RemoveTarget(Target),

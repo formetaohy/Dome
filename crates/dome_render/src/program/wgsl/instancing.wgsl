@@ -900,8 +900,8 @@ fn fragment(input: FragmentIn) -> @location(0) vec4<f32> {
             }
             let chosen = select(farthest, free, free != 4u);
             let expected = select(deepest, 0u, free != 4u);
-            let previous = atomicCompareExchangeWeak(&keys[held + chosen], expected, 1u).old_value;
-            if previous == expected {
+            let claimed = atomicCompareExchangeWeak(&keys[held + chosen], expected, 1u).exchanged;
+            if claimed {
                 if expected != 0u {
                     atomicAdd(&dropped[0u], 1u);
                 }

@@ -7,8 +7,8 @@ use dome_math::{Mat4, Quat, Transform, Vec2, Vec3, Vec4};
 use dome_render::environment::Panorama;
 use dome_render::{
     AlphaMode, Camera, DirectionalLight, Environment, Lines, MaterialDesc, MaterialImage,
-    MeshInstance, PointLight, Renderer, SamplerDesc as RenderSamplerDesc, Skin, SkinVertexRecord,
-    Target, Vertex,
+    MeshInstance, Pick, PointLight, Renderer, SamplerDesc as RenderSamplerDesc, Skin,
+    SkinVertexRecord, Target, Vertex,
 };
 use std::sync::Arc;
 
@@ -211,12 +211,12 @@ fn paint() {
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     assert_eq!(
         renderer.pick(Vec2::new(16.0, 8.0)),
-        Some(near),
+        Pick::Hit(near),
         "picks the half in front of the full quad"
     );
     assert_eq!(
         renderer.pick(Vec2::new(16.0, 56.0)),
-        Some(covered),
+        Pick::Hit(covered),
         "picks the full quad where the half does not cover it"
     );
     let pixels = read(&context, &target);
@@ -276,7 +276,7 @@ fn paint() {
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     assert_eq!(
         renderer.pick(Vec2::new(16.0, 8.0)),
-        Some(covered),
+        Pick::Hit(covered),
         "picks the full quad in front of the half behind it"
     );
     let pixels = read(&context, &target);
@@ -1397,12 +1397,12 @@ fn skinned() {
     assert_eq!(renderer.visible_instances(), 1);
     assert_eq!(
         renderer.pick(Vec2::new(24.0, 32.0)),
-        Some(entity),
+        Pick::Hit(entity),
         "picks the joint of the skinned quad",
     );
     assert_eq!(
         renderer.pick(Vec2::new(8.0, 32.0)),
-        None,
+        Pick::Miss,
         "picks no rest surface beside the skinned quad",
     );
     let pixels = read(&context, &target);

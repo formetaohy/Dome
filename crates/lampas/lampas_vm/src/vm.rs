@@ -30,8 +30,6 @@ pub struct Vm {
     pub(crate) stack: Vec<Value>,
     pub(crate) frames: Vec<Frame>,
     pub(crate) globals: Vec<Value>,
-    pub(crate) written: Vec<(usize, Value)>,
-    pub(crate) logged: Vec<bool>,
 }
 
 impl Vm {
@@ -44,13 +42,26 @@ impl Vm {
                 .iter()
                 .map(|global| Value::constant(&global.value))
                 .collect(),
-            written: Vec::new(),
-            logged: vec![false; module.globals.len()],
         }
     }
 
     pub fn globals(&self) -> &[Value] {
         &self.globals
+    }
+
+    pub fn savepoint(&self) -> Vec<Value> {
+        self.globals.clone()
+    }
+
+    pub fn rewind(&mut self, savepoint: Vec<Value>) {
+        assert_eq!(
+            savepoint.len(),
+            self.globals.len(),
+            "a savepoint of {} globals rewinds {}",
+            savepoint.len(),
+            self.globals.len(),
+        );
+        self.globals = savepoint;
     }
 
     pub fn call(
@@ -116,23 +127,11 @@ impl Vm {
     }
 
     fn settle(&mut self, outcome: Result<Outcome, Trap>) -> Result<Outcome, Trap> {
-        for (index, _) in self.written.iter() {
-            self.logged[*index] = false;
+        if outcome.is_err() {
+            self.stack.clear();
+            self.frames.clear();
         }
-        match outcome {
-            Ok(outcome) => {
-                self.written.clear();
-                Ok(outcome)
-            }
-            Err(trap) => {
-                self.stack.clear();
-                self.frames.clear();
-                for (index, previous) in self.written.drain(..).rev() {
-                    self.globals[index] = previous;
-                }
-                Err(trap)
-            }
-        }
+        outcome
     }
 
     fn enter(&mut self, module: &Module, function: u32) {

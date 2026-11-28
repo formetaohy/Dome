@@ -78,12 +78,18 @@ fn paint() {
     assert_eq!(world.count::<Skin>(), 1);
     assert_eq!(world.count::<AnimationMachine>(), 1);
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
-    assert_eq!(renderer.pick(dome_math::Vec2::new(45.0, 40.0)), None);
+    assert_eq!(
+        renderer.pick(dome_math::Vec2::new(45.0, 40.0)),
+        dome_render::Pick::Miss
+    );
     dome_animation::advance(&mut world, 0.5);
     propagate(&mut world);
     renderer.render(&mut world, Target::Texture(&target), CLEAR, None);
     assert!(
-        renderer.pick(dome_math::Vec2::new(45.0, 40.0)).is_some(),
+        matches!(
+            renderer.pick(dome_math::Vec2::new(45.0, 40.0)),
+            dome_render::Pick::Hit(_)
+        ),
         "picks the animated skin over its rest pose",
     );
     let pixels = read(&context, &target);

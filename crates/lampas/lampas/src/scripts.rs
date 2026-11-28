@@ -72,6 +72,7 @@ impl Scripts {
         let Some(function) = self.module.boot else {
             return Ok(());
         };
+        let savepoint = self.vm.savepoint();
         let outcome = {
             let mut runner = Runner {
                 world,
@@ -80,7 +81,7 @@ impl Scripts {
             };
             self.vm.boot(&self.module, function, &mut runner)
         };
-        self.settle(world, outcome)
+        self.settle(world, savepoint, outcome)
     }
 
     pub fn update(&mut self, world: &mut World) -> Result<(), Trap> {
@@ -101,6 +102,7 @@ impl Scripts {
             let width = self.module.systems[index].components.len();
             self.matches
                 .collect(world, &self.module.systems[index].components);
+            let savepoint = self.vm.savepoint();
             let outcome = {
                 let mut runner = Runner {
                     world,
@@ -131,7 +133,7 @@ impl Scripts {
                     outcome
                 }
             };
-            if let Err(trap) = self.settle(world, outcome) {
+            if let Err(trap) = self.settle(world, savepoint, outcome) {
                 fault.get_or_insert(trap);
             }
         }
@@ -141,17 +143,24 @@ impl Scripts {
         }
     }
 
-    fn settle(&mut self, world: &mut World, outcome: Result<(), Trap>) -> Result<(), Trap> {
+    fn settle(
+        &mut self,
+        world: &mut World,
+        savepoint: Vec<Value>,
+        outcome: Result<(), Trap>,
+    ) -> Result<(), Trap> {
         match outcome {
             Ok(()) => match self.effects.commit(world) {
                 Ok(()) => Ok(()),
                 Err(trap) => {
                     self.effects.rollback(world);
+                    self.vm.rewind(savepoint);
                     Err(trap)
                 }
             },
             Err(trap) => {
                 self.effects.rollback(world);
+                self.vm.rewind(savepoint);
                 Err(trap)
             }
         }

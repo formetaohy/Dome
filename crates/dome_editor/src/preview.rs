@@ -5,7 +5,7 @@ use dome_asset::{Library, Refresh};
 use dome_ecs::{Entity, LocalTransform, World, propagate, propagate_step, snapshot};
 use dome_gpu::{AddressMode, FilterMode, Gpu, SamplerDesc, Texture, TextureFormat, TextureUsages};
 use dome_math::{Quat, Transform, Vec3};
-use dome_render::{Camera, DirectionalLight, PointLight, Renderer, Target};
+use dome_render::{Camera, DirectionalLight, Pick, PointLight, Renderer, Target};
 use dome_scene::Scene;
 use dome_schema::{Registry, SceneSync};
 use dome_ui::Ui;
@@ -266,8 +266,11 @@ impl Preview {
         self.pose = self.pose.wrapping_add(1);
     }
 
-    pub(crate) fn pick(&mut self, point: dome_math::Vec2) -> Option<String> {
-        let entity = self.renderer.pick(point)?;
+    pub(crate) fn pick(&mut self, point: dome_math::Vec2) -> Pick {
+        self.renderer.pick(point)
+    }
+
+    pub(crate) fn node(&self, entity: Entity) -> Option<String> {
         self.world
             .get::<dome_schema::SceneNode>(entity)
             .map(|node| node.id.clone())

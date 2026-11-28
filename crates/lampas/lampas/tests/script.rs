@@ -429,17 +429,24 @@ component Mark {
     on: bool = true,
 }
 
+global attempts: int = 0;
+
 system mark() {
     let first = spawn();
     add(first, Mark {});
+    let second = spawn();
+    add(second, Mark {});
 }
 
 system explode(mark: write Mark) {
+    attempts += 1;
+    if attempts > 1 {
+        let items = [1, 2];
+        log(text(items[5]));
+    }
     mark.on = false;
-    let second = spawn();
-    add(second, Mark {});
-    let items = [1, 2];
-    log(text(items[5]));
+    let third = spawn();
+    add(third, Mark {});
 }
 "#;
 
@@ -464,23 +471,25 @@ fn a_system_fault_discards_the_commands_its_run_recorded() {
     let mark = component(&scripts, "Mark");
     assert_eq!(
         world.dynamic().column(mark).len(),
-        1,
+        2,
         "the fault discards the commands of its run",
     );
     assert_eq!(
         world.len(),
-        1,
-        "the fault reclaims the entity its run spawned",
+        2,
+        "the fault reclaims the entities its run spawned",
     );
-    let held = world
-        .dynamic()
-        .entities(mark)
-        .next()
-        .expect("the marking system commits its entity");
+    for held in world.dynamic().entities(mark) {
+        assert_eq!(
+            value(&world, &scripts, held, "Mark", "on"),
+            Value::Bool(true),
+            "the fault takes back the field its run wrote",
+        );
+    }
     assert_eq!(
-        value(&world, &scripts, held, "Mark", "on"),
-        Value::Bool(true),
-        "the fault takes back the field its run wrote",
+        scripts.globals()[0],
+        Value::Int(0),
+        "the fault takes back the globals the entities it already ran wrote",
     );
     assert!(messages.borrow().is_empty());
     assert_eq!(

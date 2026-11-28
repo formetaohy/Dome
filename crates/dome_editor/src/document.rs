@@ -37,6 +37,10 @@ impl Document {
         self.conflicted
     }
 
+    pub(crate) fn writable(&self) -> bool {
+        self.readable
+    }
+
     pub(crate) fn foreign(&self) -> bool {
         digest(&self.path) != self.base
     }

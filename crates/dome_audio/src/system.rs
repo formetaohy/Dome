@@ -1,5 +1,5 @@
 use crate::bus::{AudioBus, BusState};
-use crate::command::{Command, Topology, Voice};
+use crate::command::{Command, Voice};
 use crate::component::{AudioListener, AudioSource};
 use crate::device::{Output, Stream};
 use crate::garbage;
@@ -136,9 +136,16 @@ pub struct Audio {
     buses: Vec<BusParams>,
     scratch: Vec<BusParams>,
     fingerprint: u64,
-    topology: bool,
+    pending: Pending,
     revision: u64,
     reopen: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pending {
+    Synced,
+    Layout,
+    Params,
 }
 
 impl Audio {
@@ -164,7 +171,7 @@ impl Audio {
             buses: vec![BusParams::default()],
             scratch: Vec::new(),
             fingerprint: 0,
-            topology: false,
+            pending: Pending::Synced,
             revision: 0,
             reopen: true,
         };
@@ -316,18 +323,25 @@ impl Audio {
         }
         self.fingerprint = fingerprint;
         graph::params(world, &self.layout, &self.bus_entities, &mut self.scratch);
-        if rebuilt || self.scratch != self.buses || self.topology {
-            let topology = Topology {
+        if rebuilt {
+            self.pending = Pending::Layout;
+        } else if self.pending != Pending::Layout && self.scratch != self.buses {
+            self.pending = Pending::Params;
+        }
+        let command = match self.pending {
+            Pending::Synced => return,
+            Pending::Layout => Command::Layout {
                 layout: Arc::clone(&self.layout),
                 params: Arc::new(self.scratch.clone()),
-            };
-            if self.send(Command::Topology(topology)) {
-                std::mem::swap(&mut self.scratch, &mut self.buses);
-                self.topology = false;
-                self.revision = self.revision.wrapping_add(1);
-            } else {
-                self.topology = true;
-            }
+            },
+            Pending::Params => Command::Params {
+                params: Arc::new(self.scratch.clone()),
+            },
+        };
+        if self.send(command) {
+            std::mem::swap(&mut self.scratch, &mut self.buses);
+            self.pending = Pending::Synced;
+            self.revision = self.revision.wrapping_add(1);
         }
     }
 

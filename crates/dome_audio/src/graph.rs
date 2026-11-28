@@ -3,6 +3,7 @@ use dome_ecs::{Entity, World};
 use std::collections::VecDeque;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 pub(crate) const MAX_BUSES: usize = 32;
 pub(crate) const BLOCK_FRAMES: usize = 512;
@@ -32,7 +33,7 @@ impl Default for BusParams {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BusNode {
-    id: String,
+    pub(crate) id: Arc<str>,
     parent: Option<usize>,
     send: Option<usize>,
 }
@@ -63,7 +64,7 @@ impl Layout {
     pub(crate) fn master() -> Self {
         Self {
             buses: vec![BusNode {
-                id: String::new(),
+                id: Arc::from(""),
                 parent: None,
                 send: None,
             }],
@@ -94,7 +95,7 @@ impl Layout {
     }
 
     pub(crate) fn index(&self, id: &str) -> Option<usize> {
-        self.buses.iter().position(|bus| bus.id == id)
+        self.buses.iter().position(|bus| *bus.id == *id)
     }
 }
 
@@ -152,7 +153,7 @@ pub(crate) fn layout_of(links: &[BusLink<'_>]) -> Result<Layout, String> {
         .iter()
         .enumerate()
         .map(|(index, link)| BusNode {
-            id: String::from(link.id),
+            id: Arc::from(link.id),
             parent: topology.parents[index],
             send: topology.sends[index],
         })
