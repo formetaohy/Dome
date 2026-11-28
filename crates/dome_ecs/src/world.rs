@@ -269,8 +269,12 @@ impl World {
         }
     }
 
-    pub fn reset_dynamic(&mut self, layout: &[Layout]) {
-        self.dynamic.reset(layout);
+    pub fn reset_dynamic(&mut self, layout: &[Layout]) -> Dynamic {
+        self.dynamic.reset(layout)
+    }
+
+    pub fn restore_dynamic(&mut self, held: Dynamic, layout: &[Layout]) {
+        self.dynamic.restore(held, layout);
     }
 
     pub fn dynamic(&self) -> &Dynamic {

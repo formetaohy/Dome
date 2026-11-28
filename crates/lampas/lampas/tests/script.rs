@@ -110,7 +110,7 @@ system hurt(motion: read Motion, health: write Health) {
     }
 }
 
-fixed system count() {
+system count() {
     ticks += 1;
 }
 
@@ -122,6 +122,16 @@ system report() {
         total += float(length(name));
     }
     log(text(total) + " " + text(size) + " " + names[0] + tense());
+}
+
+schedule update {
+    move,
+    hurt,
+    report,
+}
+
+schedule fixed {
+    count,
 }
 "#;
 
@@ -208,6 +218,11 @@ system skip(mark: read Mark, tally: write Tally) {
     }
     tally.hits += 1;
 }
+
+schedule update {
+    walk,
+    skip,
+}
 "#;
 
 #[test]
@@ -264,6 +279,12 @@ system breed() {
 system clear(mark: read Mark) {
     remove(self, Mark);
 }
+
+schedule update {
+    age,
+    breed,
+    clear,
+}
 "#;
 
 #[test]
@@ -313,6 +334,10 @@ component Speed {
 
 system move(speed: write Speed) {
     speed.value = 1;
+}
+
+schedule update {
+    move,
 }
 "#;
 
@@ -448,6 +473,11 @@ system explode(mark: write Mark) {
     let third = spawn();
     add(third, Mark {});
 }
+
+schedule update {
+    mark,
+    explode,
+}
 "#;
 
 #[test]
@@ -512,6 +542,10 @@ system gather() {
     let zero = 0;
     log(text(ticks / zero));
 }
+
+schedule update {
+    gather,
+}
 "#;
 
 #[test]
@@ -563,6 +597,100 @@ fn a_deep_call_returns_the_trap_the_call_stack_names() {
     assert_eq!(trap.instruction(), Some(at));
     assert_eq!(trap.message(), "the lampas call stack overflows");
     assert!(messages.borrow().is_empty());
+}
+
+const ORDER: &str = r#"
+component Tag {
+    value: int = 0,
+}
+
+boot {
+    let held = spawn();
+    add(held, Tag {});
+}
+
+system second(tag: write Tag) {
+    if tag.value == 1 {
+        tag.value = 12;
+    }
+}
+
+system first(tag: write Tag) {
+    tag.value = 1;
+}
+
+schedule update {
+    first,
+    second,
+}
+"#;
+
+#[test]
+fn a_schedule_runs_the_systems_it_lists_in_the_order_it_names_them() {
+    let (hosts, _) = hosts();
+    let module = compile("order.amp", ORDER, &hosts).expect("the script checks");
+    let mut scripts = Scripts::new(module, hosts);
+    let mut world = World::new();
+    scripts.boot(&mut world).expect("the script boots");
+    scripts.update(&mut world).expect("the script updates");
+    let entity = world
+        .dynamic()
+        .entities(component(&scripts, "Tag"))
+        .next()
+        .expect("the boot spawns the entity its systems walk");
+    assert_eq!(
+        value(&world, &scripts, entity, "Tag", "value"),
+        Value::Int(12),
+        "the schedule runs first before second however the file declares them",
+    );
+}
+
+const RESUMED: &str = r#"
+component Mark {
+    on: bool = true,
+}
+
+global boots: int = 0;
+
+boot {
+    boots += 1;
+    let held = spawn();
+    add(held, Mark {});
+    if boots > 1 {
+        let zero = 0;
+        log(text(1 / zero));
+    }
+}
+"#;
+
+#[test]
+fn a_boot_fault_keeps_the_components_the_boot_before_it_held() {
+    let (hosts, messages) = hosts();
+    let module = compile("resumed.amp", RESUMED, &hosts).expect("the script checks");
+    let mut scripts = Scripts::new(module, hosts);
+    let mut world = World::new();
+    scripts.boot(&mut world).expect("the script boots");
+    assert_eq!(world.dynamic().column(component(&scripts, "Mark")).len(), 1);
+    let trap = scripts.boot(&mut world).expect_err("the divide faults");
+    assert_eq!(trap.message(), "the int divides by zero");
+    assert!(messages.borrow().is_empty());
+    assert_eq!(
+        world.dynamic().column(component(&scripts, "Mark")).len(),
+        1,
+        "a faulted boot keeps the components the boot before it held",
+    );
+    assert_eq!(world.len(), 1, "a faulted boot spawns no entity");
+    let entity = world
+        .dynamic()
+        .entities(component(&scripts, "Mark"))
+        .next()
+        .expect("the boot before the fault keeps its entity");
+    assert_eq!(
+        value(&world, &scripts, entity, "Mark", "on"),
+        Value::Bool(true),
+        "a faulted boot rewrites no field the boot before it wrote",
+    );
+    assert_eq!(scripts.globals()[0], Value::Int(1));
 }
 
 const SPAWN: &str = r#"

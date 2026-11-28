@@ -3,13 +3,13 @@ const GLB_VERSION: u32 = 2;
 const JSON_CHUNK: u32 = 0x4E4F_534A;
 const BINARY_CHUNK: u32 = 0x004E_4942;
 
-pub(crate) struct Container {
-    pub(crate) json: Vec<u8>,
-    pub(crate) binary: Option<Vec<u8>>,
+pub(crate) struct Container<'a> {
+    pub(crate) json: &'a [u8],
+    pub(crate) binary: Option<&'a [u8]>,
 }
 
-impl Container {
-    pub(crate) fn open(bytes: &[u8]) -> Result<Self, String> {
+impl<'a> Container<'a> {
+    pub(crate) fn open(bytes: &'a [u8]) -> Result<Self, String> {
         if word(bytes, 0) == Some(GLB_MAGIC) {
             return Self::binary(bytes);
         }
@@ -17,12 +17,12 @@ impl Container {
             return Err(String::from("holds no text"));
         }
         Ok(Self {
-            json: bytes.to_vec(),
+            json: bytes,
             binary: None,
         })
     }
 
-    fn binary(bytes: &[u8]) -> Result<Self, String> {
+    fn binary(bytes: &'a [u8]) -> Result<Self, String> {
         if bytes.len() < 12 {
             return Err(String::from("ends inside its header"));
         }
@@ -52,7 +52,7 @@ impl Container {
                     if json.is_some() || binary.is_some() {
                         return Err(String::from("holds a second JSON chunk"));
                     }
-                    json = Some(bytes[start..end].to_vec());
+                    json = Some(&bytes[start..end]);
                 }
                 BINARY_CHUNK => {
                     if json.is_none() {
@@ -61,7 +61,7 @@ impl Container {
                     if binary.is_some() {
                         return Err(String::from("holds a second binary chunk"));
                     }
-                    binary = Some(bytes[start..end].to_vec());
+                    binary = Some(&bytes[start..end]);
                 }
                 _ => return Err(format!("holds the unknown chunk {kind}")),
             }

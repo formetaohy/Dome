@@ -9,6 +9,7 @@ use crate::uri;
 use crate::vertex::{SkinVertex, Vertex};
 use dome_animation::{Interpolation, Property};
 use dome_math::Mat4;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,7 +72,7 @@ impl Model {
         let what = format!("the model {}", path.display());
         let bytes = fs::read(path).map_err(|error| format!("{what} reads no bytes: {error}"))?;
         let container = Container::open(&bytes).map_err(|error| format!("{what} {error}"))?;
-        let document: Document = serde_json::from_slice(&container.json)
+        let document: Document = serde_json::from_slice(container.json)
             .map_err(|error| format!("{what} holds no glTF text: {error}"))?;
         let base = base_of(path);
         let mut buffers = Vec::new();
@@ -102,7 +103,7 @@ impl Model {
     pub fn parse(bytes: &[u8], path: &Path) -> Result<Self, String> {
         let what = format!("the model {}", path.display());
         let container = Container::open(bytes).map_err(|error| format!("{what} {error}"))?;
-        let document: Document = serde_json::from_slice(&container.json)
+        let document: Document = serde_json::from_slice(container.json)
             .map_err(|error| format!("{what} holds no glTF text: {error}"))?;
         check_version(&document, &what)?;
         let base = base_of(path);
@@ -166,8 +167,8 @@ fn images(
         .map(|(index, image)| {
             let held = format!("image {index} of {what}");
             let bytes = match (&image.uri, image.buffer_view) {
-                (Some(uri), None) => uri::read(uri, base, &held)?,
-                (None, Some(view)) => store.view_bytes(view)?.to_vec(),
+                (Some(uri), None) => Cow::Owned(uri::read(uri, base, &held)?),
+                (None, Some(view)) => Cow::Borrowed(store.view_bytes(view)?),
                 _ => return Err(format!("{held} holds no single source")),
             };
             Image::decode(&bytes, &held, samplers[index])

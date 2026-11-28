@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[derive(Clone)]
 pub struct SceneConfig {
     pub path: PathBuf,
     pub root: PathBuf,
@@ -96,6 +97,7 @@ pub struct App {
     config: AppConfig,
     wake: Option<Waker>,
     session: Option<Session>,
+    live: Option<LiveScene>,
     reload: Option<String>,
     started: bool,
     headless: bool,
@@ -117,7 +119,6 @@ struct Session {
     width: u32,
     height: u32,
     format: TextureFormat,
-    live: Option<LiveScene>,
 }
 
 struct GpuHealth<'a> {
@@ -429,7 +430,6 @@ impl Session {
             width,
             height,
             format,
-            live: None,
         }
     }
 
@@ -461,85 +461,7 @@ impl Session {
             width,
             height,
             format,
-            live: None,
         }
-    }
-
-    fn load_scene(
-        &mut self,
-        world: &mut World,
-        file: &SceneConfig,
-        registry: &Arc<Registry>,
-        load: AssetLoad,
-        wake: impl Fn() + Send + Sync + 'static,
-    ) -> Result<(), String> {
-        let health = GpuHealth {
-            context: &self.context,
-            events: &self.events,
-        };
-        let live = LiveScene::new(
-            SceneConfig {
-                path: file.path.clone(),
-                root: file.root.clone(),
-            },
-            registry,
-            &mut self.renderer,
-            &health,
-            world,
-            load,
-            wake,
-        )?;
-        self.live = Some(live);
-        Ok(())
-    }
-
-    fn recover_scene(
-        &mut self,
-        mut live: LiveScene,
-        world: &mut World,
-        load: AssetLoad,
-    ) -> Result<(), String> {
-        let health = GpuHealth {
-            context: &self.context,
-            events: &self.events,
-        };
-        live.recover(&mut self.renderer, &health, world, load)?;
-        self.live = Some(live);
-        Ok(())
-    }
-
-    fn reload(
-        &mut self,
-        world: &mut World,
-        registry: &Arc<Registry>,
-        load: AssetLoad,
-    ) -> Option<Reload> {
-        let live = self.live.as_mut()?;
-        let health = GpuHealth {
-            context: &self.context,
-            events: &self.events,
-        };
-        live.update(world, registry, &mut self.renderer, &health, load)
-    }
-
-    fn take_change(&mut self) -> Option<Change> {
-        self.live.as_mut()?.take_change()
-    }
-
-    fn rewatch(&mut self) {
-        if let Some(live) = &mut self.live {
-            live.rewatch();
-        }
-    }
-
-    fn scene_ready(&self) -> bool {
-        self.live
-            .as_ref()
-            .is_some_and(|live| live.sync.applied().is_some())
-    }
-
-    fn recovering(&self) -> bool {
-        self.live.as_ref().is_some_and(|live| live.recovering)
     }
 
     fn resurface(&mut self, window: &Window) -> bool {
@@ -664,6 +586,7 @@ impl App {
             config,
             wake: None,
             session: None,
+            live: None,
             reload: None,
             started: false,
             headless: false,
@@ -742,10 +665,7 @@ impl App {
                 GpuCondition::Fault(message) => panic!("the graphics device fails: {message}"),
             }
             self.reload_scene(&mut session, config.asset_timeout);
-            let loading = session
-                .live
-                .as_ref()
-                .is_some_and(|live| live.sync.applied().is_none());
+            let loading = self.loading();
             if loading {
                 self.world
                     .resource_mut::<Input>()
@@ -792,26 +712,15 @@ impl App {
         screenshot
     }
 
-    fn restart_headless(&mut self, config: &HeadlessConfig, mut previous: Session) -> Session {
-        let mut live = previous.live.take();
-        if let Some(live) = &mut live {
-            live.unload();
-        }
-        drop(previous);
-        let mut session = Session::headless(config.width, config.height, &self.config.gpu);
-        if let Some(live) = live {
-            session
-                .recover_scene(
-                    live,
-                    &mut self.world,
-                    AssetLoad {
-                        blocking: true,
-                        timeout: config.asset_timeout,
-                    },
-                )
-                .unwrap_or_else(|error| panic!("{error}"));
-        }
-        session
+    fn restart_headless(&mut self, config: &HeadlessConfig, previous: Session) -> Session {
+        self.reopen(
+            Session::headless(config.width, config.height, &self.config.gpu),
+            Some(previous),
+            AssetLoad {
+                blocking: true,
+                timeout: config.asset_timeout,
+            },
+        )
     }
 
     fn start(&mut self, session: &mut Session, focused: bool, asset_timeout: Duration) {
@@ -819,10 +728,6 @@ impl App {
             blocking: self.headless,
             timeout: asset_timeout,
         };
-        assert!(
-            !self.started,
-            "a resumed application rebuilds the world a lost surface owned"
-        );
         if self.config.audio {
             self.world.insert_resource(Audio::open());
         }
@@ -830,18 +735,12 @@ impl App {
             .resource_mut::<Input>()
             .expect("an application keeps its input")
             .handle(Event::Focused(focused));
-        let waker = self.wake.clone();
-        let wake = move || {
-            if let Some(waker) = &waker {
-                waker.wake();
-            }
-        };
         let mut loaded = false;
-        if let Some(file) = &self.config.scene {
-            match session.load_scene(&mut self.world, file, &self.config.registry, load, wake) {
+        if let Some(file) = self.config.scene.clone() {
+            match self.load_scene(session, file, load) {
                 Ok(()) => {
                     loaded = true;
-                    self.reload = session.live.as_mut().and_then(LiveScene::take_error);
+                    self.reload = self.live.as_mut().and_then(LiveScene::take_error);
                 }
                 Err(error) => {
                     eprintln!("{error}");
@@ -860,12 +759,93 @@ impl App {
                 .insert(camera, Camera::new(std::f32::consts::FRAC_PI_2, 0.1, 100.0));
             self.loading_camera = Some(camera);
         }
-        if loaded && !session.scene_ready() {
+        if loaded && !self.scene_ready() {
             self.startup_pending = !self.startup.is_empty();
         } else {
             self.settle_startup(session);
         }
         self.started = true;
+    }
+
+    fn wake(&self) -> impl Fn() + Send + Sync + 'static {
+        let waker = self.wake.clone();
+        move || {
+            if let Some(waker) = &waker {
+                waker.wake();
+            }
+        }
+    }
+
+    fn load_scene(
+        &mut self,
+        session: &mut Session,
+        file: SceneConfig,
+        load: AssetLoad,
+    ) -> Result<(), String> {
+        let wake = self.wake();
+        let health = GpuHealth {
+            context: &session.context,
+            events: &session.events,
+        };
+        let live = LiveScene::new(
+            file,
+            &self.config.registry,
+            &mut session.renderer,
+            &health,
+            &mut self.world,
+            load,
+            wake,
+        )?;
+        self.live = Some(live);
+        Ok(())
+    }
+
+    fn recover(
+        &mut self,
+        session: &mut Session,
+        mut live: LiveScene,
+        load: AssetLoad,
+    ) -> Result<(), String> {
+        let health = GpuHealth {
+            context: &session.context,
+            events: &session.events,
+        };
+        live.recover(&mut session.renderer, &health, &mut self.world, load)?;
+        self.live = Some(live);
+        Ok(())
+    }
+
+    fn reopen(
+        &mut self,
+        mut session: Session,
+        previous: Option<Session>,
+        load: AssetLoad,
+    ) -> Session {
+        if let Some(live) = &mut self.live {
+            live.unload();
+        }
+        drop(previous);
+        if let Some(live) = self.live.take() {
+            self.recover(&mut session, live, load)
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+        session
+    }
+
+    fn scene_ready(&self) -> bool {
+        self.live
+            .as_ref()
+            .is_some_and(|live| live.sync.applied().is_some())
+    }
+
+    fn loading(&self) -> bool {
+        self.live
+            .as_ref()
+            .is_some_and(|live| live.sync.applied().is_none())
+    }
+
+    fn recovering(&self) -> bool {
+        self.live.as_ref().is_some_and(|live| live.recovering)
     }
 
     fn sync_debug(&mut self) {
@@ -931,32 +911,51 @@ impl App {
     }
 
     fn reload_scene(&mut self, session: &mut Session, asset_timeout: Duration) {
-        let reload = session.reload(
-            &mut self.world,
-            &self.config.registry,
-            AssetLoad {
-                blocking: self.headless,
-                timeout: asset_timeout,
-            },
-        );
+        let load = AssetLoad {
+            blocking: self.headless,
+            timeout: asset_timeout,
+        };
+        let reload = {
+            let health = GpuHealth {
+                context: &session.context,
+                events: &session.events,
+            };
+            let Self {
+                live,
+                world,
+                config,
+                ..
+            } = self;
+            live.as_mut().and_then(|live| {
+                live.update(
+                    world,
+                    &config.registry,
+                    &mut session.renderer,
+                    &health,
+                    load,
+                )
+            })
+        };
         let Some(reload) = reload else {
             return;
         };
-        if reload.renew {
-            session.rewatch();
+        if reload.renew
+            && let Some(live) = &mut self.live
+        {
+            live.rewatch();
         }
-        if session.scene_ready()
+        if self.scene_ready()
             && let Some(camera) = self.loading_camera.take()
         {
             self.world.despawn(camera);
         }
-        if self.startup_pending && session.scene_ready() {
+        if self.startup_pending && self.scene_ready() {
             self.startup_pending = false;
             self.settle_startup(session);
         }
-        if session.scene_ready()
+        if self.scene_ready()
             && !self.startup_pending
-            && let Some(change) = session.take_change()
+            && let Some(change) = self.live.as_mut().and_then(LiveScene::take_change)
         {
             for observer in &self.reloads {
                 observer(&mut self.world, change);
@@ -972,9 +971,25 @@ impl App {
 impl Handler for App {
     fn opened(&mut self, window: &Window, waker: Waker) {
         self.wake = Some(waker);
-        let mut session = Session::window(window, &self.config.gpu);
-        self.start(&mut session, window.has_focus(), Duration::ZERO);
-        self.session = Some(session);
+        let session = Session::window(window, &self.config.gpu);
+        if self.started {
+            self.session = Some(self.reopen(
+                session,
+                None,
+                AssetLoad {
+                    blocking: false,
+                    timeout: Duration::ZERO,
+                },
+            ));
+            self.world
+                .resource_mut::<Input>()
+                .expect("an application keeps its input")
+                .handle(Event::Focused(window.has_focus()));
+        } else {
+            let mut session = session;
+            self.start(&mut session, window.has_focus(), Duration::ZERO);
+            self.session = Some(session);
+        }
     }
 
     fn frame(&mut self, window: &Window, real: Duration) -> Flow {
@@ -1017,36 +1032,34 @@ impl Handler for App {
             .handle(event);
     }
 
-    fn suspended(&mut self, _window: &Window) -> Flow {
-        Flow::Exit
+    fn suspended(&mut self, _window: &Window) {
+        self.set_audio_paused(true);
+        if let Some(live) = &mut self.live {
+            live.unload();
+        }
+        self.session = None;
+        self.world
+            .resource_mut::<Input>()
+            .expect("an application keeps its input")
+            .handle(Event::Focused(false));
     }
 
-    fn closed(&mut self, _window: &Window) {
+    fn closed(&mut self) {
         self.session = None;
     }
 }
 
 impl App {
-    fn recover_window(&mut self, window: &Window, mut previous: Session) {
-        let mut live = previous.live.take();
-        if let Some(live) = &mut live {
-            live.unload();
-        }
-        drop(previous);
-        let mut session = Session::window(window, &self.config.gpu);
-        if let Some(live) = live {
-            session
-                .recover_scene(
-                    live,
-                    &mut self.world,
-                    AssetLoad {
-                        blocking: false,
-                        timeout: Duration::ZERO,
-                    },
-                )
-                .unwrap_or_else(|error| panic!("{error}"));
-        }
-        self.session = Some(session);
+    fn recover_window(&mut self, window: &Window, previous: Session) {
+        let session = Session::window(window, &self.config.gpu);
+        self.session = Some(self.reopen(
+            session,
+            Some(previous),
+            AssetLoad {
+                blocking: false,
+                timeout: Duration::ZERO,
+            },
+        ));
     }
 
     fn frame_session(
@@ -1060,10 +1073,7 @@ impl App {
         if window.is_minimized() || width == 0 || height == 0 {
             return Ok(Flow::Idle);
         }
-        let loading = session
-            .live
-            .as_ref()
-            .is_some_and(|live| live.sync.applied().is_none());
+        let loading = self.loading();
         self.set_audio_paused(loading);
         if loading {
             self.world
@@ -1080,7 +1090,7 @@ impl App {
             .expect("an application keeps its clear color")
             .0;
         self.sync_debug();
-        if session.recovering() {
+        if self.recovering() {
             return Ok(Flow::Wait(RECOVERY_POLL));
         }
         session.draw_window(&mut self.world, clear, width, height)?;

@@ -3,8 +3,6 @@ use crate::ring;
 use crate::source::Input;
 use std::sync::Arc;
 
-const PENDING: usize = 64;
-
 pub(crate) enum Garbage {
     Layout(Arc<Layout>),
     Params(Arc<Vec<BusParams>>),
@@ -16,7 +14,7 @@ pub(crate) fn channel(capacity: usize) -> (Queue, Bin) {
     (
         Queue {
             producer,
-            pending: Vec::with_capacity(PENDING),
+            pending: Vec::with_capacity(capacity),
         },
         Bin { consumer },
     )

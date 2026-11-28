@@ -112,6 +112,8 @@ pub(crate) struct Mixer {
     voices: Box<[Slot; MAX_VOICES]>,
     buses: Vec<Bus>,
     spares: Vec<Bus>,
+    pool: Vec<Option<Bus>>,
+    matched: Vec<Option<usize>>,
     layout: Arc<Layout>,
     active: Arc<AtomicUsize>,
     master: f32,
@@ -152,6 +154,8 @@ impl Mixer {
             voices: Box::new(std::array::from_fn(|_| Slot::new())),
             buses,
             spares,
+            pool: Vec::with_capacity(MAX_BUSES),
+            matched: Vec::with_capacity(MAX_BUSES),
             layout,
             active,
             master: 1.0,
@@ -322,11 +326,13 @@ impl Mixer {
             used <= MAX_BUSES,
             "an audio layout of {used} buses outruns the {MAX_BUSES} the mixer holds",
         );
-        let mut pool = std::mem::take(&mut self.buses)
-            .into_iter()
-            .map(Some)
-            .collect::<Vec<_>>();
-        let mut matched = vec![None; used];
+        let mut pool = std::mem::take(&mut self.pool);
+        pool.clear();
+        let mut buses = std::mem::take(&mut self.buses);
+        pool.extend(buses.drain(..).map(Some));
+        let mut matched = std::mem::take(&mut self.matched);
+        matched.clear();
+        matched.resize(used, None);
         for at in 0..used {
             let id = &layout.buses()[at].id;
             matched[at] = pool.iter().enumerate().position(|(index, held)| {
@@ -334,14 +340,13 @@ impl Mixer {
                     && held.as_ref().is_some_and(|bus| bus.id == *id)
             });
         }
-        for held in pool.iter_mut().enumerate().filter_map(|(index, held)| {
-            (!matched.contains(&Some(index)))
-                .then(|| held.take())
-                .flatten()
-        }) {
-            self.spares.push(held);
+        for (index, held) in pool.iter_mut().enumerate() {
+            if !matched.contains(&Some(index))
+                && let Some(bus) = held.take()
+            {
+                self.spares.push(bus);
+            }
         }
-        let mut buses = Vec::with_capacity(MAX_BUSES);
         for at in 0..used {
             let node = &layout.buses()[at];
             let mut bus = match matched[at] {
@@ -366,6 +371,8 @@ impl Mixer {
             buses.push(bus);
         }
         self.buses = buses;
+        self.pool = pool;
+        self.matched = matched;
     }
 
     fn apply(&mut self, command: Command) {

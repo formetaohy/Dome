@@ -1,7 +1,7 @@
 use crate::Type;
 use crate::symbol::{ExprInfo, StmtInfo};
 use lampas_bytecode::{ComponentParam, Constant, Kind, Phase};
-use lampas_syntax::{Expr, ExprId, Statement, StmtId};
+use lampas_syntax::{Expr, ExprId, Span, Statement, StmtId};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -42,9 +42,15 @@ pub struct CheckedFunction {
 #[derive(Clone, Debug)]
 pub struct CheckedSystem {
     pub name: String,
-    pub phase: Phase,
+    pub span: Span,
     pub params: Vec<ComponentParam>,
     pub locals: u16,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CheckedRun {
+    pub phase: Phase,
+    pub system: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +64,7 @@ pub struct Checked {
     pub globals: Vec<CheckedGlobal>,
     pub functions: Vec<CheckedFunction>,
     pub systems: Vec<CheckedSystem>,
+    pub runs: Vec<CheckedRun>,
     pub boot: Option<CheckedBoot>,
     pub hosts: usize,
     pub(crate) infos: HashMap<ExprId, ExprInfo>,

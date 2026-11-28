@@ -228,12 +228,26 @@ impl Dynamic {
         Self::default()
     }
 
-    pub fn reset(&mut self, layout: &[Layout]) {
-        self.columns = layout
+    pub fn reset(&mut self, layout: &[Layout]) -> Dynamic {
+        let columns = layout
             .iter()
             .cloned()
             .map(DynamicColumn::new)
             .collect::<Vec<_>>();
+        std::mem::replace(self, Self { columns })
+    }
+
+    pub fn restore(&mut self, held: Dynamic, layout: &[Layout]) {
+        assert_eq!(
+            self.columns.len(),
+            layout.len(),
+            "a restored store keeps the components its layout declares",
+        );
+        for (at, (held, layout)) in held.columns.into_iter().zip(layout).enumerate() {
+            if held.layout == *layout {
+                self.columns[at] = held;
+            }
+        }
     }
 
     pub fn column(&self, component: u16) -> &DynamicColumn {

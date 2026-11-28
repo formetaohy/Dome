@@ -37,6 +37,7 @@ struct Launcher {
     launch: Option<Project>,
     child: Option<Child>,
     session: Option<Session>,
+    held: Option<Ui<Action>>,
     origin: Instant,
     redraw: bool,
     ime: bool,
@@ -53,15 +54,12 @@ impl Launcher {
             launch: None,
             child: None,
             session: None,
+            held: None,
             origin: Instant::now(),
             redraw: true,
             ime: false,
             ui_at: None,
         }
-    }
-
-    fn open(&mut self, window: &Window) {
-        self.open_with(window, None);
     }
 
     fn open_with(&mut self, window: &Window, held: Option<Ui<Action>>) {
@@ -74,9 +72,15 @@ impl Launcher {
     }
 
     fn rebuild(&mut self, window: &Window) {
-        let held = self.session.take().map(|session| session.ui);
+        self.detach();
+        let held = self.held.take();
         self.open_with(window, held);
         self.redraw = true;
+    }
+
+    fn detach(&mut self) {
+        self.ime = false;
+        self.held = self.session.take().map(|session| session.ui);
     }
 
     fn resurface(&mut self, window: &Window) {
@@ -324,7 +328,8 @@ impl Launcher {
 
 impl Handler for Launcher {
     fn opened(&mut self, window: &Window, _waker: Waker) {
-        self.open(window);
+        let held = self.held.take();
+        self.open_with(window, held);
     }
 
     fn frame(&mut self, window: &Window, real: Duration) -> Flow {
@@ -351,12 +356,13 @@ impl Handler for Launcher {
         }
     }
 
-    fn suspended(&mut self, _window: &Window) -> Flow {
-        Flow::Exit
+    fn suspended(&mut self, _window: &Window) {
+        self.detach();
     }
 
-    fn closed(&mut self, _window: &Window) {
+    fn closed(&mut self) {
         self.session = None;
+        self.held = None;
         if let Some(mut child) = self.child.take() {
             let _ = child.wait();
         }

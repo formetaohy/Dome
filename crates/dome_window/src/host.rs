@@ -27,11 +27,9 @@ pub trait Handler: 'static {
         true
     }
 
-    fn suspended(&mut self, _window: &Window) -> Flow {
-        Flow::Exit
-    }
+    fn suspended(&mut self, _window: &Window) {}
 
-    fn closed(&mut self, _window: &Window) {}
+    fn closed(&mut self) {}
 }
 
 pub fn run<H: Handler>(config: WindowConfig, handler: H) -> H {
@@ -46,6 +44,7 @@ pub fn run<H: Handler>(config: WindowConfig, handler: H) -> H {
         window: None,
         last: None,
         timer: false,
+        finished: false,
     };
     event_loop
         .run_app(&mut host)
@@ -60,13 +59,20 @@ struct Host<H: Handler> {
     window: Option<Window>,
     last: Option<Instant>,
     timer: bool,
+    finished: bool,
 }
 
 impl<H: Handler> Host<H> {
-    fn close(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(window) = self.window.take() {
-            self.handler.closed(&window);
+    fn finish(&mut self) {
+        if std::mem::replace(&mut self.finished, true) {
+            return;
         }
+        self.window = None;
+        self.handler.closed();
+    }
+
+    fn close(&mut self, event_loop: &ActiveEventLoop) {
+        self.finish();
         event_loop.exit();
     }
 
@@ -210,19 +216,16 @@ impl<H: Handler> ApplicationHandler<Wake> for Host<H> {
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
         self.last = None;
+        self.timer = false;
+        event_loop.set_control_flow(ControlFlow::Wait);
         let Some(window) = self.window.take() else {
             return;
         };
-        if self.handler.suspended(&window) == Flow::Exit {
-            self.handler.closed(&window);
-            event_loop.exit();
-        }
+        self.handler.suspended(&window);
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = self.window.take() {
-            self.handler.closed(&window);
-        }
+        self.finish();
     }
 }
 

@@ -144,6 +144,35 @@ fn container(json: &[u8], binary: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+fn a_model_refuses_a_buffer_view_past_the_bytes_its_buffer_names() {
+    let mut binary = Vec::new();
+    for value in [-1.0f32, -1.0, 0.0, 1.0, -1.0, 0.0, 0.0, 1.0, 0.0] {
+        binary.extend(value.to_le_bytes());
+    }
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "scene": 0,
+        "scenes": [{ "nodes": [0] }],
+        "nodes": [{ "mesh": 0 }],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+        "accessors": [{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3" }],
+        "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }],
+        "buffers": [{ "byteLength": 32 }],
+    });
+    let glb = container(
+        &serde_json::to_vec(&document).expect("a test writes JSON"),
+        &binary,
+    );
+    let error = Model::parse(&glb, Path::new("model.glb"))
+        .err()
+        .expect("a buffer view past the buffer it names holds no model");
+    assert!(
+        error.contains("beyond its buffer"),
+        "the model names the buffer view it cannot read: {error}",
+    );
+}
+
+#[test]
 fn a_model_reads_skins_and_animations() {
     let mut binary = Vec::new();
     for value in [-1.0f32, -1.0, 0.0, 1.0, -1.0, 0.0, 0.0, 1.0, 0.0] {

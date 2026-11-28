@@ -1,7 +1,7 @@
 use crate::ast::{
     Access, AssignOp, BinaryOp, Block, BootDecl, ComponentDecl, Expr, ExprKind, FieldDecl,
-    FunctionDecl, GlobalDecl, Ident, Item, Numbering, ParamDecl, Phase, Program, Statement,
-    StatementKind, SystemDecl, TypeExpr, TypeExprKind, UnaryOp,
+    FunctionDecl, GlobalDecl, Ident, Item, Numbering, ParamDecl, Phase, Program, ScheduleDecl,
+    Statement, StatementKind, SystemDecl, TypeExpr, TypeExprKind, UnaryOp,
 };
 use crate::span::{Diagnostic, Sources, Span};
 use crate::token::{Keyword, Punctuation, Token, TokenKind};
@@ -62,14 +62,11 @@ impl<'a> Parser<'a> {
             Some(Keyword::Component) => self.component().map(Item::Component),
             Some(Keyword::Global) => self.global().map(Item::Global),
             Some(Keyword::Function) => self.function().map(Item::Function),
-            Some(Keyword::System) => self.system(Phase::Update).map(Item::System),
-            Some(Keyword::Fixed) => {
-                self.at += 1;
-                self.system(Phase::Fixed).map(Item::System)
-            }
+            Some(Keyword::System) => self.system().map(Item::System),
+            Some(Keyword::Schedule) => self.schedule().map(Item::Schedule),
             Some(Keyword::Boot) => self.boot().map(Item::Boot),
             _ => Err(self.error_here(
-                "a declaration starts with component, global, fn, system, fixed or boot",
+                "a declaration starts with component, global, fn, system, schedule or boot",
             )),
         }
     }
@@ -136,16 +133,38 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn system(&mut self, phase: Phase) -> Result<SystemDecl, Diagnostic> {
+    fn system(&mut self) -> Result<SystemDecl, Diagnostic> {
         self.expect_keyword(Keyword::System)?;
         let name = self.expect_name()?;
         let params = self.params()?;
         let body = self.block()?;
-        Ok(SystemDecl {
-            name,
+        Ok(SystemDecl { name, params, body })
+    }
+
+    fn schedule(&mut self) -> Result<ScheduleDecl, Diagnostic> {
+        self.expect_keyword(Keyword::Schedule)?;
+        let span = self.peek().span;
+        let phase = match self.peek_keyword() {
+            Some(Keyword::Update) => Phase::Update,
+            Some(Keyword::Fixed) => Phase::Fixed,
+            _ => return Err(self.error_here("a schedule names update or fixed")),
+        };
+        self.at += 1;
+        self.expect(Punctuation::LeftBrace)?;
+        let mut systems = Vec::new();
+        while self.peek_punctuation() != Some(Punctuation::RightBrace) {
+            systems.push(self.expect_name()?);
+            if self.peek_punctuation() == Some(Punctuation::Comma) {
+                self.at += 1;
+            } else {
+                break;
+            }
+        }
+        self.expect(Punctuation::RightBrace)?;
+        Ok(ScheduleDecl {
             phase,
-            params,
-            body,
+            span,
+            systems,
         })
     }
 

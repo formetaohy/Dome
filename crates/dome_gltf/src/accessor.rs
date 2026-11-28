@@ -1,10 +1,11 @@
 use crate::document::{Accessor as AccessorDef, BufferView, Document};
 use crate::uri;
 use dome_math::{Mat4, Vec4};
+use std::borrow::Cow;
 use std::path::Path;
 
 pub(crate) struct Store<'a> {
-    buffers: Vec<Vec<u8>>,
+    buffers: Vec<Cow<'a, [u8]>>,
     views: &'a [BufferView],
     accessors: &'a [AccessorDef],
     what: &'a str,
@@ -14,20 +15,21 @@ impl<'a> Store<'a> {
     pub(crate) fn new(
         document: &'a Document,
         base: &Path,
-        binary: Option<Vec<u8>>,
+        binary: Option<&'a [u8]>,
         what: &'a str,
     ) -> Result<Self, String> {
-        let mut binary = binary;
         let buffers = document
             .buffers
             .iter()
             .enumerate()
             .map(|(index, buffer)| {
                 let bytes = match &buffer.uri {
-                    Some(uri) => uri::read(uri, base, what)?,
-                    None if index == 0 => binary
-                        .take()
-                        .ok_or_else(|| format!("{what} holds no binary chunk for its buffer"))?,
+                    Some(uri) => Cow::Owned(uri::read(uri, base, what)?),
+                    None if index == 0 => {
+                        Cow::Borrowed(binary.ok_or_else(|| {
+                            format!("{what} holds no binary chunk for its buffer")
+                        })?)
+                    }
                     None => {
                         return Err(format!("{what} holds the buffer {index} without a source"));
                     }
@@ -39,7 +41,13 @@ impl<'a> Store<'a> {
                         buffer.byte_length,
                     ));
                 }
-                Ok(bytes)
+                Ok(match bytes {
+                    Cow::Borrowed(held) => Cow::Borrowed(&held[..buffer.byte_length]),
+                    Cow::Owned(mut held) => {
+                        held.truncate(buffer.byte_length);
+                        Cow::Owned(held)
+                    }
+                })
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Self {

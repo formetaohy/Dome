@@ -4,6 +4,8 @@ use crate::span::Span;
 pub enum Keyword {
     Component,
     System,
+    Schedule,
+    Update,
     Fixed,
     Boot,
     Global,
@@ -36,6 +38,8 @@ impl Keyword {
         Some(match name {
             "component" => Self::Component,
             "system" => Self::System,
+            "schedule" => Self::Schedule,
+            "update" => Self::Update,
             "fixed" => Self::Fixed,
             "boot" => Self::Boot,
             "global" => Self::Global,
@@ -69,6 +73,8 @@ impl Keyword {
         match self {
             Self::Component => "component",
             Self::System => "system",
+            Self::Schedule => "schedule",
+            Self::Update => "update",
             Self::Fixed => "fixed",
             Self::Boot => "boot",
             Self::Global => "global",

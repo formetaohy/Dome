@@ -18,6 +18,10 @@ boot {
 system turn(spin: read Spin) {
     rotate_y(self, spin.speed * delta());
 }
+
+schedule update {
+    turn,
+}
 "#;
 
 pub(crate) fn write(root: &Path) -> Result<(), String> {

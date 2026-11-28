@@ -1,6 +1,8 @@
 use crate::frames;
 use crate::sound::Channels;
 use crate::wav;
+use lewton::VorbisError;
+use lewton::audio::AudioReadError;
 use lewton::inside_ogg::OggStreamReader;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
@@ -14,6 +16,7 @@ const RIFF: &[u8; 4] = b"RIFF";
 const OGG: &[u8; 4] = b"OggS";
 const LOOKAHEAD: usize = 1 << 15;
 const BLOCK: usize = 4096;
+const SEEK_PREROLL: u64 = 16384;
 const TAIL: u64 = 1 << 17;
 const UNKNOWN: u64 = u64::MAX;
 
@@ -293,9 +296,22 @@ fn decode_vorbis(path: &Path, looping: bool, start: u64, producer: &mut frames::
         let Ok(mut reader) = OggStreamReader::new(BufReader::new(file)) else {
             return served;
         };
-        let mut skip = if first { start } else { 0 };
         let channels = reader.ident_hdr.audio_channels;
+        let mut skip = if first { start } else { 0 };
         let mut pass = 0u64;
+        if first && start > SEEK_PREROLL && reader.seek_absgp_pg(start - SEEK_PREROLL).is_ok() {
+            skip = 0;
+            match land(&mut reader, channels, start) {
+                Some(frames) => {
+                    served += frames.len() as u64;
+                    pass += frames.len() as u64;
+                    if !write(producer, &frames) {
+                        return served;
+                    }
+                }
+                None => return served,
+            }
+        }
         let mut pending: Vec<[f32; 2]> = Vec::new();
         let mut broken = false;
         let mut round = 0u64;
@@ -359,6 +375,48 @@ fn decode_vorbis(path: &Path, looping: bool, start: u64, producer: &mut frames::
         }
         first = false;
         from_zero = true;
+    }
+}
+
+fn land(
+    reader: &mut OggStreamReader<BufReader<File>>,
+    channels: u8,
+    start: u64,
+) -> Option<Vec<[f32; 2]>> {
+    let mut head: Vec<[f32; 2]> = Vec::new();
+    loop {
+        let packet = match reader.read_dec_packet_itl() {
+            Ok(Some(packet)) => packet,
+            Err(VorbisError::BadAudio(AudioReadError::AudioIsHeader)) => continue,
+            _ => return None,
+        };
+        let frames = match channels {
+            1 => packet
+                .iter()
+                .map(|sample| {
+                    let held = f32::from(*sample) / 32_768.0;
+                    [held, held]
+                })
+                .collect::<Vec<_>>(),
+            _ => packet
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| [f32::from(pair[0]) / 32_768.0, f32::from(pair[1]) / 32_768.0])
+                .collect::<Vec<_>>(),
+        };
+        head.extend(frames);
+        let Some(end) = reader.get_last_absgp() else {
+            continue;
+        };
+        if end < start {
+            continue;
+        }
+        let page = end.saturating_sub(head.len() as u64);
+        let drop = (start - page).min(head.len() as u64) as usize;
+        head.drain(..drop);
+        head.truncate(((end - start) as usize).min(head.len()));
+        return Some(head);
     }
 }
 
@@ -581,6 +639,20 @@ mod tests {
         for (at, frame) in frames.iter().enumerate() {
             assert_eq!(frame[0], sound.samples()[at]);
             assert_eq!(frame[1], sound.samples()[at]);
+        }
+        let start = 30_000usize;
+        let held = drain(&stream, false, start as u64);
+        assert_eq!(
+            held.len(),
+            count - start,
+            "a stream that starts inside its file serves the frames after it",
+        );
+        for (at, frame) in held.iter().enumerate() {
+            assert_eq!(
+                frame[0],
+                sound.samples()[start + at],
+                "the stream seeks the frame it starts on",
+            );
         }
     }
 

@@ -1,13 +1,13 @@
 use crate::Type;
 use crate::checked::{
     Checked, CheckedBoot, CheckedComponent, CheckedField, CheckedFunction, CheckedGlobal,
-    CheckedSystem, HostSignature,
+    CheckedRun, CheckedSystem, HostSignature,
 };
 use crate::symbol::{ExprInfo, Intrinsic, StmtInfo};
 use lampas_bytecode::{Access, ComponentParam, Kind, Phase};
 use lampas_syntax::{
-    ComponentDecl, Diagnostic, ExprId, FunctionDecl, GlobalDecl, Item, ParamDecl, Program, Sources,
-    Span, StmtId, SystemDecl, TypeExpr, TypeExprKind,
+    ComponentDecl, Diagnostic, ExprId, FunctionDecl, GlobalDecl, Item, ParamDecl, Program,
+    ScheduleDecl, Sources, Span, StmtId, SystemDecl, TypeExpr, TypeExprKind,
 };
 use std::collections::HashMap;
 
@@ -69,6 +69,7 @@ pub(crate) struct Checker<'a> {
     pub(crate) function_index: HashMap<String, u16>,
     pub(crate) signatures: Vec<Signature>,
     pub(crate) systems: Vec<CheckedSystem>,
+    pub(crate) runs: Vec<CheckedRun>,
     pub(crate) boot: Option<CheckedBoot>,
     pub(crate) host_index: HashMap<String, u16>,
     pub(crate) infos: HashMap<ExprId, ExprInfo>,
@@ -80,8 +81,14 @@ pub(crate) struct Checker<'a> {
     pub(crate) loops: usize,
     function_setups: Vec<Setup>,
     system_setups: Vec<Setup>,
+    schedules: Vec<Schedule>,
     boot_setup: Option<Setup>,
     names: HashMap<String, Span>,
+}
+
+struct Schedule {
+    phase: Phase,
+    names: Vec<(String, Span)>,
 }
 
 impl<'a> Checker<'a> {
@@ -102,6 +109,7 @@ impl<'a> Checker<'a> {
             function_index: HashMap::new(),
             signatures: Vec::new(),
             systems: Vec::new(),
+            runs: Vec::new(),
             boot: None,
             host_index,
             infos: HashMap::new(),
@@ -113,6 +121,7 @@ impl<'a> Checker<'a> {
             loops: 0,
             function_setups: Vec::new(),
             system_setups: Vec::new(),
+            schedules: Vec::new(),
             boot_setup: None,
             names: HashMap::new(),
         }
@@ -124,6 +133,7 @@ impl<'a> Checker<'a> {
             globals: self.globals,
             functions: self.functions,
             systems: self.systems,
+            runs: self.runs,
             boot: self.boot,
             hosts: self.hosts.len(),
             infos: self.infos,
@@ -164,11 +174,53 @@ impl<'a> Checker<'a> {
         for item in &program.items {
             self.declare_item(item)?;
         }
+        self.order()
+    }
+
+    fn order(&mut self) -> Result<(), Diagnostic> {
+        let index = self
+            .systems
+            .iter()
+            .enumerate()
+            .map(|(index, system)| (system.name.clone(), index as u16))
+            .collect::<HashMap<_, _>>();
+        let mut placed = vec![false; self.systems.len()];
+        let mut runs = Vec::new();
+        for schedule in &self.schedules {
+            for (name, span) in &schedule.names {
+                let Some(system) = index.get(name).copied() else {
+                    return Err(self.error(
+                        *span,
+                        format!("the schedule names the system {name}, which stands nowhere"),
+                    ));
+                };
+                if std::mem::replace(&mut placed[system as usize], true) {
+                    return Err(
+                        self.error(*span, format!("the schedule names the system {name} twice"))
+                    );
+                }
+                runs.push(CheckedRun {
+                    phase: schedule.phase,
+                    system,
+                });
+            }
+        }
+        for (index, system) in self.systems.iter().enumerate() {
+            if !placed[index] {
+                return Err(self.error(
+                    system.span,
+                    format!("the system {} stands in no schedule", system.name),
+                ));
+            }
+        }
+        self.runs = runs;
         Ok(())
     }
 
     fn declare_name(&mut self, item: &Item) -> Result<(), Diagnostic> {
-        let name = item.name().to_string();
+        let Some(name) = item.name().map(ToString::to_string) else {
+            return Ok(());
+        };
         let span = item.span();
         if self.names.insert(name.clone(), span).is_some() {
             return Err(self.error(span, format!("the name {name} stands twice")));
@@ -219,7 +271,7 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
-            Item::Boot(_) => {}
+            Item::Schedule(_) | Item::Boot(_) => {}
         }
         Ok(())
     }
@@ -246,8 +298,34 @@ impl<'a> Checker<'a> {
             Item::Global(decl) => self.declare_global(decl),
             Item::Function(decl) => self.declare_function(decl),
             Item::System(decl) => self.declare_system(decl),
+            Item::Schedule(decl) => self.declare_schedule(decl),
             Item::Boot(_) => self.declare_boot(),
         }
+    }
+
+    fn declare_schedule(&mut self, decl: &ScheduleDecl) -> Result<(), Diagnostic> {
+        let phase = match decl.phase {
+            lampas_syntax::Phase::Update => Phase::Update,
+            lampas_syntax::Phase::Fixed => Phase::Fixed,
+        };
+        if self.schedules.iter().any(|held| held.phase == phase) {
+            return Err(self.error(
+                decl.span,
+                format!(
+                    "the script schedules the {} phase twice",
+                    lampas_syntax::Phase::name(decl.phase),
+                ),
+            ));
+        }
+        self.schedules.push(Schedule {
+            phase,
+            names: decl
+                .systems
+                .iter()
+                .map(|ident| (ident.name.clone(), ident.span))
+                .collect(),
+        });
+        Ok(())
     }
 
     fn declare_component(&mut self, decl: &ComponentDecl) -> Result<(), Diagnostic> {
@@ -387,10 +465,7 @@ impl<'a> Checker<'a> {
         }
         self.systems.push(CheckedSystem {
             name: name.clone(),
-            phase: match decl.phase {
-                lampas_syntax::Phase::Update => Phase::Update,
-                lampas_syntax::Phase::Fixed => Phase::Fixed,
-            },
+            span: decl.name.span,
             params,
             locals: 0,
         });

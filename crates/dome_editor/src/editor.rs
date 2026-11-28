@@ -106,6 +106,7 @@ pub struct Editor {
     dialog: Option<PathDialog>,
     recent_paths: [String; 5],
     session: Option<Session>,
+    held: Option<Ui<Action>>,
     history: History,
     drag: Option<DragState>,
     property: Option<PropertyState>,
@@ -172,6 +173,7 @@ impl Editor {
             dialog: None,
             recent_paths: Default::default(),
             session: None,
+            held: None,
             history: History::default(),
             drag: None,
             property: None,
@@ -193,10 +195,6 @@ impl Editor {
         }
     }
 
-    fn open(&mut self, window: &Window) {
-        self.open_with(window, None);
-    }
-
     fn open_with(&mut self, window: &Window, held: Option<Ui<Action>>) {
         let context = Gpu::open_window(&GpuRequest::default(), window.target())
             .unwrap_or_else(|error| panic!("the editor opens its render device: {error}"));
@@ -210,13 +208,19 @@ impl Editor {
     }
 
     fn rebuild(&mut self, window: &Window) {
-        self.settle_editing();
+        self.detach();
+        let held = self.held.take();
+        self.open_with(window, held);
+        self.redraw = true;
+    }
+
+    fn detach(&mut self) {
+        self.interrupt();
+        self.ime = false;
         self.viewport_texture = None;
         self.viewport_rendered = None;
         self.textures_at = None;
-        let held = self.session.take().map(|session| session.ui);
-        self.open_with(window, held);
-        self.redraw = true;
+        self.held = self.session.take().map(|session| session.ui);
     }
 
     fn resurface(&mut self, window: &Window) {
@@ -1614,7 +1618,8 @@ fn shortcut_key(code: KeyCode) -> Option<Key> {
 impl Handler for Editor {
     fn opened(&mut self, window: &Window, waker: Waker) {
         self.watch = Some(Watch::new(&self.path, &self.scene, move || waker.wake()));
-        self.open(window);
+        let held = self.held.take();
+        self.open_with(window, held);
     }
 
     fn frame(&mut self, window: &Window, real: Duration) -> Flow {
@@ -1639,8 +1644,8 @@ impl Handler for Editor {
         }
     }
 
-    fn suspended(&mut self, _window: &Window) -> Flow {
-        Flow::Exit
+    fn suspended(&mut self, _window: &Window) {
+        self.detach();
     }
 
     fn closing(&mut self, _window: &Window) -> bool {
@@ -1651,9 +1656,10 @@ impl Handler for Editor {
         false
     }
 
-    fn closed(&mut self, _window: &Window) {
+    fn closed(&mut self) {
         self.stop();
         self.session = None;
+        self.held = None;
     }
 }
 

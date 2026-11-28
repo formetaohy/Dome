@@ -68,7 +68,7 @@ impl Scripts {
     }
 
     pub fn boot(&mut self, world: &mut World) -> Result<(), Trap> {
-        world.reset_dynamic(&self.layout);
+        let previous = world.reset_dynamic(&self.layout);
         let Some(function) = self.module.boot else {
             return Ok(());
         };
@@ -81,7 +81,13 @@ impl Scripts {
             };
             self.vm.boot(&self.module, function, &mut runner)
         };
-        self.settle(world, savepoint, outcome)
+        match self.settle(world, savepoint, outcome) {
+            Ok(()) => Ok(()),
+            Err(trap) => {
+                world.restore_dynamic(previous, &self.layout);
+                Err(trap)
+            }
+        }
     }
 
     pub fn update(&mut self, world: &mut World) -> Result<(), Trap> {

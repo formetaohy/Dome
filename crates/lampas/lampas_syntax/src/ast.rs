@@ -44,6 +44,7 @@ pub enum Item {
     Global(GlobalDecl),
     Function(FunctionDecl),
     System(SystemDecl),
+    Schedule(ScheduleDecl),
     Boot(BootDecl),
 }
 
@@ -54,18 +55,20 @@ impl Item {
             Self::Global(decl) => decl.name.span,
             Self::Function(decl) => decl.name.span,
             Self::System(decl) => decl.name.span,
+            Self::Schedule(decl) => decl.span,
             Self::Boot(decl) => decl.body.span,
         }
     }
 
-    pub fn name(&self) -> &str {
-        match self {
+    pub fn name(&self) -> Option<&str> {
+        Some(match self {
             Self::Component(decl) => &decl.name.name,
             Self::Global(decl) => &decl.name.name,
             Self::Function(decl) => &decl.name.name,
             Self::System(decl) => &decl.name.name,
+            Self::Schedule(_) => return None,
             Self::Boot(_) => "boot",
-        }
+        })
     }
 }
 
@@ -100,9 +103,15 @@ pub struct FunctionDecl {
 #[derive(Clone, Debug)]
 pub struct SystemDecl {
     pub name: Ident,
-    pub phase: Phase,
     pub params: Vec<ParamDecl>,
     pub body: Block,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScheduleDecl {
+    pub phase: Phase,
+    pub span: Span,
+    pub systems: Vec<Ident>,
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +136,15 @@ pub enum Access {
 pub enum Phase {
     Update,
     Fixed,
+}
+
+impl Phase {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Update => "update",
+            Self::Fixed => "fixed",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

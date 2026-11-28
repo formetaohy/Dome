@@ -2,9 +2,10 @@ mod builder;
 mod expression;
 
 use crate::builder::FunctionBuilder;
-use lampas_bytecode::{Component, Constant, Field, Function, Global, Module, Phase, System};
-use lampas_semantic::Checked;
-use lampas_syntax::{Diagnostic, Item, Program};
+use lampas_bytecode::{Component, Constant, Field, Function, Global, Module, System};
+use lampas_semantic::{Checked, CheckedRun};
+use lampas_syntax::{Diagnostic, Item, Program, SystemDecl};
+use std::collections::HashMap;
 
 pub fn compile(program: &Program, checked: &Checked) -> Result<Module, Diagnostic> {
     let mut module = Module::new();
@@ -30,7 +31,6 @@ pub fn compile(program: &Program, checked: &Checked) -> Result<Module, Diagnosti
     }
     let mut constants = Vec::new();
     let mut functions = 0;
-    let mut systems = 0;
     for item in &program.items {
         match item {
             Item::Function(decl) => {
@@ -45,29 +45,6 @@ pub fn compile(program: &Program, checked: &Checked) -> Result<Module, Diagnosti
                     &decl.body,
                 )?);
                 functions += 1;
-            }
-            Item::System(decl) => {
-                let locals = checked.systems[systems].locals;
-                let function = module.functions.len() as u32;
-                module.functions.push(build(
-                    checked,
-                    &mut constants,
-                    &program.sources,
-                    &decl.name.name,
-                    locals,
-                    true,
-                    &decl.body,
-                )?);
-                module.systems.push(System {
-                    name: decl.name.name.clone(),
-                    phase: match decl.phase {
-                        lampas_syntax::Phase::Update => Phase::Update,
-                        lampas_syntax::Phase::Fixed => Phase::Fixed,
-                    },
-                    function,
-                    components: checked.systems[systems].params.clone(),
-                });
-                systems += 1;
             }
             Item::Boot(decl) => {
                 let locals = checked
@@ -89,6 +66,36 @@ pub fn compile(program: &Program, checked: &Checked) -> Result<Module, Diagnosti
             }
             _ => {}
         }
+    }
+    let bodies = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::System(decl) => Some((decl.name.name.as_str(), decl)),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+    for CheckedRun { phase, system } in &checked.runs {
+        let system = &checked.systems[*system as usize];
+        let decl: &SystemDecl = bodies
+            .get(system.name.as_str())
+            .expect("a checked system holds the declaration it names");
+        let function = module.functions.len() as u32;
+        module.functions.push(build(
+            checked,
+            &mut constants,
+            &program.sources,
+            &system.name,
+            system.locals,
+            true,
+            &decl.body,
+        )?);
+        module.systems.push(System {
+            name: system.name.clone(),
+            phase: *phase,
+            function,
+            components: system.params.clone(),
+        });
     }
     module.constants = constants;
     Ok(module)

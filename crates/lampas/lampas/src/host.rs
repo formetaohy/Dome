@@ -116,13 +116,14 @@ impl Hosts {
     ) -> Result<Value, Trap> {
         let entry = &mut self.entries[index as usize];
         let value = (entry.call)(arguments, call)?;
-        assert!(
-            holds(&entry.signature.result, &value),
-            "the host function {} returns a {} where {} belongs",
-            entry.signature.name,
-            value.kind(),
-            describe(&entry.signature.result),
-        );
+        if !holds(&entry.signature.result, &value) {
+            return Err(Trap::new(format!(
+                "the host function {} returns a {} where {} belongs",
+                entry.signature.name,
+                value.kind(),
+                describe(&entry.signature.result),
+            )));
+        }
         Ok(value)
     }
 
