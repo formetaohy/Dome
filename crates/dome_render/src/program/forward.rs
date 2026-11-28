@@ -4,6 +4,8 @@ const INSTANCING: GraphicsShader = GraphicsShader {
     label: "instancing",
     source: concat!(
         include_str!("wgsl/abi.wgsl"),
+        include_str!("wgsl/instancing.bindings.wgsl"),
+        include_str!("wgsl/skin.wgsl"),
         include_str!("wgsl/instancing.wgsl"),
     ),
     vertex: "vertex",
@@ -45,6 +47,8 @@ const SHADOWING: GraphicsShader = GraphicsShader {
     label: "shadowing",
     source: concat!(
         include_str!("wgsl/abi.wgsl"),
+        include_str!("wgsl/shadowing.bindings.wgsl"),
+        include_str!("wgsl/skin.wgsl"),
         include_str!("wgsl/shadowing.wgsl"),
     ),
     vertex: "vertex",
@@ -67,6 +71,8 @@ const DEPTH_PREPASS: GraphicsShader = GraphicsShader {
     label: "depth_prepass",
     source: concat!(
         include_str!("wgsl/abi.wgsl"),
+        include_str!("wgsl/depth_prepass.bindings.wgsl"),
+        include_str!("wgsl/skin.wgsl"),
         include_str!("wgsl/depth_prepass.wgsl"),
     ),
     vertex: "vertex",
@@ -89,6 +95,8 @@ const PICKING: GraphicsShader = GraphicsShader {
     label: "picking",
     source: concat!(
         include_str!("wgsl/abi.wgsl"),
+        include_str!("wgsl/picking.bindings.wgsl"),
+        include_str!("wgsl/skin.wgsl"),
         include_str!("wgsl/picking.wgsl"),
     ),
     vertex: "vertex",
@@ -123,6 +131,8 @@ const MOTION_VECTORS: GraphicsShader = GraphicsShader {
     label: "motion_vectors",
     source: concat!(
         include_str!("wgsl/abi.wgsl"),
+        include_str!("wgsl/motion_vectors.bindings.wgsl"),
+        include_str!("wgsl/skin.wgsl"),
         include_str!("wgsl/motion_vectors.wgsl"),
     ),
     vertex: "vertex",

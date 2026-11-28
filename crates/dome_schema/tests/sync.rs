@@ -161,18 +161,22 @@ fn a_scene_sync_follows_the_structure_it_edits() {
     let stamp = world
         .resource::<SceneDamage>()
         .map_or(0, |held| held.stamp());
+    let held_nodes = world
+        .resource::<SceneDamage>()
+        .map_or(0, |held| held.nodes().len());
     sync.apply(&scene, &mut world, &NoAssets, a_at);
     let damage = world
         .resource::<SceneDamage>()
         .expect("a synced scene carries the damage it renders");
     assert_eq!(
         damage.stamp(),
-        stamp + 1,
-        "an applied node publishes the damage the probes rebake on",
+        stamp,
+        "an applied transform leaves the authored damage to the rendered instances",
     );
-    assert!(
-        damage.nodes().contains(&a),
-        "an applied node damages the node it moved",
+    assert_eq!(
+        damage.nodes().len(),
+        held_nodes,
+        "an applied transform damages no node the scene authored",
     );
     assert!(
         damage.nodes().contains(&b) && damage.nodes().contains(&c),

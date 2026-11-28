@@ -14,13 +14,14 @@ pub(crate) struct Propagation {
     dirty: Vec<Entity>,
     pending: Vec<Entity>,
     stamp: Vec<Option<(Entity, u32)>>,
-    poses: Vec<(Entity, Transform)>,
     epoch: u32,
     structure: bool,
     all: bool,
     snap: bool,
     walk: Vec<Entity>,
     spread: Vec<(Entity, Transform)>,
+    snapped: Vec<Entity>,
+    touched: Vec<Entity>,
 }
 
 pub fn propagate(world: &mut World) {
@@ -37,12 +38,6 @@ pub fn propagate_step(world: &mut World) {
     world.propagation = held;
 }
 
-pub fn snapshot(world: &mut World) {
-    let mut held = std::mem::take(&mut world.propagation);
-    held.remember(world);
-    world.propagation = held;
-}
-
 impl Propagation {
     pub(crate) fn mark(&mut self, entity: Entity) {
         self.dirty.push(entity);
@@ -56,27 +51,19 @@ impl Propagation {
         self.all = true;
     }
 
-    fn remember(&mut self, world: &mut World) {
-        self.poses.clear();
-        self.poses.extend(
-            world
-                .iter::<Transform>()
-                .map(|(entity, transform)| (entity, *transform)),
-        );
-        for (entity, transform) in self.poses.drain(..) {
-            world.insert(entity, PreviousTransform(transform));
-        }
-    }
-
     fn run(&mut self, world: &mut World) {
         if self.structure {
             self.structure = false;
             self.reorder(world);
         }
         let all = std::mem::take(&mut self.all);
+        if !self.snap {
+            self.restore(world);
+        }
         if !all && self.dirty.is_empty() {
             return;
         }
+        self.touched.clear();
         self.epoch = self.epoch.wrapping_add(1);
         if all {
             for at in 0..self.order.len() {
@@ -85,6 +72,7 @@ impl Propagation {
                 self.spread(world, entity, world_transform);
             }
             self.dirty.clear();
+            self.snapped.append(&mut self.touched);
             return;
         }
         std::mem::swap(&mut self.dirty, &mut self.pending);
@@ -101,6 +89,16 @@ impl Propagation {
             self.spread(world, entity, world_transform);
         }
         self.pending.clear();
+        self.snapped.append(&mut self.touched);
+    }
+
+    fn restore(&mut self, world: &mut World) {
+        for entity in self.snapped.drain(..) {
+            let Some(current) = world.get::<Transform>(entity).copied() else {
+                continue;
+            };
+            world.insert(entity, PreviousTransform(current));
+        }
     }
 
     fn reorder(&mut self, world: &World) {
@@ -152,8 +150,12 @@ impl Propagation {
             self.stamp(entity, epoch);
             if self.snap {
                 world.insert(entity, PreviousTransform(held));
+            } else {
+                let previous = world.get::<Transform>(entity).copied().unwrap_or(held);
+                world.insert(entity, PreviousTransform(previous));
             }
             world.insert(entity, held);
+            self.touched.push(entity);
             for child in world.tree.children(entity) {
                 if self.stamped(*child, epoch) {
                     continue;

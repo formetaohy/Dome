@@ -50,6 +50,44 @@ fn position(world: &World, entity: Entity) -> Vec3 {
 }
 
 #[test]
+fn a_sphere_inside_a_box_leaves_through_the_face_it_is_nearest() {
+    let mut world = world();
+    world.insert_resource(Gravity(Vec3::ZERO));
+    spawn(
+        &mut world,
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Shape::cuboid(Vec3::splat(2.5)),
+        BodyKind::Static,
+    );
+    let sphere = spawn(
+        &mut world,
+        Vec3::new(0.1, 0.2, 0.0),
+        Quat::IDENTITY,
+        Shape::sphere(0.2),
+        BodyKind::Dynamic,
+    );
+    settle(&mut world, 120);
+    let held = position(&world, sphere);
+    assert!(
+        held.y > 2.5,
+        "a sphere enclosed by a box leaves through its nearest face at {held:?}",
+    );
+}
+
+#[test]
+fn a_body_that_stops_sleeping_wakes_where_it_slept() {
+    let mut body = RigidBody::new(BodyKind::Dynamic);
+    body.set_sleeping(true);
+    assert!(body.is_sleeping(), "a body sleeps where it was put to bed");
+    body.set_can_sleep(false);
+    assert!(
+        !body.is_sleeping(),
+        "a body that may never sleep wakes when its sleep is forbidden",
+    );
+}
+
+#[test]
 fn a_convex_shape_settles_on_a_cuboid() {
     let mut world = world();
     floor(&mut world);

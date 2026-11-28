@@ -16,6 +16,12 @@ use std::sync::OnceLock;
 
 const ITEM_LIMIT: usize = 64;
 
+pub(super) enum Step {
+    Done(Refresh),
+    Capped,
+    Baking,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
     Remove,
@@ -71,13 +77,13 @@ impl Commit {
         library: &mut Library,
         renderer: &mut Renderer,
         budget: u64,
-    ) -> Option<Refresh> {
+    ) -> Step {
         library.ensure_fallback(renderer);
         self.spent = 0;
         self.items = 0;
         loop {
             if self.items >= ITEM_LIMIT {
-                return None;
+                return Step::Capped;
             }
             match self.stage {
                 Stage::Remove => self.remove(library, renderer),
@@ -88,7 +94,7 @@ impl Commit {
                     };
                     let cost = item.mips.bytes(ColorSpace::Srgb);
                     if !self.allows(cost, budget) {
-                        return None;
+                        return Step::Capped;
                     }
                     library.commit_image(renderer, item);
                     self.charge(cost);
@@ -100,7 +106,7 @@ impl Commit {
                     };
                     let cost = library.material_cost(&item.entry, &self.prepared.textures);
                     if !self.allows(cost, budget) {
-                        return None;
+                        return Step::Capped;
                     }
                     library.commit_material(renderer, item, &self.prepared.textures);
                     self.charge(cost);
@@ -112,7 +118,7 @@ impl Commit {
                     };
                     let cost = mesh_bytes(item);
                     if !self.allows(cost, budget) {
-                        return None;
+                        return Step::Capped;
                     }
                     library.commit_mesh(renderer, item);
                     self.charge(cost);
@@ -123,7 +129,7 @@ impl Commit {
                         continue;
                     };
                     if !self.allows(0, budget) {
-                        return None;
+                        return Step::Capped;
                     }
                     library.commit_skin(item);
                     self.charge(0);
@@ -134,7 +140,7 @@ impl Commit {
                         continue;
                     };
                     if !self.allows(0, budget) {
-                        return None;
+                        return Step::Capped;
                     }
                     library.commit_animation(item);
                     self.charge(0);
@@ -150,7 +156,7 @@ impl Commit {
                         item.source.frame_count().unwrap_or(0) * 4
                     };
                     if !self.allows(cost, budget) {
-                        return None;
+                        return Step::Capped;
                     }
                     library.commit_sound(item);
                     self.charge(cost);
@@ -158,14 +164,14 @@ impl Commit {
                 Stage::Environments => {
                     if self.index >= self.prepared.environments.len() {
                         if !self.settle_environments(library, renderer) {
-                            return None;
+                            return Step::Baking;
                         }
                         self.next(Stage::Finish);
                         continue;
                     }
                     let cost = environment_bytes(&self.prepared.environments[self.index]);
                     if !self.allows(cost, budget) {
-                        return None;
+                        return Step::Capped;
                     }
                     self.submit_environment(library, renderer);
                     self.charge(cost);
@@ -174,7 +180,7 @@ impl Commit {
                     library.adopt(&mut self.prepared);
                     self.stage = Stage::Done;
                 }
-                Stage::Done => return Some(self.finish()),
+                Stage::Done => return Step::Done(self.finish()),
             }
         }
     }

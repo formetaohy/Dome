@@ -41,7 +41,6 @@ impl std::fmt::Debug for Streamed {
             .debug_struct("Streamed")
             .field("track", &self.track)
             .field("base", &self.base)
-            .field("stalled", &self.stalled)
             .finish()
     }
 }
@@ -51,7 +50,6 @@ pub(crate) struct Streamed {
     window: VecDeque<[f32; 2]>,
     base: u64,
     held: [f32; 2],
-    stalled: u64,
 }
 
 impl Source {
@@ -160,7 +158,6 @@ impl Streamed {
             window: VecDeque::with_capacity(LOOKAHEAD),
             base: start,
             held: [0.0; 2],
-            stalled: 0,
         }
     }
 
@@ -168,7 +165,13 @@ impl Streamed {
         let floor = position.floor();
         let at = floor.max(0.0) as u64;
         while at + 2 >= self.base + self.window.len() as u64 {
-            let frame = self.pull();
+            let Some(frame) = self.pull() else {
+                break;
+            };
+            if self.window.len() == LOOKAHEAD {
+                self.window.pop_front();
+                self.base += 1;
+            }
             self.window.push_back(frame);
         }
         let read = |index: u64| -> [f32; 2] {
@@ -185,42 +188,16 @@ impl Streamed {
         let next = read(at + 1);
         let after = read(at + 2);
         let fraction = (position - floor) as f32;
-        let frame = [
+        [
             interpolate(previous[0], held[0], next[0], after[0], fraction),
             interpolate(previous[1], held[1], next[1], after[1], fraction),
-        ];
-        while self.window.len() > LOOKAHEAD {
-            self.window.pop_front();
-            self.base += 1;
-        }
-        frame
+        ]
     }
 
-    fn pull(&mut self) -> [f32; 2] {
-        loop {
-            if self.stalled > 0 {
-                match self.track.take() {
-                    Some(_) => {
-                        self.stalled -= 1;
-                        continue;
-                    }
-                    None => {
-                        self.stalled += 1;
-                        return [0.0; 2];
-                    }
-                }
-            }
-            match self.track.take() {
-                Some(frame) => {
-                    self.held = frame;
-                    return frame;
-                }
-                None => {
-                    self.stalled += 1;
-                    return [0.0; 2];
-                }
-            }
-        }
+    fn pull(&mut self) -> Option<[f32; 2]> {
+        let frame = self.track.take()?;
+        self.held = frame;
+        Some(frame)
     }
 }
 
@@ -261,4 +238,32 @@ fn interpolate(previous: f32, held: f32, next: f32, after: f32, fraction: f32) -
     let b = 2.0 * previous - 5.0 * held + 4.0 * next - after;
     let c = next - previous;
     0.5 * (a * fraction * fraction * fraction + b * fraction * fraction + c * fraction + 2.0 * held)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frames;
+
+    fn feed(producer: &mut frames::Producer, values: &[f32]) {
+        let frames = values
+            .iter()
+            .map(|value| [*value, *value])
+            .collect::<Vec<_>>();
+        assert_eq!(producer.write(&frames), frames.len());
+    }
+
+    #[test]
+    fn a_starved_stream_holds_its_last_frame_and_serves_the_next_one() {
+        let (mut producer, consumer) = frames::channel(8);
+        let mut streamed = Streamed::new(Track::scripted(consumer, 48_000, Channels::Mono), 0);
+        feed(&mut producer, &[1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(streamed.sample(0.0), [1.0, 1.0]);
+        assert_eq!(streamed.sample(1.0), [2.0, 2.0]);
+        assert_eq!(streamed.sample(2.0), [3.0, 3.0]);
+        assert_eq!(streamed.sample(3.0), [4.0, 4.0]);
+        assert_eq!(streamed.sample(4.0), [4.0, 4.0]);
+        feed(&mut producer, &[5.0]);
+        assert_eq!(streamed.sample(4.0), [5.0, 5.0]);
+    }
 }

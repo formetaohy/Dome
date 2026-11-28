@@ -5,8 +5,31 @@ use dome_gpu::{
 use dome_render::{Renderer, Target};
 use dome_scene::Scene;
 use dome_schema::SceneNode;
+use std::time::{Duration, Instant};
 
 const SIDE: u32 = 64;
+
+const PENDING_ASSETS: &str = r#"format = "dome_scene"
+images = []
+materials = []
+nodes = []
+
+[[meshes]]
+id = "first"
+shape = "cube"
+
+[[meshes]]
+id = "second"
+shape = "cube"
+
+[[meshes]]
+id = "third"
+shape = "cube"
+
+[[meshes]]
+id = "fourth"
+shape = "cube"
+"#;
 
 const SCENE: &str = r#"format = "dome_scene"
 images = []
@@ -96,6 +119,36 @@ tint = [1.0, 1.0, 1.0]
 #[test]
 fn a_scene_instantiates_into_a_visible_world() {
     paint();
+}
+
+#[test]
+fn a_waiting_library_honours_its_cancellation_and_deadline_while_it_commits() {
+    let context = Gpu::open(&GpuRequest::default())
+        .unwrap_or_else(|error| panic!("no device commits a scene: {error}"));
+    let mut renderer = Renderer::new(&context, TextureFormat::Rgba8Unorm);
+    let scene = Scene::parse(PENDING_ASSETS, ".", "the pending scene", schema())
+        .expect("the pending scene parses");
+    let mut library = dome_asset::Library::new();
+    assert!(library.request(&scene), "a new library loads its scene");
+    let mut checks = 0;
+    let cancelled = library.wait(
+        &mut renderer,
+        1,
+        Instant::now() + Duration::from_secs(30),
+        || {
+            checks += 1;
+            checks > 1
+        },
+    );
+    assert!(
+        matches!(cancelled, dome_asset::WaitOutcome::Cancelled),
+        "a library cancelled while it commits its assets stops committing",
+    );
+    let timed = library.wait(&mut renderer, 1, Instant::now(), || false);
+    assert!(
+        matches!(timed, dome_asset::WaitOutcome::Timeout),
+        "a library past its deadline while it commits its assets times out",
+    );
 }
 
 fn paint() {

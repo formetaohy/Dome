@@ -180,7 +180,7 @@ impl TextureTable {
         self.state.liveness.id()
     }
 
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.state.generation.load(Ordering::Relaxed)
     }
 
@@ -371,7 +371,7 @@ impl SamplerTable {
         self.state.liveness.id()
     }
 
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.state.generation.load(Ordering::Relaxed)
     }
 

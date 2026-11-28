@@ -1,7 +1,7 @@
 use crate::time::Time;
 use dome_asset::{Change, Library, WaitOutcome, Watch};
 use dome_audio::Audio;
-use dome_ecs::{Entity, Schedule, System, World, propagate, propagate_step, snapshot};
+use dome_ecs::{Entity, Schedule, System, World, propagate, propagate_step};
 use dome_gpu::{
     Gpu, GpuCondition, GpuEventCursor, GpuFailure, GpuRequest, Surface, Texture, TextureFormat,
     TextureUsages,
@@ -707,9 +707,9 @@ impl App {
         self
     }
 
-    pub fn run(self) {
+    pub fn run(self) -> Option<String> {
         let config = self.config.window.clone();
-        run_window(config, self);
+        run_window(config, self).reload
     }
 
     pub fn run_headless(&mut self, config: HeadlessConfig) -> Option<Vec<u8>> {
@@ -893,7 +893,6 @@ impl App {
                 .enter_fixed();
         }
         for _ in 0..steps {
-            snapshot(&mut self.world);
             self.fixed.run(&mut self.world);
             propagate_step(&mut self.world);
             self.world

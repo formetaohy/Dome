@@ -69,8 +69,9 @@ impl Input {
             Event::Focused(focused) => {
                 self.focused = focused;
                 if !focused {
-                    self.keys.clear();
-                    self.buttons.clear();
+                    self.keys_released.extend(self.keys.drain());
+                    self.buttons_released.extend(self.buttons.drain());
+                    self.modifiers = ModifiersState::empty();
                 }
             }
             Event::Resized { .. } | Event::ScaleFactorChanged { .. } => {}

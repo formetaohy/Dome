@@ -9,7 +9,7 @@ use dome_gpu::{
 };
 use std::mem::size_of;
 
-pub(crate) const SLOTS: usize = Layer::ALL.len() + 1;
+pub(crate) const SLOTS: usize = Layer::ALL.len() * 2 + 1;
 const SCREEN_BYTES: u64 = size_of::<UiScreenRecord>() as u64;
 const MINIMUM_INSTANCES: usize = 512;
 const CLEAR: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
@@ -207,9 +207,13 @@ fn storage(device: &Device, label: &str, capacity: usize) -> GpuBuffer {
 fn labels() -> [&'static str; SLOTS] {
     [
         "dome ui instances content",
+        "dome ui chrome content",
         "dome ui instances chrome",
+        "dome ui chrome chrome",
         "dome ui instances popup",
+        "dome ui chrome popup",
         "dome ui instances hud",
+        "dome ui chrome hud",
         "dome ui instances overlay",
     ]
 }

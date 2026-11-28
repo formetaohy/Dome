@@ -151,11 +151,6 @@ impl ScrollState {
         (self.content - self.viewport).max(0.0)
     }
 
-    pub fn scroll_by(&mut self, amount: f32) {
-        self.target = (self.target + amount).clamp(0.0, self.limit());
-        self.moving = true;
-    }
-
     pub fn update(&mut self, elapsed: f32, motion: Motion) {
         self.target = self.target.clamp(0.0, self.limit());
         let mut spring = Animated::new(self.offset, motion.spring());
@@ -266,5 +261,56 @@ impl<A: Clone> Ui<A> {
         if !self.scrolling.contains(&id) {
             self.scrolling.push(id);
         }
+    }
+
+    pub(crate) fn reveal(&mut self, id: NodeId) -> bool {
+        let mut rect = self.tree.nodes[id].rect;
+        if rect.is_empty() {
+            return false;
+        }
+        let mut current = self.tree.nodes[id].parent;
+        let mut moved = false;
+        while let Some(parent) = current {
+            current = self.tree.nodes[parent].parent;
+            let node = &self.tree.nodes[parent];
+            let (Some(spec), Some(scroll)) = (node.scroll_spec, node.scroll) else {
+                continue;
+            };
+            if node.rect.is_empty() {
+                continue;
+            }
+            let (start, end, low, high) = match spec.axis {
+                Axis::Column => (rect.min.y, rect.max.y, node.rect.min.y, node.rect.max.y),
+                Axis::Row => (rect.min.x, rect.max.x, node.rect.min.x, node.rect.max.x),
+            };
+            let shift = if start < low {
+                start - low
+            } else if end > high {
+                end - high
+            } else {
+                continue;
+            };
+            let next = (scroll.target + shift).clamp(0.0, scroll.limit());
+            let applied = next - scroll.target;
+            if applied == 0.0 {
+                continue;
+            }
+            let held = self.tree.nodes[parent]
+                .scroll
+                .as_mut()
+                .expect("a scrolled node holds its state");
+            held.target = next;
+            held.moving = true;
+            rect = match spec.axis {
+                Axis::Column => rect.translate(Vec2::new(0.0, -applied)),
+                Axis::Row => rect.translate(Vec2::new(-applied, 0.0)),
+            };
+            self.tree.nodes[parent].paint_dirty = true;
+            self.tree.invalidate_arrange(parent);
+            self.wake_scroll(parent);
+            self.animating = true;
+            moved = true;
+        }
+        moved
     }
 }

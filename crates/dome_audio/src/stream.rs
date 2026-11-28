@@ -205,6 +205,17 @@ impl Track {
     pub(crate) fn period(&self) -> Option<u64> {
         self.period
     }
+
+    #[cfg(test)]
+    pub(crate) fn scripted(frames: frames::Consumer, sample_rate: u32, channels: Channels) -> Self {
+        Self {
+            frames,
+            total: Arc::new(AtomicU64::new(UNKNOWN)),
+            period: None,
+            sample_rate,
+            channels,
+        }
+    }
 }
 
 fn decode(

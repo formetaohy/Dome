@@ -386,6 +386,16 @@ fn damaged() {
     let mut both = vec![left, right];
     both.sort();
     assert_eq!(again, both, "rebakes one probe per frame the sky changed",);
+    world.insert(
+        near,
+        Transform::from_translation(Vec3::new(-8.0, 0.0, -1.5)),
+    );
+    let captures = settled(&mut renderer, &mut world, &target);
+    assert_eq!(
+        captures.iter().map(|held| held.entity).collect::<Vec<_>>(),
+        [left],
+        "rebakes the probe whose box holds the moved instance",
+    );
 }
 
 fn settled(renderer: &mut Renderer, world: &mut World, target: &Texture) -> Vec<Capture> {

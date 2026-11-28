@@ -31,8 +31,9 @@ pub struct Ui<A = ()> {
     pub(crate) tree: Tree<A>,
     pub(crate) animations: HashMap<u64, Animated>,
     pub(crate) layers: [LayerBuffer; Layer::ALL.len()],
+    pub(crate) chrome: [LayerBuffer; Layer::ALL.len()],
+    pub(crate) chrome_scratch: [Instances; Layer::ALL.len()],
     pub(crate) scratch: Instances,
-    pub(crate) scrollbars: Vec<(Rect, Axis, crate::scroll::ScrollState)>,
     pub(crate) overlay: LayerBuffer,
     pub(crate) scale: f32,
     pub(crate) size: Vec2,
@@ -79,8 +80,9 @@ impl<A: Clone> Ui<A> {
             tree: Tree::new(),
             animations: HashMap::new(),
             layers: std::array::from_fn(|_| LayerBuffer::default()),
+            chrome: std::array::from_fn(|_| LayerBuffer::default()),
+            chrome_scratch: std::array::from_fn(|_| Instances::default()),
             scratch: Instances::default(),
-            scrollbars: Vec::new(),
             overlay: LayerBuffer::default(),
             scale: 1.0,
             size: Vec2::ZERO,
@@ -356,9 +358,13 @@ impl<A: Clone> Ui<A> {
         self.textures.refresh(&mut self.text, submission);
         let layers = [
             &self.layers[Layer::Content.index()],
+            &self.chrome[Layer::Content.index()],
             &self.layers[Layer::Chrome.index()],
+            &self.chrome[Layer::Chrome.index()],
             &self.layers[Layer::Popup.index()],
+            &self.chrome[Layer::Popup.index()],
             &self.layers[Layer::Hud.index()],
+            &self.chrome[Layer::Hud.index()],
             &self.overlay,
         ];
         self.renderer.paint(
@@ -370,6 +376,9 @@ impl<A: Clone> Ui<A> {
             &layers,
         );
         for layer in &mut self.layers {
+            layer.dirty = None;
+        }
+        for layer in &mut self.chrome {
             layer.dirty = None;
         }
         self.overlay.dirty = None;

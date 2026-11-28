@@ -1,32 +1,3 @@
-@group(0) @binding(0) var<storage, read> light: array<Light>;
-@group(0) @binding(1) var<storage, read> cascades: array<Cascade>;
-@group(0) @binding(2) var<storage, read> visible: array<u32>;
-@group(0) @binding(3) var<storage, read> materials: array<Material>;
-@group(0) @binding(4) var<storage, read> view: array<View>;
-@group(0) @binding(5) var<storage, read> palette: array<Joint>;
-@group(0) @binding(6) var<storage, read> skins: array<SkinVertex>;
-@group(0) @binding(7) var<storage, read_write> keys: array<atomic<u32>>;
-@group(0) @binding(8) var<storage, read_write> colors: array<u32>;
-@group(0) @binding(9) var<storage, read_write> dropped: array<atomic<u32>>;
-@group(0) @binding(10) var<storage, read> settings: array<TransparentSetup>;
-@group(0) @binding(11) var<storage, read> probes: array<Probe>;
-@group(0) @binding(12) var<storage, read> vertices: array<f32>;
-@group(0) @binding(13) var<storage, read> lights: array<u32>;
-@group(0) @binding(14) var<storage, read> point_light: array<u32>;
-@group(0) @binding(15) var<storage, read> instances: array<Instance>;
-@group(1) @binding(0) var textures: binding_array<texture_2d<f32>, TEXTURE_TABLE_EXTENT>;
-@group(1) @binding(1) var samplers: binding_array<sampler, SAMPLER_TABLE_EXTENT>;
-@group(2) @binding(0) var shadows: texture_depth_2d;
-@group(2) @binding(1) var shadower: sampler_comparison;
-@group(2) @binding(2) var radiance: texture_2d<f32>;
-@group(2) @binding(3) var radiance_sampler: sampler;
-@group(2) @binding(4) var brdf: texture_2d<f32>;
-@group(2) @binding(5) var brdf_sampler: sampler;
-@group(2) @binding(6) var point_shadows: texture_depth_2d;
-@group(2) @binding(7) var point_shadower: sampler_comparison;
-@group(2) @binding(8) var probe_textures: binding_array<texture_2d<f32>, TEXTURE_TABLE_EXTENT>;
-@group(2) @binding(9) var probe_samplers: binding_array<sampler, SAMPLER_TABLE_EXTENT>;
-
 fn clamped(value: f32, low: f32, high: f32) -> f32 {
     return min(max(value, low), high);
 }
@@ -48,10 +19,6 @@ fn normalized(vector: vec4<f32>) -> vec4<f32> {
     let inverse =
         1.0 / sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z + 0.0000001);
     return vector * inverse;
-}
-
-fn deformed(col0: vec4<f32>, col1: vec4<f32>, col2: vec4<f32>, col3: vec4<f32>, point: vec4<f32>) -> vec4<f32> {
-    return col0 * point.x + col1 * point.y + col2 * point.z + col3 * point.w;
 }
 
 fn turned(first: vec4<f32>, second: vec4<f32>, third: vec4<f32>, vector: vec4<f32>) -> vec4<f32> {
@@ -396,33 +363,9 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         held.tint.z,
         select(material, -(material + 1.0), index == camera.highlight),
     );
-    var local = rest;
-    var oriented = resting;
-    if held.joints > 0u {
-        let skin = skins[vertex];
-        let palette_base = held.palette + camera.palette_base;
-        let first = palette[palette_base + skin.joints.x];
-        let second = palette[palette_base + skin.joints.y];
-        let third = palette[palette_base + skin.joints.z];
-        let fourth = palette[palette_base + skin.joints.w];
-        let place = deformed(first.col0, first.col1, first.col2, first.col3, rest)
-            * skin.weights.x
-            + deformed(second.col0, second.col1, second.col2, second.col3, rest)
-                * skin.weights.y
-            + deformed(third.col0, third.col1, third.col2, third.col3, rest) * skin.weights.z
-            + deformed(fourth.col0, fourth.col1, fourth.col2, fourth.col3, rest)
-                * skin.weights.w;
-        let normal = deformed(first.col0, first.col1, first.col2, first.col3, resting)
-            * skin.weights.x
-            + deformed(second.col0, second.col1, second.col2, second.col3, resting)
-                * skin.weights.y
-            + deformed(third.col0, third.col1, third.col2, third.col3, resting)
-                * skin.weights.z
-            + deformed(fourth.col0, fourth.col1, fourth.col2, fourth.col3, resting)
-                * skin.weights.w;
-        local = vec4<f32>(place.x, place.y, place.z, 1.0);
-        oriented = vec4<f32>(normal.x, normal.y, normal.z, 0.0);
-    }
+    let place = skinned(held, vertex, camera.palette_base, rest, resting);
+    let local = place.position;
+    let oriented = place.normal;
     let moved = held.model0 * local.x
         + held.model1 * local.y
         + held.model2 * local.z

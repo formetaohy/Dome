@@ -1,5 +1,6 @@
 use crate::capture::CaptureProbe;
 use crate::environment::Environment;
+use crate::hidden::Hidden;
 use dome_ecs::{Entity, World};
 use dome_math::{Transform, Vec3};
 use std::collections::{HashMap, HashSet};
@@ -50,28 +51,32 @@ pub(crate) struct Damage {
     pending: HashMap<Entity, Pending>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct Pending {
     all: bool,
-    nodes: HashSet<Entity>,
+    changed: bool,
 }
 
 impl Damage {
     pub(crate) fn absorb(
         &mut self,
         world: &mut World,
+        changed: &[(Entity, Option<(Vec3, f32)>)],
         current: (&[Entity], &[(Vec3, f32)]),
         previous: &[(Entity, (Vec3, f32))],
     ) {
         self.pending.retain(|probe, _| world.is_alive(*probe));
-        let Some(damage) = world.remove_resource::<SceneDamage>() else {
-            return;
-        };
+        let damage = world.remove_resource::<SceneDamage>();
         let probes = probes(world);
-        if damage.sky {
+        let sky = damage.as_ref().is_some_and(SceneDamage::sky);
+        if sky {
             for (probe, _, _) in &probes {
                 self.pending.entry(*probe).or_default().all = true;
             }
+            return;
+        }
+        let nodes = damage.as_ref().map_or(&[][..], SceneDamage::nodes);
+        if probes.is_empty() || (changed.is_empty() && nodes.is_empty()) {
             return;
         }
         let (entities, spheres) = current;
@@ -81,16 +86,28 @@ impl Damage {
             .zip(spheres.iter().copied())
             .collect::<HashMap<_, _>>();
         let previous = previous.iter().copied().collect::<HashMap<_, _>>();
-        for node in damage.nodes() {
+        for (entity, sphere) in changed {
+            if let Some((center, radius)) = sphere {
+                self.mark(&probes, *center, *radius);
+            }
+            if let Some((center, radius)) = previous.get(entity) {
+                self.mark(&probes, *center, *radius);
+            }
+        }
+        for node in nodes {
             for (center, radius) in [current.get(node).copied(), previous.get(node).copied()]
                 .into_iter()
                 .flatten()
             {
-                for (probe, transform, blend) in &probes {
-                    if reaches(*transform, *blend, center, radius) {
-                        self.pending.entry(*probe).or_default().nodes.insert(*node);
-                    }
-                }
+                self.mark(&probes, center, radius);
+            }
+        }
+    }
+
+    fn mark(&mut self, probes: &[(Entity, Transform, f32)], center: Vec3, radius: f32) {
+        for (probe, transform, blend) in probes {
+            if reaches(*transform, *blend, center, radius) {
+                self.pending.entry(*probe).or_default().changed = true;
             }
         }
     }
@@ -98,7 +115,7 @@ impl Damage {
     pub(crate) fn pending(&self, probe: Entity) -> bool {
         self.pending
             .get(&probe)
-            .is_some_and(|held| held.all || !held.nodes.is_empty())
+            .is_some_and(|held| held.all || held.changed)
     }
 
     pub(crate) fn covered(&mut self, probe: Entity) {
@@ -109,6 +126,7 @@ impl Damage {
 fn probes(world: &World) -> Vec<(Entity, Transform, f32)> {
     world
         .iter::<CaptureProbe>()
+        .filter(|(entity, _)| !world.contains::<Hidden>(*entity))
         .filter_map(|(entity, _)| {
             let transform = *world.get::<Transform>(entity)?;
             let blend = world.get::<Environment>(entity)?.blend;

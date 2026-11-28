@@ -37,6 +37,7 @@ pub(crate) struct Instances {
     lookup: HashMap<Entity, u32>,
     epoch: u32,
     dirty: Vec<u32>,
+    removed: Vec<Entity>,
 }
 
 impl Instances {
@@ -46,12 +47,14 @@ impl Instances {
             lookup: HashMap::new(),
             epoch: 0,
             dirty: Vec::new(),
+            removed: Vec::new(),
         }
     }
 
     pub(crate) fn begin(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
         self.dirty.clear();
+        self.removed.clear();
     }
 
     pub(crate) fn claim(&mut self, entity: Entity) {
@@ -88,6 +91,7 @@ impl Instances {
             }
             let removed = self.slots.swap_remove(index);
             self.lookup.remove(&removed.entity);
+            self.removed.push(removed.entity);
             if let Some(held) = self.slots.get(index) {
                 self.lookup.insert(held.entity, index as u32);
                 moved.push(index as u32);
@@ -126,6 +130,10 @@ impl Instances {
 
     pub(crate) fn dirty(&self) -> &[u32] {
         &self.dirty
+    }
+
+    pub(crate) fn removed(&self) -> &[Entity] {
+        &self.removed
     }
 
     pub(crate) fn mark(&mut self, index: usize) {

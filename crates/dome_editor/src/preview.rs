@@ -2,7 +2,7 @@ use crate::action::Action;
 use crate::camera;
 use crate::debug;
 use dome_asset::{Library, Refresh};
-use dome_ecs::{Entity, LocalTransform, World, propagate, propagate_step, snapshot};
+use dome_ecs::{Entity, LocalTransform, World, propagate, propagate_step};
 use dome_gpu::{AddressMode, FilterMode, Gpu, SamplerDesc, Texture, TextureFormat, TextureUsages};
 use dome_math::{Quat, Transform, Vec3};
 use dome_render::{Camera, DirectionalLight, Pick, PointLight, Renderer, Target};
@@ -259,7 +259,6 @@ impl Preview {
         }
         for _ in 0..steps {
             self.accumulator -= self.fixed;
-            snapshot(&mut self.world);
             dome_animation::advance(&mut self.world, self.fixed.as_secs_f32());
             propagate_step(&mut self.world);
         }

@@ -16,6 +16,7 @@ pub(super) struct Collection {
     pub(super) depth_batches: u32,
     pub(super) total: u32,
     pub(super) spheres: Vec<(Vec3, f32)>,
+    pub(super) changed: Vec<(Entity, Option<(Vec3, f32)>)>,
     pub(super) highlight: u32,
     pub(super) uploads: Vec<Upload>,
 }
@@ -189,6 +190,25 @@ impl Renderer {
                 )
             })
             .collect::<Vec<_>>();
+        let mut changed = instances
+            .removed()
+            .iter()
+            .map(|entity| (*entity, None))
+            .collect::<Vec<_>>();
+        let mut moved = instances.dirty().to_vec();
+        moved.sort_unstable();
+        moved.dedup();
+        for index in moved {
+            let slot = instances.at(index as usize);
+            let record = slot.record.expect("a changed slot holds its record");
+            changed.push((
+                slot.entity,
+                Some((
+                    Vec3::new(record.bounds.x, record.bounds.y, record.bounds.z),
+                    record.bounds.w,
+                )),
+            ));
+        }
         Collection {
             batches: self.batches.table().to_vec(),
             bases: self.batches.bases().to_vec(),
@@ -196,6 +216,7 @@ impl Renderer {
             depth_batches: self.batches.depth(),
             total,
             spheres,
+            changed,
             highlight: highlight
                 .and_then(|held| instances.slot_of(held))
                 .unwrap_or(NO_HIGHLIGHT),

@@ -255,6 +255,12 @@ impl Input {
         &self.keys
     }
 
+    pub(crate) fn take_key(&mut self, key: Key) -> bool {
+        let before = self.keys.len();
+        self.keys.retain(|event| event.key != Some(key));
+        self.keys.len() != before
+    }
+
     pub fn texts(&self) -> &[String] {
         &self.texts
     }

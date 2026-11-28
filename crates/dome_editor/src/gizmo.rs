@@ -11,6 +11,14 @@ const MINIMUM: f32 = 4.0;
 const RING_STEPS: usize = 64;
 const RING_HALF: f32 = 1.2;
 const PLANE_FACING: f32 = 0.2;
+const SCALE_AXIS: Vec2 = Vec2::new(
+    std::f32::consts::FRAC_1_SQRT_2,
+    -std::f32::consts::FRAC_1_SQRT_2,
+);
+const SCALE_REFERENCE: f32 = 200.0;
+const SCALE_DEADZONE: f32 = 2.0;
+const SCALE_MINIMUM: f32 = 0.01;
+const SCALE_MAXIMUM: f32 = 100.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -355,17 +363,10 @@ pub fn begin(
         center: handle.center,
         screen_angle: 0.0,
         plane_start: None,
-        uniform: 1.0,
     };
-    match mode {
-        Mode::Translate => {}
-        Mode::Scale => {
-            drag.uniform = press.distance(handle.center).max(1.0);
-        }
-        Mode::Rotate => {
-            drag.screen_angle = angle_of(press - handle.center);
-            drag.plane_start = drag.plane_point(press);
-        }
+    if mode == Mode::Rotate {
+        drag.screen_angle = angle_of(press - handle.center);
+        drag.plane_start = drag.plane_point(press);
     }
     drag
 }
@@ -386,7 +387,6 @@ pub struct Drag {
     center: Vec2,
     screen_angle: f32,
     plane_start: Option<Vec3>,
-    uniform: f32,
 }
 
 impl Drag {
@@ -413,12 +413,9 @@ impl Drag {
             }
             Mode::Scale => {
                 let factor = match self.grip {
-                    Grip::Uniform => {
-                        (point.distance(self.center) / self.uniform).clamp(0.01, 100.0)
-                    }
-                    Grip::Axis(_) => {
-                        (1.0 + (point - self.press).dot(self.screen) / LENGTH).clamp(0.01, 100.0)
-                    }
+                    Grip::Uniform => uniform_scale(self.press, point),
+                    Grip::Axis(_) => (1.0 + (point - self.press).dot(self.screen) / LENGTH)
+                        .clamp(SCALE_MINIMUM, SCALE_MAXIMUM),
                 };
                 match self.grip {
                     Grip::Uniform => held.scale = self.local.scale * factor,
@@ -476,6 +473,12 @@ fn tangents(axis: Vec3) -> (Vec3, Vec3) {
 
 fn angle_of(direction: Vec2) -> f32 {
     direction.y.atan2(direction.x)
+}
+
+fn uniform_scale(press: Vec2, point: Vec2) -> f32 {
+    let travel = (point - press).dot(SCALE_AXIS);
+    let beyond = travel - travel.clamp(-SCALE_DEADZONE, SCALE_DEADZONE);
+    (1.0 + beyond / SCALE_REFERENCE).clamp(SCALE_MINIMUM, SCALE_MAXIMUM)
 }
 
 fn wrapped(angle: f32) -> f32 {
@@ -562,5 +565,36 @@ mod tests {
         );
         let moved = drag.transform(ring.center + Vec2::new(0.0, -88.0));
         assert!(moved.rotation.to_yaw_pitch_roll().length() > 0.0);
+    }
+
+    #[test]
+    fn a_uniform_scale_grabbed_at_the_pivot_creeps_instead_of_leaping() {
+        let target = target();
+        let handles = target.handles(Vec3::ZERO, basis(), Mode::Scale);
+        let handle = grip(&handles, Grip::Uniform);
+        let press = handle.center + Vec2::new(0.4, 0.0);
+        let drag = begin(
+            target,
+            handle,
+            Mode::Scale,
+            Transform::IDENTITY,
+            Transform::IDENTITY,
+            press,
+        );
+        assert_eq!(
+            drag.transform(press).scale,
+            Vec3::ONE,
+            "a still press keeps the scale it grabbed",
+        );
+        assert_eq!(
+            drag.transform(press + Vec2::new(0.0, -1.0)).scale,
+            Vec3::ONE,
+            "a one pixel nudge stays inside the dead zone",
+        );
+        let nudged = drag.transform(press + Vec2::new(0.0, -5.0)).scale.x;
+        assert!(
+            (nudged - 1.0).abs() < 0.1,
+            "a five pixel drag from the pivot moves the uniform scale by less than a tenth: {nudged}",
+        );
     }
 }

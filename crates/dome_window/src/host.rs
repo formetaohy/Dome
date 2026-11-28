@@ -34,7 +34,7 @@ pub trait Handler: 'static {
     fn closed(&mut self, _window: &Window) {}
 }
 
-pub fn run<H: Handler>(config: WindowConfig, handler: H) {
+pub fn run<H: Handler>(config: WindowConfig, handler: H) -> H {
     let event_loop = EventLoop::<Wake>::with_user_event()
         .build()
         .expect("the platform opens a window event loop");
@@ -50,6 +50,7 @@ pub fn run<H: Handler>(config: WindowConfig, handler: H) {
     event_loop
         .run_app(&mut host)
         .expect("the platform runs a window event loop");
+    host.handler
 }
 
 struct Host<H: Handler> {

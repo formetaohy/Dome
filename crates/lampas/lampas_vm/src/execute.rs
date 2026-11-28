@@ -326,22 +326,22 @@ impl Vm {
                 }
                 Op::ListPush => {
                     let value = self.stack[base + instruction.b as usize].clone();
-                    self.stack[base + instruction.a as usize]
-                        .list()
-                        .borrow_mut()
-                        .push(value);
+                    let list = self.stack[base + instruction.a as usize].list();
+                    list.borrow_mut().push(value);
+                    self.journal.record_push(&list);
                 }
                 Op::ListGet => {
                     let index = self.stack[base + instruction.high() as usize].integer();
                     let list = self.stack[base + instruction.low() as usize].list();
-                    let value = read_item(module, frame, list, index)?;
+                    let value = read_item(module, frame, &list, index)?;
                     self.stack[dst] = value;
                 }
                 Op::ListSet => {
                     let index = self.stack[base + instruction.low() as usize].integer();
                     let value = self.stack[base + instruction.high() as usize].clone();
                     let list = self.stack[base + instruction.a as usize].list();
-                    write_item(module, frame, list, index, value)?;
+                    let (at, previous) = write_item(module, frame, &list, index, value)?;
+                    self.journal.record_replace(&list, at, previous);
                 }
                 Op::ReadField => {
                     let row = self.stack[base + instruction.b as usize].component();
@@ -532,13 +532,10 @@ fn write_item(
     list: &RefCell<Vec<Value>>,
     index: i64,
     value: Value,
-) -> Result<(), Trap> {
+) -> Result<(usize, Value), Trap> {
     let at = item_index(module, frame, index)?;
     match list.borrow_mut().get_mut(at) {
-        Some(item) => {
-            *item = value;
-            Ok(())
-        }
+        Some(item) => Ok((at, std::mem::replace(item, value))),
         None => Err(item_absent(module, frame, index)),
     }
 }

@@ -11,7 +11,6 @@ pub(crate) struct Hit {
     pub node: NodeId,
     pub rect: Rect,
     pub clip: Rect,
-    pub scroll: bool,
     pub layer: usize,
     pub blocking: bool,
 }
@@ -23,7 +22,7 @@ pub(crate) fn collect<A>(
     text: &mut Text,
     theme: &Theme,
 ) {
-    walk(tree, id, hits, text, theme, false);
+    walk(tree, id, hits, text, theme, false, true);
 }
 
 fn walk<A>(
@@ -33,11 +32,13 @@ fn walk<A>(
     text: &mut Text,
     theme: &Theme,
     within: bool,
+    enabled: bool,
 ) {
     let node = &tree.nodes[id];
     if !node.on_screen {
         return;
     }
+    let enabled = enabled && node.enabled;
     let clip = node.clip;
     let visible = clip.width() > 0.0 && clip.height() > 0.0;
     let interactive = node.interactive();
@@ -45,7 +46,7 @@ fn walk<A>(
     let popup = node.popup_spec.is_some() && node.runtime.open;
     let blocking =
         node.blocks_pointer || (!within && !interactive && !scroll && !popup && opaque(node));
-    if visible && (interactive || scroll || popup || blocking) && (node.enabled || blocking) {
+    if visible && (interactive || scroll || popup || blocking) && (enabled || blocking) {
         let rect = if interactive {
             crate::widget::hit_rect(node, text, theme)
         } else {
@@ -55,14 +56,13 @@ fn walk<A>(
             node: id,
             rect,
             clip,
-            scroll,
             layer: node.layer.index(),
             blocking,
         });
     }
     let held = within || interactive || scroll || popup;
     for child in &node.children {
-        walk(tree, *child, hits, text, theme, held);
+        walk(tree, *child, hits, text, theme, held, enabled);
     }
 }
 
@@ -81,10 +81,4 @@ pub(crate) fn top(hits: &[Hit], pointer: Vec2) -> Option<&Hit> {
 
 pub(crate) fn resolve(hits: &[Hit], pointer: Vec2) -> Option<&Hit> {
     top(hits, pointer).filter(|hit| !hit.blocking)
-}
-
-pub(crate) fn resolve_scroll(hits: &[Hit], pointer: Vec2) -> Option<&Hit> {
-    hits.iter()
-        .filter(|hit| hit.scroll && hit.clip.contains(pointer) && hit.rect.contains(pointer))
-        .max_by_key(|hit| hit.layer)
 }

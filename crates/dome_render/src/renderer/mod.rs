@@ -1,6 +1,7 @@
 mod bounds;
 mod capture;
 mod channel;
+mod groups;
 mod pass;
 mod scene;
 
@@ -147,6 +148,7 @@ pub struct Renderer {
     main_arguments: Growing,
     main_batches: u32,
     batches: crate::batches::Batches,
+    scene_groups: Option<groups::SceneGroups>,
     shadow_visible: Growing,
     shadow_arguments: Growing,
     shadow_span: u64,
@@ -375,6 +377,7 @@ impl Renderer {
             main_arguments,
             main_batches: 0,
             batches: crate::batches::Batches::new(),
+            scene_groups: None,
             shadow_visible,
             shadow_arguments,
             shadow_span: 0,

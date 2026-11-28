@@ -213,12 +213,15 @@ pub(crate) fn modal(
     .key(Key::new("dialog.path"))
     .editing(dialog.focus)
     .error(dialog.invalid)
-    .select_all()
     .on_field(
         |value| Action::EditDialog(String::from(value)),
         |value| Action::SubmitPath(String::from(value)),
     )
     .on_cancel(|| Action::CloseDialog);
+    let field = match dialog.focus {
+        true => field.select_all(),
+        false => field,
+    };
 
     let actions = Element::row()
         .width(Length::Fill)

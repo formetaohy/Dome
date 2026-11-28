@@ -51,15 +51,6 @@ impl SceneSync {
         self.entities.get(applied.node_index(id)?).copied()
     }
 
-    fn node_map(&self) -> NodeMap {
-        NodeMap::new(
-            self.applied
-                .clone()
-                .expect("a synced scene holds the nodes it installs"),
-            self.entities.clone(),
-        )
-    }
-
     pub fn sync(
         &mut self,
         scene: &Scene,
@@ -141,10 +132,6 @@ impl SceneSync {
             let previous = previous(applied, index, node);
             let shared = !stale && previous.is_some_and(|held| std::ptr::eq(held, node));
             let mut touched = !reused;
-            if let Some(previous) = previous {
-                touched |= previous.parent != node.parent;
-                touched |= previous.transform() != node.transform();
-            }
             if !reused {
                 world.insert(
                     entity,
@@ -234,7 +221,8 @@ impl SceneSync {
         });
         let shared = !self.stale && previous.is_some_and(|held| std::ptr::eq(held, node));
         let shifted = previous.is_none_or(|held| held.transform() != node.transform());
-        let mut touched = shifted || previous.is_some_and(|held| held.parent != node.parent);
+        let mut touched = false;
+        let mut rebuilt = false;
         let mut sky = false;
         match node.parent.as_deref() {
             Some(parent) => {
@@ -264,6 +252,7 @@ impl SceneSync {
             if !replaced {
                 continue;
             }
+            rebuilt = true;
             touched |= spec.reach == Reach::Node;
             sky |= spec.reach == Reach::World;
             match authored {
@@ -278,9 +267,10 @@ impl SceneSync {
         {
             applied.remember_node(at, handle);
         }
-        world.insert_resource(self.node_map());
         publish(world, touched.then_some(entity).into_iter().collect(), sky);
-        dome_animation::settle(world);
+        if rebuilt {
+            dome_animation::settle(world);
+        }
         propagate(world);
     }
 }

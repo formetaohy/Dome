@@ -4,6 +4,7 @@ impl Renderer {
     pub(super) fn absorb_damage(&mut self, world: &mut World, collection: &Collection) {
         self.damage.absorb(
             world,
+            &collection.changed,
             (&collection.entities, &collection.spheres),
             &self.spheres,
         );
@@ -19,6 +20,9 @@ impl Renderer {
 
     pub(super) fn stale_probe(&self, world: &World) -> Option<Probe> {
         world.iter::<CaptureProbe>().find_map(|(entity, probe)| {
+            if world.contains::<Hidden>(entity) {
+                return None;
+            }
             let transform = *world.get::<Transform>(entity)?;
             let environment = world.get::<Environment>(entity)?.clone();
             (probe.stale(transform) || self.damage.pending(entity)).then_some(Probe {

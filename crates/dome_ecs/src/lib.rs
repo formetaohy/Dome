@@ -14,7 +14,7 @@ pub use dynamic::{Dynamic, DynamicColumn, Kind, Layout, Value};
 pub use entity::{Entity, EntityAllocator};
 pub use hierarchy::{
     LocalTransform, Parent, PreviousTransform, children, clear_parent, propagate, propagate_step,
-    set_parent, snapshot, world_transform,
+    set_parent, world_transform,
 };
 pub use resource::Resource;
 pub use schedule::Schedule;

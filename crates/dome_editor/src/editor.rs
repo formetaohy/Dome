@@ -523,23 +523,34 @@ impl Editor {
         if !continued {
             self.finish_property();
         }
-        if let Some(previous) = self.property.as_mut().and_then(|held| held.delta.take()) {
+        let previous = self.property.as_mut().and_then(|held| held.delta.take());
+        if let Some(previous) = &previous {
             previous.revert(&mut self.scene);
         }
-        match self
+        let outcome = self
             .scene
-            .edit(|edit| edit.set_property(&target, &path, &value))
-        {
+            .edit(|edit| edit.set_property(&target, &path, &value));
+        match outcome {
             Ok((_, delta)) => {
+                self.apply_edit(&target);
                 self.property = Some(PropertyState {
-                    target: target.clone(),
+                    target,
                     path,
                     delta: Some(delta),
                 });
-                self.apply_edit(&target);
             }
             Err(error) => {
-                self.property = None;
+                match previous {
+                    Some(previous) => {
+                        previous.apply(&mut self.scene);
+                        self.property = Some(PropertyState {
+                            target,
+                            path,
+                            delta: Some(previous),
+                        });
+                    }
+                    None => self.property = None,
+                }
                 self.fail(error);
             }
         }
@@ -1361,7 +1372,8 @@ impl Editor {
             return;
         };
         let transform = state.drag.transform(point);
-        if let Some(previous) = state.delta.take() {
+        let previous = state.delta.take();
+        if let Some(previous) = &previous {
             previous.revert(&mut self.scene);
         }
         match self
@@ -1374,7 +1386,13 @@ impl Editor {
                     session.preview.apply(&self.scene, state.node);
                 }
             }
-            Err(error) => self.fail(error),
+            Err(error) => {
+                if let Some(previous) = previous {
+                    previous.apply(&mut self.scene);
+                    state.delta = Some(previous);
+                }
+                self.fail(error);
+            }
         }
         self.drag = Some(state);
     }
@@ -1941,5 +1959,39 @@ mod tests {
         );
         editor.undo();
         assert_eq!(editor.scene.transform(index).translation, before);
+    }
+
+    #[test]
+    fn a_refused_property_edit_keeps_the_value_before_it() {
+        let (mut editor, _cleanup) = editor();
+        let target = editor.selected.clone().expect("the editor starts selected");
+        let index = editor.selected_node().expect("the editor starts on a node");
+        let before = editor.scene.transform(index).scale;
+
+        editor.handle(&button(true), 1.0, SIZE);
+        editor.apply_actions([Action::Property {
+            target: target.clone(),
+            path: String::from("transform.scale.x"),
+            value: Value::Number(2.0),
+        }]);
+        editor.apply_actions([Action::Property {
+            target,
+            path: String::from("transform.scale.x"),
+            value: Value::Number(0.0),
+        }]);
+        assert_eq!(
+            editor.scene.transform(index).scale.x,
+            2.0,
+            "a refused edit keeps the value the edit before it landed",
+        );
+        editor.handle(&button(false), 1.0, SIZE);
+        editor.apply_actions(Vec::new());
+
+        editor.undo();
+        assert_eq!(
+            editor.scene.transform(index).scale,
+            before,
+            "one undo crosses the refused edit to the scale it started with",
+        );
     }
 }

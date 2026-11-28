@@ -1,5 +1,6 @@
 use dome_math::Vec2;
 
+use crate::element::Layer;
 use crate::geometry::{Corners, Rect};
 use crate::paint::{Clip, Painter};
 use crate::style::{Border, Fill, State};
@@ -59,57 +60,76 @@ impl<A: Clone> Ui<A> {
         let focus_visible = self.focus_visible;
         let pointer = self.pointer;
         let size = self.size;
-        let mut bars = std::mem::take(&mut self.scrollbars);
-        bars.clear();
-        bars.extend(self.tree.scrolls.iter().filter_map(|id| {
-            let node = self.tree.nodes.get(*id)?;
-            let scroll = node.scroll?;
-            let spec = node.scroll_spec?;
-            if scroll.bar <= 0.01 || scroll.limit() <= 0.0 {
-                return None;
+        for (index, layer) in Layer::ALL.into_iter().enumerate() {
+            let mut instances = std::mem::take(&mut self.chrome_scratch[index]);
+            instances.clear();
+            {
+                let clip = Clip::new(Rect::from_min_size(Vec2::ZERO, size), Corners::ZERO);
+                let Self {
+                    text,
+                    textures,
+                    theme,
+                    tree,
+                    ..
+                } = self;
+                let mut painter = Painter::new(&mut instances, text, textures, clip);
+                if focus_visible
+                    && let Some(node) = focus
+                    && let Some(held) = tree.nodes.get(node)
+                    && held.on_screen
+                    && held.layer == layer
+                {
+                    let corners = held
+                        .focus_ring
+                        .unwrap_or_else(|| crate::widget::focus_corners(&held.content, theme));
+                    let previous = painter.clip();
+                    painter.push_clip(held.clip, Corners::ZERO);
+                    painter.outlined(
+                        held.rect.expand(2.0),
+                        corners,
+                        Fill::None,
+                        Border {
+                            width: 2.0,
+                            color: theme.palette.primary,
+                        },
+                    );
+                    painter.pop_clip(previous);
+                }
+                for id in &tree.scrolls {
+                    let Some(held) = tree.nodes.get(*id) else {
+                        continue;
+                    };
+                    let (Some(scroll), Some(spec)) = (held.scroll, held.scroll_spec) else {
+                        continue;
+                    };
+                    if held.layer != layer
+                        || !held.on_screen
+                        || scroll.bar <= 0.01
+                        || scroll.limit() <= 0.0
+                    {
+                        continue;
+                    }
+                    let bar = crate::scroll::bar(held.rect, spec.axis, scroll);
+                    let previous = painter.clip();
+                    painter.push_clip(held.clip, Corners::ZERO);
+                    painter.rect(
+                        bar.thumb,
+                        Corners::capsule(),
+                        theme.palette.outline.with_alpha(0.65 * scroll.bar),
+                    );
+                    painter.pop_clip(previous);
+                }
             }
-            Some((node.rect, spec.axis, scroll))
-        }));
+            if self.chrome[index].material != instances.material {
+                self.chrome[index].assign(&instances.material);
+            }
+            self.chrome_scratch[index] = instances;
+        }
         let mut instances = std::mem::take(&mut self.scratch);
         instances.clear();
         {
             let clip = Clip::new(Rect::from_min_size(Vec2::ZERO, size), Corners::ZERO);
             let mut painter = Painter::new(&mut instances, &mut self.text, &self.textures, clip);
-            if focus_visible
-                && let Some(node) = focus
-                && self.tree.nodes[node].on_screen
-            {
-                let (rect, corners, node_clip) = {
-                    let node = &self.tree.nodes[node];
-                    (
-                        node.rect,
-                        node.focus_ring.unwrap_or_else(|| {
-                            crate::widget::focus_corners(&node.content, &self.theme)
-                        }),
-                        node.clip,
-                    )
-                };
-                let previous = painter.clip();
-                painter.push_clip(node_clip, Corners::ZERO);
-                painter.outlined(
-                    rect.expand(2.0),
-                    corners,
-                    Fill::None,
-                    Border {
-                        width: 2.0,
-                        color: self.theme.palette.primary,
-                    },
-                );
-                painter.pop_clip(previous);
-            }
-            for (outer, axis, scroll) in &bars {
-                let bar = crate::scroll::bar(*outer, *axis, *scroll);
-                painter.rect(
-                    bar.thumb,
-                    Corners::capsule(),
-                    self.theme.palette.outline.with_alpha(0.65 * scroll.bar),
-                );
-            }
             if let Some((_, text)) = &tooltip {
                 let style = TextStyle::new(
                     self.theme.font(Level::Caption),
@@ -141,7 +161,6 @@ impl<A: Clone> Ui<A> {
             self.overlay.assign(&instances.material);
         }
         self.scratch = instances;
-        self.scrollbars = bars;
         self.tooltip = tooltip;
     }
 }

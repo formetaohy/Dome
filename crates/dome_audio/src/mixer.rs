@@ -61,6 +61,12 @@ impl Bus {
         };
         self.send_target = decibels(params.send_db);
     }
+
+    fn snap(&mut self, params: BusParams) {
+        self.follow(params);
+        self.gain = self.gain_target;
+        self.send = self.send_target;
+    }
 }
 
 struct Assigned {
@@ -352,7 +358,11 @@ impl Mixer {
                 }
             };
             bus.id = Arc::clone(&node.id);
-            bus.follow(params[at]);
+            if matched[at].is_some() {
+                bus.follow(params[at]);
+            } else {
+                bus.snap(params[at]);
+            }
             buses.push(bus);
         }
         self.buses = buses;
@@ -817,6 +827,32 @@ mod tests {
         assert!(
             block.iter().any(|sample| sample.abs() > 1e-6),
             "a reverb send rings after its one shot ends",
+        );
+    }
+
+    #[test]
+    fn a_new_bus_starts_at_the_gain_its_layout_declares() {
+        let (mut producer, playback, _bin, mut mixer, _active) = mixer(64);
+        let layout = buses(&[("master", None, None)]);
+        let mut params = vec![BusParams::default()];
+        params[0].gain_db = -20.0;
+        producer
+            .send(layout_of(layout, params))
+            .expect("the mixer accepts its topology");
+        start(
+            &mut producer,
+            &playback,
+            command(1, tone(vec![1.0; 4_800]), None),
+        );
+        let mut block = [0.0f32; 960];
+        mixer.render(&mut block);
+        let ceiling = decibels(-20.0) + 1e-4;
+        let peak = block
+            .iter()
+            .fold(0.0f32, |held, sample| held.max(sample.abs()));
+        assert!(
+            peak <= ceiling,
+            "a bus that opens at -20 decibels plays {peak} where {ceiling} stands",
         );
     }
 

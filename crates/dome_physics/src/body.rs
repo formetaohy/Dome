@@ -174,6 +174,9 @@ impl RigidBody {
 
     pub fn set_can_sleep(&mut self, can_sleep: bool) {
         self.can_sleep = can_sleep;
+        if !can_sleep {
+            self.wake();
+        }
     }
 
     pub fn is_sleeping(&self) -> bool {
@@ -720,6 +723,9 @@ impl Body {
     }
 
     pub(crate) fn sleep(&mut self) {
+        if !self.rigid.can_sleep || self.rigid.kind != BodyKind::Dynamic {
+            return;
+        }
         self.rigid.sleeping = true;
         self.rigid.linear_velocity = Vec3::ZERO;
         self.rigid.angular_velocity = Vec3::ZERO;

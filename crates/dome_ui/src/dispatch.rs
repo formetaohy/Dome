@@ -175,30 +175,48 @@ impl<A: Clone> Ui<A> {
     }
 
     fn wheel(&mut self) {
-        let step = self.input.scroll();
-        if step == ScrollDelta::default() {
+        let mut remaining = self.input.scroll();
+        if remaining == ScrollDelta::default() {
             return;
         }
         let pointer = self.pointer;
-        let Some(node) = hit::resolve_scroll(&self.hits, pointer).map(|hit| hit.node) else {
+        let Some(top) = hit::top(&self.hits, pointer).map(|hit| hit.node) else {
             return;
         };
-        if let Some(top) = hit::top(&self.hits, pointer)
-            && top.layer > self.tree.nodes[node].layer.index()
-        {
-            return;
+        let mut current = Some(top);
+        while let Some(id) = current {
+            current = self.tree.nodes[id].parent;
+            let node = &self.tree.nodes[id];
+            let (Some(axis), Some(scroll)) = (node.scroll_spec.map(|spec| spec.axis), node.scroll)
+            else {
+                continue;
+            };
+            if !node.clip.contains(pointer) || !node.rect.contains(pointer) {
+                continue;
+            }
+            let amount = content_shift(axis, remaining);
+            let accepted = (scroll.target + amount).clamp(0.0, scroll.limit()) - scroll.target;
+            if accepted == 0.0 {
+                continue;
+            }
+            let scroll = self.tree.nodes[id]
+                .scroll
+                .as_mut()
+                .expect("a scrolled node holds its state");
+            scroll.target += accepted;
+            scroll.moving = true;
+            if axis == Axis::Column {
+                remaining.down -= accepted;
+            } else {
+                let ratio = accepted / amount;
+                remaining.right -= remaining.right * ratio;
+                remaining.down -= remaining.down * ratio;
+            }
+            self.tree.nodes[id].paint_dirty = true;
+            self.tree.invalidate_arrange(id);
+            self.wake_scroll(id);
+            self.animating = true;
         }
-        let amount = content_shift(self.tree.nodes[node].scroll_axis(), step);
-        if amount == 0.0 {
-            return;
-        }
-        if let Some(scroll) = self.tree.nodes[node].scroll.as_mut() {
-            scroll.scroll_by(amount);
-        }
-        self.tree.nodes[node].paint_dirty = true;
-        self.tree.invalidate_arrange(node);
-        self.wake_scroll(node);
-        self.animating = true;
     }
 
     fn bar_at(
@@ -818,6 +836,12 @@ impl<A: Clone> Ui<A> {
         let Some(node) = self.edit else {
             return;
         };
+        if self.preedit.is_some() && self.input.take_key(InputKey::Escape) {
+            self.preedit = None;
+            self.input.clear_preedit();
+            self.tree.nodes[node].paint_dirty = true;
+            return;
+        }
         let live = matches!(
             &self.tree.nodes[node].interaction,
             Interaction::Field {

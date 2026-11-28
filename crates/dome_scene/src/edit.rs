@@ -38,6 +38,16 @@ impl Scene {
         held.confirm()?;
         Ok((value, held.settle()))
     }
+
+    pub(crate) fn stage<T>(
+        &mut self,
+        edit: impl FnOnce(&mut Edit<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut held = Edit::begin(self);
+        let value = edit(&mut held)?;
+        held.settle();
+        Ok(value)
+    }
 }
 
 impl<'a> Edit<'a> {

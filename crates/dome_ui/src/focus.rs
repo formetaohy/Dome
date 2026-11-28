@@ -51,6 +51,7 @@ impl<A: Clone> Ui<A> {
             let candidate = self.focus_order[index];
             if self.tree.nodes[candidate].on_screen {
                 self.focus = Some(candidate);
+                self.reveal(candidate);
                 return true;
             }
             index = if forward {

@@ -1,6 +1,5 @@
 use dome_ecs::{
     LocalTransform, PreviousTransform, World, children, propagate, propagate_step, set_parent,
-    snapshot,
 };
 use dome_math::{Quat, Transform, Vec3};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -123,7 +122,6 @@ fn a_stepped_pose_keeps_its_predecessor_and_an_immediate_pose_snaps_it() {
         entity,
         LocalTransform(Transform::from_translation(Vec3::new(2.0, 0.0, 0.0))),
     );
-    snapshot(&mut world);
     propagate_step(&mut world);
     assert_eq!(
         *world

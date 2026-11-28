@@ -638,6 +638,18 @@ pub fn sync(world: &mut World) {
         return;
     }
     let listener = listener(world);
+    let Some(mut audio) = world.remove_resource::<Audio>() else {
+        return;
+    };
+    audio.supervise();
+    audio.sync_buses(world);
+    audio.sync_mixer();
+    audio.reconcile();
+    for entity in audio.take_finished() {
+        if let Some(source) = world.get_mut::<AudioSource>(entity) {
+            source.finished();
+        }
+    }
     let mut gathered = world
         .iter::<AudioSource>()
         .map(|(entity, source)| {
@@ -656,18 +668,6 @@ pub fn sync(world: &mut World) {
         })
         .collect::<Vec<_>>();
     gathered.sort_by_key(|held| std::cmp::Reverse(held.1.priority()));
-    let Some(mut audio) = world.remove_resource::<Audio>() else {
-        return;
-    };
-    audio.supervise();
-    audio.sync_buses(world);
-    audio.sync_mixer();
-    audio.reconcile();
-    for entity in audio.take_finished() {
-        if let Some(source) = world.get_mut::<AudioSource>(entity) {
-            source.finished();
-        }
-    }
     let alive = gathered
         .iter()
         .map(|(entity, ..)| *entity)

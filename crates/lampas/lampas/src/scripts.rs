@@ -5,7 +5,7 @@ use crate::query::Matches;
 use crate::runner::Runner;
 use dome_ecs::{Layout, World};
 use lampas_bytecode::{Module, Phase};
-use lampas_vm::{RunOutcome, Trap, Value, Vm};
+use lampas_vm::{RunOutcome, Savepoint, Trap, Value, Vm};
 use std::path::Path;
 
 pub struct ScriptSpawned;
@@ -146,12 +146,15 @@ impl Scripts {
     fn settle(
         &mut self,
         world: &mut World,
-        savepoint: Vec<Value>,
+        savepoint: Savepoint,
         outcome: Result<(), Trap>,
     ) -> Result<(), Trap> {
         match outcome {
             Ok(()) => match self.effects.commit(world) {
-                Ok(()) => Ok(()),
+                Ok(()) => {
+                    self.vm.commit(savepoint);
+                    Ok(())
+                }
                 Err(trap) => {
                     self.effects.rollback(world);
                     self.vm.rewind(savepoint);

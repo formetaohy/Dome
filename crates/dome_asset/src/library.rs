@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::thread;
 use std::time::{Duration, Instant};
 use work::Fingerprints;
 use work::ImageMips;
@@ -33,6 +34,13 @@ use work::Outcome;
 use work::Worker;
 
 const WAIT_SLICE: Duration = Duration::from_millis(50);
+const STALL_SLICE: Duration = Duration::from_millis(1);
+
+enum Wait {
+    Budget,
+    Baking,
+    Loading,
+}
 
 pub struct Library {
     meshes: HashMap<String, MeshRecord>,
@@ -189,44 +197,32 @@ impl Library {
     }
 
     pub fn poll(&mut self, renderer: &mut Renderer, budget: u64) -> Option<Refresh> {
-        self.poll_ready(renderer, budget, None)
+        self.advance(renderer, budget, None).ok()
     }
 
-    fn poll_ready(
+    fn advance(
         &mut self,
         renderer: &mut Renderer,
         budget: u64,
         ready: Option<Outcome>,
-    ) -> Option<Refresh> {
-        if let Some(mut held) = self.commit.take() {
-            match held.run(self, renderer, budget) {
-                Some(refresh) => return Some(refresh),
-                None => {
-                    self.commit = Some(held);
-                    return None;
-                }
-            }
+    ) -> Result<Refresh, Wait> {
+        if let Some(held) = self.commit.take() {
+            return self.step(held, renderer, budget);
         }
         if !self.loading {
-            return None;
+            return Err(Wait::Loading);
         }
         let outcome = match ready {
             Some(outcome) => outcome,
-            None => self.worker.outcome()?,
+            None => self.worker.outcome().ok_or(Wait::Loading)?,
         };
         self.loading = false;
         match outcome {
             Outcome::Prepared(prepared) => {
-                let mut held = commit::Commit::new(*prepared);
-                match held.run(self, renderer, budget) {
-                    Some(refresh) => Some(refresh),
-                    None => {
-                        self.commit = Some(held);
-                        None
-                    }
-                }
+                let held = commit::Commit::new(*prepared);
+                self.step(held, renderer, budget)
             }
-            Outcome::Failed(message) => Some(Refresh {
+            Outcome::Failed(message) => Ok(Refresh {
                 applied: false,
                 changed: Changed::none(),
                 errors: vec![AssetError {
@@ -235,6 +231,25 @@ impl Library {
                     message,
                 }],
             }),
+        }
+    }
+
+    fn step(
+        &mut self,
+        mut held: commit::Commit,
+        renderer: &mut Renderer,
+        budget: u64,
+    ) -> Result<Refresh, Wait> {
+        match held.run(self, renderer, budget) {
+            commit::Step::Done(refresh) => Ok(refresh),
+            commit::Step::Capped => {
+                self.commit = Some(held);
+                Err(Wait::Budget)
+            }
+            commit::Step::Baking => {
+                self.commit = Some(held);
+                Err(Wait::Baking)
+            }
         }
     }
 
@@ -262,12 +277,10 @@ impl Library {
     ) -> WaitOutcome {
         assert!(self.loading(), "a library waits for the scene it loads");
         loop {
-            if let Some(refresh) = self.poll(renderer, budget) {
-                return WaitOutcome::Ready(refresh);
-            }
-            if self.commit.is_some() {
-                continue;
-            }
+            let stalled = match self.advance(renderer, budget, None) {
+                Ok(refresh) => return WaitOutcome::Ready(refresh),
+                Err(stalled) => stalled,
+            };
             if cancelled() {
                 return WaitOutcome::Cancelled;
             }
@@ -275,10 +288,16 @@ impl Library {
             if remaining.is_zero() {
                 return WaitOutcome::Timeout;
             }
-            if let Some(outcome) = self.worker.wait(remaining.min(WAIT_SLICE))
-                && let Some(refresh) = self.poll_ready(renderer, budget, Some(outcome))
-            {
-                return WaitOutcome::Ready(refresh);
+            match stalled {
+                Wait::Budget => thread::yield_now(),
+                Wait::Baking => thread::sleep(remaining.min(STALL_SLICE)),
+                Wait::Loading => {
+                    if let Some(outcome) = self.worker.wait(remaining.min(WAIT_SLICE))
+                        && let Ok(refresh) = self.advance(renderer, budget, Some(outcome))
+                    {
+                        return WaitOutcome::Ready(refresh);
+                    }
+                }
             }
         }
     }

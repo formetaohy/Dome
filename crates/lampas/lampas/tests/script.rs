@@ -500,6 +500,45 @@ fn a_system_fault_discards_the_commands_its_run_recorded() {
     );
 }
 
+const RETRACT: &str = r#"
+global items: list<int> = [7];
+global ticks: int = 0;
+
+system gather() {
+    ticks += 1;
+    let alias = items;
+    push(alias, ticks);
+    items[0] = ticks;
+    let zero = 0;
+    log(text(ticks / zero));
+}
+"#;
+
+#[test]
+fn a_system_fault_returns_the_items_its_global_list_held() {
+    let (hosts, messages) = hosts();
+    let module = compile("retract.amp", RETRACT, &hosts).expect("the script checks");
+    let mut scripts = Scripts::new(module, hosts);
+    let mut world = World::new();
+    let held = scripts.globals()[0].list();
+    for _ in 0..2 {
+        let trap = scripts
+            .update(&mut world)
+            .expect_err("the gather divides by zero");
+        assert_eq!(trap.message(), "the int divides by zero");
+        assert_eq!(
+            scripts.globals()[0],
+            Value::from_list(vec![Value::Int(7)]),
+            "a fault returns the items its run pushed and wrote",
+        );
+        assert!(
+            Rc::ptr_eq(&held, &scripts.globals()[0].list()),
+            "a fault keeps the list its globals share",
+        );
+    }
+    assert!(messages.borrow().is_empty());
+}
+
 const RECURSE: &str = r#"
 fn recurse(depth: int) -> int {
     return recurse(depth + 1);

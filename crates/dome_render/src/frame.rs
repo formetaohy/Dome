@@ -206,6 +206,19 @@ pub(crate) fn record_of(
     placement: Placement,
 ) -> InstanceRecord {
     assert!(
+        transform.translation.x.is_finite()
+            && transform.translation.y.is_finite()
+            && transform.translation.z.is_finite()
+            && transform.rotation.x.is_finite()
+            && transform.rotation.y.is_finite()
+            && transform.rotation.z.is_finite()
+            && transform.rotation.w.is_finite()
+            && transform.scale.x.is_finite()
+            && transform.scale.y.is_finite()
+            && transform.scale.z.is_finite(),
+        "a rendered instance holds the finite transform {transform:?}"
+    );
+    assert!(
         transform.scale.x != 0.0 && transform.scale.y != 0.0 && transform.scale.z != 0.0,
         "a rendered instance scales a normal by zero"
     );

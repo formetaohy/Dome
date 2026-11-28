@@ -102,7 +102,7 @@ impl Loader {
                 repeated.push((node.id.clone(), keys));
             }
             scene
-                .edit(|edit| {
+                .stage(|edit| {
                     import(edit, &template, &key, &node.id)?;
                     edit.set_instance(&node.id, Some(owners(&template, &key)));
                     for (nested, held) in template.instances.iter() {
@@ -183,7 +183,7 @@ impl Materialization<'_> {
         let keys = owners(&template, &key);
         let marker_id = marker.id.clone();
         scene
-            .edit(|edit| {
+            .stage(|edit| {
                 import(edit, &template, &key, &held.id)?;
                 edit.set_instance(&held.id, Some(keys.clone()));
                 for (nested, held_keys) in template.instances.iter() {
@@ -259,7 +259,7 @@ fn apply_removals(
     nodes.retain(|node| !removed.contains(&node.id));
     let ids = removed.into_iter().collect::<Vec<_>>();
     scene
-        .edit(|edit| {
+        .stage(|edit| {
             for id in &ids {
                 edit.set_instance(id, None);
             }

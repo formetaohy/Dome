@@ -87,8 +87,12 @@ fn play(project: Project, debug: bool) {
             std::process::exit(1);
         }
     };
-    app.run();
+    let error = app.run();
     report(&faults);
+    if let Some(error) = error {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
 }
 
 fn report(faults: &script::Faults) {

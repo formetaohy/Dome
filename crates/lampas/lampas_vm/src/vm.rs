@@ -1,4 +1,5 @@
 use crate::context::Context;
+use crate::journal::Journal;
 use crate::trap::Trap;
 use crate::value::Value;
 use dome_ecs::Entity;
@@ -26,10 +27,15 @@ pub enum RunOutcome {
     Stopped,
 }
 
+pub struct Savepoint {
+    globals: Vec<Value>,
+}
+
 pub struct Vm {
     pub(crate) stack: Vec<Value>,
     pub(crate) frames: Vec<Frame>,
     pub(crate) globals: Vec<Value>,
+    pub(crate) journal: Journal,
 }
 
 impl Vm {
@@ -42,6 +48,7 @@ impl Vm {
                 .iter()
                 .map(|global| Value::constant(&global.value))
                 .collect(),
+            journal: Journal::new(),
         }
     }
 
@@ -49,19 +56,37 @@ impl Vm {
         &self.globals
     }
 
-    pub fn savepoint(&self) -> Vec<Value> {
-        self.globals.clone()
+    pub fn savepoint(&mut self) -> Savepoint {
+        assert!(
+            self.journal.is_empty(),
+            "a lampas transaction begins where the last one settled",
+        );
+        Savepoint {
+            globals: self.globals.clone(),
+        }
     }
 
-    pub fn rewind(&mut self, savepoint: Vec<Value>) {
+    pub fn commit(&mut self, savepoint: Savepoint) {
         assert_eq!(
-            savepoint.len(),
+            savepoint.globals.len(),
             self.globals.len(),
-            "a savepoint of {} globals rewinds {}",
-            savepoint.len(),
+            "a savepoint of {} globals commits {}",
+            savepoint.globals.len(),
             self.globals.len(),
         );
-        self.globals = savepoint;
+        self.journal.commit();
+    }
+
+    pub fn rewind(&mut self, savepoint: Savepoint) {
+        assert_eq!(
+            savepoint.globals.len(),
+            self.globals.len(),
+            "a savepoint of {} globals rewinds {}",
+            savepoint.globals.len(),
+            self.globals.len(),
+        );
+        self.journal.rewind();
+        self.globals = savepoint.globals;
     }
 
     pub fn call(

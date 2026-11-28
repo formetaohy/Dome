@@ -487,35 +487,62 @@ struct Reach {
     parents: HashMap<usize, Option<usize>>,
 }
 
-fn reach(model: &Model) -> Result<Reach, String> {
-    let mut order = Vec::new();
-    let mut parents = HashMap::new();
-    let mut state = vec![0u8; model.nodes.len()];
-    for root in &model.roots {
-        visit(*root, None, model, &mut order, &mut parents, &mut state)?;
-    }
-    Ok(Reach { order, parents })
+struct Walk<'a> {
+    model: &'a Model,
+    order: Vec<usize>,
+    parents: HashMap<usize, Option<usize>>,
+    state: Vec<u8>,
+    stack: Vec<(usize, usize)>,
 }
 
-fn visit(
-    index: usize,
-    parent: Option<usize>,
-    model: &Model,
-    order: &mut Vec<usize>,
-    parents: &mut HashMap<usize, Option<usize>>,
-    state: &mut [u8],
-) -> Result<(), String> {
-    match state[index] {
-        1 => return Err(format!("the model closes the node {index} into a cycle")),
-        2 => return Err(format!("the model shares the node {index} between parents")),
-        _ => {}
+fn reach(model: &Model) -> Result<Reach, String> {
+    let mut walk = Walk {
+        model,
+        order: Vec::new(),
+        parents: HashMap::new(),
+        state: vec![0u8; model.nodes.len()],
+        stack: Vec::new(),
+    };
+    for root in &model.roots {
+        walk.enter(*root, None)?;
+        walk.descend()?;
     }
-    state[index] = 1;
-    parents.insert(index, parent);
-    order.push(index);
-    for child in &model.nodes[index].children {
-        visit(*child, Some(index), model, order, parents, state)?;
+    Ok(Reach {
+        order: walk.order,
+        parents: walk.parents,
+    })
+}
+
+impl Walk<'_> {
+    fn enter(&mut self, index: usize, parent: Option<usize>) -> Result<(), String> {
+        match self.state[index] {
+            1 => return Err(format!("the model closes the node {index} into a cycle")),
+            2 => return Err(format!("the model shares the node {index} between parents")),
+            _ => {}
+        }
+        self.state[index] = 1;
+        self.parents.insert(index, parent);
+        self.order.push(index);
+        self.stack.push((index, 0));
+        Ok(())
     }
-    state[index] = 2;
-    Ok(())
+
+    fn descend(&mut self) -> Result<(), String> {
+        while let Some((node, child)) = self.stack.last().copied() {
+            match self.model.nodes[node].children.get(child).copied() {
+                Some(next) => {
+                    self.stack
+                        .last_mut()
+                        .expect("a walked node holds its frame")
+                        .1 = child + 1;
+                    self.enter(next, Some(node))?;
+                }
+                None => {
+                    self.state[node] = 2;
+                    self.stack.pop();
+                }
+            }
+        }
+        Ok(())
+    }
 }

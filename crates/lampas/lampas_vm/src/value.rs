@@ -92,9 +92,9 @@ impl Value {
         }
     }
 
-    pub fn list(&self) -> &RefCell<Vec<Value>> {
+    pub fn list(&self) -> Rc<RefCell<Vec<Value>>> {
         match self {
-            Self::List(held) => held,
+            Self::List(held) => Rc::clone(held),
             other => other.misuse("a list"),
         }
     }

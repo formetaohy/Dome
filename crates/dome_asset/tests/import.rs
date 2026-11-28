@@ -241,6 +241,54 @@ fn an_imported_model_expands_into_the_assets_and_nodes_it_holds() {
     let _ = fs::remove_dir_all(&root);
 }
 
+#[test]
+fn an_imported_model_reaches_the_deepest_node_of_a_chain() {
+    const DEPTH: usize = 50_000;
+    let root = directory("deep");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("assets")).expect("a test opens its directory");
+    let nodes = (0..DEPTH)
+        .map(|index| {
+            if index + 1 < DEPTH {
+                json!({ "children": [index + 1] })
+            } else {
+                json!({})
+            }
+        })
+        .collect::<Vec<_>>();
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "scene": 0,
+        "scenes": [{ "nodes": [0] }],
+        "nodes": nodes,
+    });
+    fs::write(
+        root.join("assets/deep.gltf"),
+        serde_json::to_vec(&document).expect("a test writes JSON"),
+    )
+    .expect("a test writes a model");
+
+    let mut scene = Scene::new(&root, schema());
+    let target = edit(&mut scene, |edit| {
+        edit.import_model("deep", "assets/deep.gltf", None)
+    })
+    .expect("a scene imports a deep model");
+    assert_eq!(target, Target::Node(String::from("deep")));
+    assert_eq!(scene.nodes().len(), DEPTH + 1);
+    let holder = scene.node_index("deep").expect("the imported model root");
+    assert_eq!(scene.subtree(holder).len(), DEPTH + 1);
+    let deepest = scene
+        .node_index(&format!("deep_node{}", DEPTH - 1))
+        .expect("the deepest imported node");
+    assert_eq!(
+        scene
+            .parent_index(deepest)
+            .map(|parent| scene.nodes()[parent].id.clone()),
+        Some(format!("deep_node{}", DEPTH - 2)),
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
 fn triangle() -> Vec<u8> {
     let mut binary = Vec::new();
     for value in [-1.0f32, -1.0, 0.0, 1.0, -1.0, 0.0, 0.0, 1.0, 0.0] {

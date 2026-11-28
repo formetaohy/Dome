@@ -128,7 +128,18 @@ fn save(file: &Path, entries: &[Recent]) -> Result<(), String> {
         ("format", Toml::string(FORMAT)),
         ("project", Toml::array(projects)),
     ]);
-    fs::write(file, document.write()).map_err(|error| {
+    let text = document.write();
+    let mut staging = file.as_os_str().to_owned();
+    staging.push(format!(".{}.tmp", std::process::id()));
+    let staging = PathBuf::from(staging);
+    let written = fs::File::create(&staging)
+        .and_then(|mut held| {
+            std::io::Write::write_all(&mut held, text.as_bytes())?;
+            held.sync_all()
+        })
+        .and_then(|()| fs::rename(&staging, file));
+    written.map_err(|error| {
+        let _ = fs::remove_file(&staging);
         format!(
             "the launcher catalog {} writes no text: {error}",
             file.display(),
@@ -175,6 +186,7 @@ fn home() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
 
     #[test]
     fn a_catalog_remembers_the_project_it_records() {
@@ -184,10 +196,52 @@ mod tests {
         let file = root.join("launcher.toml");
         let mut catalog = Catalog::at(file.clone()).expect("the catalog opens");
         catalog.record(&project).expect("the catalog records");
+        catalog
+            .record(&project)
+            .expect("the catalog replaces the file it holds");
         let loaded = Catalog::at(file).expect("the catalog reloads");
         assert_eq!(loaded.entries().len(), 1);
         assert_eq!(loaded.entries()[0].name(), "Game");
         assert_eq!(loaded.entries()[0].path(), project.root());
+        assert_eq!(
+            names(&root),
+            vec![OsString::from("Game"), OsString::from("launcher.toml")],
+            "a recorded catalog leaves its file in place and no staging file",
+        );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_catalog_that_cannot_replace_its_file_reports_and_leaves_no_staging_one() {
+        let root = std::env::temp_dir().join(format!("dome_catalog_stuck_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let file = root.join("launcher.toml");
+        fs::create_dir_all(&file).expect("the test holds a catalog target folder");
+        fs::write(file.join("held.toml"), "").expect("the test fills the catalog target folder");
+        let project = Project::create(root.join("Game"), "Game").expect("the project is created");
+        let mut catalog = Catalog::at(file).expect("the catalog opens");
+        assert!(
+            catalog.record(&project).is_err(),
+            "a catalog whose file cannot be replaced reports the failure",
+        );
+        assert_eq!(
+            names(&root),
+            vec![OsString::from("Game"), OsString::from("launcher.toml")],
+            "a failed catalog write leaves no staging file",
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn names(root: &Path) -> Vec<OsString> {
+        let mut held = fs::read_dir(root)
+            .expect("the catalog folder reads")
+            .map(|entry| {
+                entry
+                    .expect("the catalog folder holds its entries")
+                    .file_name()
+            })
+            .collect::<Vec<_>>();
+        held.sort();
+        held
     }
 }

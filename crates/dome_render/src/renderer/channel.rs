@@ -231,50 +231,25 @@ impl Renderer {
                     .binding(u64::from(cascade as u32) * VIEW_BYTES, VIEW_BYTES)
             }),
         };
-        let groups = slots_in
-            .iter()
-            .enumerate()
-            .map(|(index, slot)| {
-                SlotGroups::build(&pipelines, &shared, slot, index >= depth_batches as usize)
-            })
-            .collect::<Vec<_>>();
         let textures = self.materials.textures();
         let samplers = self.materials.samplers();
-        let depth_tables = table(
-            pipelines.depth,
-            program::SHADE_TEXTURE,
-            program::SHADE_SAMPLER,
-            textures,
-            samplers,
-        );
-        let shadow_tables = table(
-            pipelines.shadow,
-            program::SHADE_TEXTURE,
-            program::SHADE_SAMPLER,
-            textures,
-            samplers,
-        );
-        let tables = table(
-            pipelines.opaque,
-            program::SHADE_TEXTURE,
-            program::SHADE_SAMPLER,
-            textures,
-            samplers,
-        );
-        let transparent_tables = table(
-            pipelines.blended,
-            program::SHADE_TEXTURE,
-            program::SHADE_SAMPLER,
-            textures,
-            samplers,
-        );
-        let motion_tables = table(
-            pipelines.motion,
-            program::MOTION_TEXTURE,
-            program::MOTION_SAMPLER,
-            textures,
-            samplers,
-        );
+        let tables = (textures.generation(), samplers.generation());
+        let mut cached = self.scene_groups.take();
+        let stale = cached
+            .as_ref()
+            .is_none_or(|held| !held.matches(&shared, &slots_in, batches, tables));
+        if stale {
+            cached = Some(super::groups::SceneGroups::build(
+                &pipelines, &shared, &slots_in, batches, textures, samplers,
+            ));
+        }
+        let cached = cached.expect("a rendered channel holds the groups its batches bind");
+        let groups = &cached.groups;
+        let depth_tables = cached.depth_tables.clone();
+        let shadow_tables = cached.shadow_tables.clone();
+        let tables = cached.tables.clone();
+        let transparent_tables = cached.transparent_tables.clone();
+        let motion_tables = cached.motion_tables.clone();
         let depth_groups = groups
             .iter()
             .map(|slot| [slot.depth().clone(), depth_tables.clone()])
@@ -480,6 +455,7 @@ impl Renderer {
                 .depth(scene_depth, DepthOps::KEEP_DISCARDED),
             &motion,
         );
+        self.scene_groups = Some(cached);
         Channels { arguments }
     }
 }

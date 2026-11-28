@@ -383,7 +383,7 @@ fn sphere_box(
         let (distance, axis) = nearest_face(local, half_extents);
         let face = cuboid.rotation.rotate_vec3(axis);
         let normal = -face;
-        let separation = distance - radius;
+        let separation = -(distance + radius);
         let point = sphere.position + face * ((radius + distance) * 0.5);
         (normal, separation, point)
     } else {
@@ -531,7 +531,7 @@ fn capsule_box(
         (
             normal,
             world + face * ((radius + held) * 0.5),
-            held - radius,
+            -(held + radius),
         )
     };
     if separation > gap {
@@ -546,7 +546,7 @@ fn capsule_box(
             local.z.clamp(-half_extents.z, half_extents.z),
         );
         let held = if closest == local {
-            nearest_face(local, half_extents).0 - radius
+            -(nearest_face(local, half_extents).0 + radius)
         } else {
             (closest - local).length() - radius
         };
@@ -593,11 +593,15 @@ fn nearest_face(point: Vec3, half_extents: Vec3) -> (f32, Vec3) {
         2
     };
     let direction = match axis {
-        0 => Vec3::new(point.x.signum(), 0.0, 0.0),
-        1 => Vec3::new(0.0, point.y.signum(), 0.0),
-        _ => Vec3::new(0.0, 0.0, point.z.signum()),
+        0 => Vec3::new(sign(point.x), 0.0, 0.0),
+        1 => Vec3::new(0.0, sign(point.y), 0.0),
+        _ => Vec3::new(0.0, 0.0, sign(point.z)),
     };
     (distances[axis], direction)
+}
+
+fn sign(value: f32) -> f32 {
+    if value < 0.0 { -1.0 } else { 1.0 }
 }
 
 fn perpendicular(direction: Vec3) -> Vec3 {

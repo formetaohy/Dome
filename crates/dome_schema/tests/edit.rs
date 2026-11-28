@@ -81,6 +81,13 @@ fn an_edit_transaction_returns_the_scene_it_edited() {
     assert_eq!(scene.instance_changes("prop"), 2);
     let after = scene.write().expect("a scene writes its text");
     assert_ne!(after, before);
+    fs::write(root.join("saved.toml"), &after).expect("a test writes the saved scene");
+    let reloaded = Scene::load(root.join("saved.toml"), &root, schema())
+        .expect("a saved scene with an addition reloads");
+    assert!(
+        reloaded.node_index("prop_antenna").is_some(),
+        "a saved prefab addition materializes when its scene reloads",
+    );
 
     delta.revert(&mut scene);
     assert_eq!(
