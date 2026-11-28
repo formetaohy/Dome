@@ -1,11 +1,12 @@
 use crate::action::Action;
 use crate::preview::Preview;
-use dome_gpu::{Gpu, Surface};
+use dome_gpu::{Gpu, GpuEventCursor, Surface};
 use dome_scene::Scene;
 use dome_ui::{MemoryClipboard, Ui};
 
 pub(crate) struct Session {
     pub(crate) context: Gpu,
+    pub(crate) events: GpuEventCursor,
     pub(crate) surface: Surface,
     pub(crate) preview: Preview,
     pub(crate) ui: Ui<Action>,
@@ -13,10 +14,12 @@ pub(crate) struct Session {
 
 impl Session {
     pub(crate) fn new(context: Gpu, surface: Surface, preview: Preview, scene: &Scene) -> Self {
+        let events = context.events();
         let mut ui = ui_of(&context, &surface);
         preview.register_textures(&mut ui, scene);
         Self {
             context,
+            events,
             surface,
             preview,
             ui,

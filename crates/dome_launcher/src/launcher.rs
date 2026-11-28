@@ -1,7 +1,7 @@
 use crate::action::Action;
 use crate::session::Session;
 use crate::stage::{self, State};
-use dome_gpu::{Gpu, GpuRequest, Submission};
+use dome_gpu::{Gpu, GpuFailure, GpuRequest, Submission};
 use dome_math::Vec2;
 use dome_project::{Catalog, Project};
 use dome_window::{Event, Flow, Handler, KeyCode, Waker, Window, WindowConfig, run as run_window};
@@ -65,13 +65,15 @@ impl Launcher {
         let context = Gpu::open_window(&GpuRequest::default(), window.target())
             .unwrap_or_else(|error| panic!("the launcher opens its render device: {error}"));
         let (width, height) = window.size();
-        assert!(
-            width > 0 && height > 0,
-            "a window of {width} by {height} presents no surface"
-        );
         let surface = context.surface(width, height);
         self.session = Some(Session::new(context, surface));
         self.ime = false;
+    }
+
+    fn rebuild(&mut self, window: &Window) {
+        self.session = None;
+        self.open(window);
+        self.redraw = true;
     }
 
     fn apply(&mut self, action: Action) {
@@ -177,13 +179,19 @@ impl Launcher {
     }
 
     fn frame(&mut self, window: &Window, _real: Duration) -> Flow {
-        if let Some(failure) = self
-            .session
-            .as_ref()
-            .and_then(|session| session.context.failure())
-        {
-            eprintln!("{failure}");
-            return Flow::Exit;
+        let lost = match self.session.as_mut() {
+            Some(session) => {
+                let events = session.events.poll();
+                if let Some(event) = events.iter().find(|event| event.fault().is_some()) {
+                    panic!("{event}");
+                }
+                events.iter().any(|event| event.device_lost())
+            }
+            None => false,
+        };
+        if lost {
+            self.rebuild(window);
+            return Flow::Continuous;
         }
         let now = Instant::now();
         let mut redraw = std::mem::take(&mut self.redraw) || self.ui_at.is_some_and(|at| at <= now);
@@ -235,15 +243,23 @@ impl Launcher {
         session.ui.present(element);
         let frame = match session.surface.acquire() {
             Ok(frame) => frame,
-            Err(failure) => {
-                eprintln!("{failure}");
-                return Flow::Exit;
+            Err(
+                GpuFailure::SurfaceOutdated | GpuFailure::SurfaceLost | GpuFailure::SurfaceFormat,
+            ) => {
+                self.rebuild(window);
+                return Flow::Continuous;
             }
+            Err(GpuFailure::Fault(message)) => panic!("the graphics device fails: {message}"),
         };
         let Some(frame) = frame else {
             let wake = session.ui.finish();
             return self.pace(wake);
         };
+        if frame.format() != session.ui.format() {
+            frame.discard();
+            self.rebuild(window);
+            return Flow::Continuous;
+        }
         let Session { context, ui, .. } = session;
         let mut submission = Submission::new(context.device(), "dome launcher");
         ui.render(&mut submission, frame.texture(), None);

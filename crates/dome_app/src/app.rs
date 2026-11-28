@@ -3,7 +3,7 @@ use dome_asset::{Change, Library, Watch};
 use dome_audio::Audio;
 use dome_ecs::{Entity, Schedule, System, World, propagate, propagate_step, snapshot};
 use dome_gpu::{
-    Gpu, GpuFailure, GpuRequest, Surface, SurfaceFrame, Texture, TextureFormat, TextureUsages,
+    Gpu, GpuEventCursor, GpuFailure, GpuRequest, Surface, Texture, TextureFormat, TextureUsages,
 };
 use dome_math::{Transform, Vec3};
 use dome_render::{Camera, Lines, Renderer, Target};
@@ -75,7 +75,7 @@ impl Default for ClearColor {
     }
 }
 
-type Startup = Box<dyn FnOnce(&mut World, &mut Renderer)>;
+type Startup = Box<dyn Fn(&mut World, &mut Renderer)>;
 type Observer = Box<dyn Fn(&mut World, Change)>;
 
 pub struct App {
@@ -101,6 +101,7 @@ enum Presentation {
 
 struct Session {
     context: Gpu,
+    events: GpuEventCursor,
     presentation: Presentation,
     renderer: Renderer,
     shot: Option<Texture>,
@@ -129,6 +130,32 @@ struct LiveScene {
 struct Reload {
     renew: bool,
     error: Option<String>,
+}
+
+enum GpuCondition {
+    Healthy,
+    Lost,
+    Fault(String),
+}
+
+fn gpu_condition(events: &mut GpuEventCursor) -> GpuCondition {
+    let events = events.poll();
+    let mut lost = false;
+    let mut fault = None;
+    for event in events {
+        lost |= event.device_lost();
+        if let Some(message) = event.fault() {
+            fault = Some(String::from(message));
+        }
+    }
+    if let Some(message) = fault {
+        return GpuCondition::Fault(message);
+    }
+    if lost {
+        GpuCondition::Lost
+    } else {
+        GpuCondition::Healthy
+    }
 }
 
 impl LiveScene {
@@ -286,15 +313,13 @@ impl Session {
         let context = Gpu::open_window(request, window.target())
             .unwrap_or_else(|error| panic!("the engine opens its render device: {error}"));
         let (width, height) = window.size();
-        assert!(
-            width > 0 && height > 0,
-            "a window of {width} by {height} presents no surface"
-        );
         let surface = context.surface(width, height);
         let format = surface.format();
+        let events = context.events();
         let renderer = Renderer::new(&context, format);
         Self {
             context,
+            events,
             presentation: Presentation::Window(Box::new(surface)),
             renderer,
             shot: None,
@@ -322,9 +347,11 @@ impl Session {
             format,
             TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
         );
+        let events = context.events();
         let renderer = Renderer::new(&context, format);
         Self {
             context,
+            events,
             presentation: Presentation::Offscreen(Box::new(target)),
             renderer,
             shot: None,
@@ -405,20 +432,14 @@ impl Session {
         };
         self.width = frame.width();
         self.height = frame.height();
-        self.adopt(&frame);
+        if frame.format() != self.format {
+            frame.discard();
+            return Err(GpuFailure::SurfaceFormat);
+        }
         self.renderer.set_interpolation(phase_of(world));
         self.renderer
             .render(world, Target::Surface(Box::new(frame)), clear, None);
         Ok(())
-    }
-
-    fn adopt(&mut self, frame: &SurfaceFrame) {
-        let format = frame.format();
-        if format == self.format {
-            return;
-        }
-        self.format = format;
-        self.renderer = Renderer::new(&self.context, format);
     }
 
     fn draw_headless(
@@ -476,16 +497,21 @@ impl App {
         Self::with_config(AppConfig::default())
     }
 
+    fn fresh_world(fixed_hz: f64) -> World {
+        let mut world = World::new();
+        world.insert_resource(Time::new(fixed_hz));
+        world.insert_resource(Input::default());
+        world.insert_resource(ClearColor::default());
+        world.insert_resource(dome_physics::Gravity::default());
+        world
+    }
+
     pub fn with_config(config: AppConfig) -> Self {
         assert!(
             config.max_fixed_steps > 0,
             "an application steps no fixed system"
         );
-        let mut world = World::new();
-        world.insert_resource(Time::new(config.fixed_hz));
-        world.insert_resource(Input::default());
-        world.insert_resource(ClearColor::default());
-        world.insert_resource(dome_physics::Gravity::default());
+        let world = Self::fresh_world(config.fixed_hz);
         let fixed_seconds = 1.0 / config.fixed_hz as f32;
         let mut fixed = Schedule::new();
         fixed.add(move |world: &mut World| dome_animation::advance(world, fixed_seconds));
@@ -531,7 +557,7 @@ impl App {
 
     pub fn add_startup(
         &mut self,
-        setup: impl FnOnce(&mut World, &mut Renderer) + 'static,
+        setup: impl Fn(&mut World, &mut Renderer) + 'static,
     ) -> &mut Self {
         self.startup.push(Box::new(setup));
         self
@@ -560,12 +586,21 @@ impl App {
             .resource::<Time>()
             .expect("an application keeps its time")
             .fixed_delta();
-        let started = Instant::now();
+        let mut started = Instant::now();
         let mut frame = 0u64;
         let mut screenshot = None;
         loop {
-            if let Some(failure) = session.context.failure() {
-                panic!("{failure}");
+            match gpu_condition(&mut session.events) {
+                GpuCondition::Healthy => {}
+                GpuCondition::Lost => {
+                    drop(session);
+                    session = self.restart_headless(&config);
+                    started = Instant::now();
+                    frame = 0;
+                    screenshot = None;
+                    continue;
+                }
+                GpuCondition::Fault(message) => panic!("the graphics device fails: {message}"),
             }
             self.reload_scene(&mut session);
             let loading = session
@@ -596,10 +631,20 @@ impl App {
             }
             dome_render::install_captures(&mut self.world, session.renderer.take_captures());
             if last {
-                if let Some(failure) = session.context.failure() {
-                    panic!("{failure}");
+                match gpu_condition(&mut session.events) {
+                    GpuCondition::Healthy => break,
+                    GpuCondition::Lost => {
+                        drop(session);
+                        session = self.restart_headless(&config);
+                        started = Instant::now();
+                        frame = 0;
+                        screenshot = None;
+                        continue;
+                    }
+                    GpuCondition::Fault(message) => {
+                        panic!("the graphics device fails: {message}")
+                    }
                 }
-                break;
             }
             if config.realtime {
                 let next = started + fixed.mul_f64(frame as f64);
@@ -610,6 +655,21 @@ impl App {
             }
         }
         screenshot
+    }
+
+    fn reset(&mut self) {
+        self.world = Self::fresh_world(self.config.fixed_hz);
+        self.reload = None;
+        self.started = false;
+        self.startup_pending = false;
+        self.loading_camera = None;
+    }
+
+    fn restart_headless(&mut self, config: &HeadlessConfig) -> Session {
+        self.reset();
+        let mut session = Session::headless(config.width, config.height, &self.config.gpu);
+        self.start(&mut session, true);
+        session
     }
 
     fn start(&mut self, session: &mut Session, focused: bool) {
@@ -720,7 +780,7 @@ impl App {
     }
 
     fn settle_startup(&mut self, session: &mut Session) {
-        for setup in self.startup.drain(..) {
+        for setup in &self.startup {
             setup(&mut self.world, &mut session.renderer);
         }
         propagate(&mut self.world);
@@ -770,9 +830,27 @@ impl Handler for App {
         let Some(mut session) = self.session.take() else {
             return Flow::Continuous;
         };
-        let flow = self.frame_session(&mut session, window, real);
-        self.session = Some(session);
-        flow
+        match gpu_condition(&mut session.events) {
+            GpuCondition::Healthy => {}
+            GpuCondition::Lost => {
+                self.recover_window(window, session);
+                return Flow::Continuous;
+            }
+            GpuCondition::Fault(message) => panic!("the graphics device fails: {message}"),
+        }
+        match self.frame_session(&mut session, window, real) {
+            Ok(flow) => {
+                self.session = Some(session);
+                flow
+            }
+            Err(
+                GpuFailure::SurfaceOutdated | GpuFailure::SurfaceLost | GpuFailure::SurfaceFormat,
+            ) => {
+                self.recover_window(window, session);
+                Flow::Continuous
+            }
+            Err(GpuFailure::Fault(message)) => panic!("the graphics device fails: {message}"),
+        }
     }
 
     fn event(&mut self, _window: &Window, event: Event) {
@@ -792,15 +870,24 @@ impl Handler for App {
 }
 
 impl App {
-    fn frame_session(&mut self, session: &mut Session, window: &Window, real: Duration) -> Flow {
-        if let Some(failure) = session.context.failure() {
-            eprintln!("{failure}");
-            return Flow::Exit;
-        }
+    fn recover_window(&mut self, window: &Window, session: Session) {
+        drop(session);
+        self.reset();
+        let mut session = Session::window(window, &self.config.gpu);
+        self.start(&mut session, window.has_focus());
+        self.session = Some(session);
+    }
+
+    fn frame_session(
+        &mut self,
+        session: &mut Session,
+        window: &Window,
+        real: Duration,
+    ) -> Result<Flow, GpuFailure> {
         self.reload_scene(session);
         let (width, height) = window.size();
         if window.is_minimized() || width == 0 || height == 0 {
-            return Flow::Idle;
+            return Ok(Flow::Idle);
         }
         let loading = session
             .live
@@ -822,12 +909,9 @@ impl App {
             .expect("an application keeps its clear color")
             .0;
         self.sync_debug();
-        if let Err(failure) = session.draw_window(&mut self.world, clear, width, height) {
-            eprintln!("{failure}");
-            return Flow::Exit;
-        }
+        session.draw_window(&mut self.world, clear, width, height)?;
         dome_render::install_captures(&mut self.world, session.renderer.take_captures());
-        if exit { Flow::Exit } else { Flow::Continuous }
+        Ok(if exit { Flow::Exit } else { Flow::Continuous })
     }
 }
 

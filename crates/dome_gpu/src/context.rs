@@ -1,6 +1,7 @@
 use crate::buffer::GpuBuffer;
 use crate::cache::Cache;
-use crate::failure::{Failure, GpuFailure};
+use crate::event::{EventLog, GpuEvent, GpuEventCursor};
+use crate::failure::GpuFailure;
 use crate::surface::Surface;
 use std::fmt::{self, Display, Formatter};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
@@ -28,6 +29,7 @@ impl Default for GpuRequest {
 
 #[derive(Clone, Debug)]
 pub enum GpuUnavailable {
+    NoSurface(String),
     NoAdapter(String),
     NoDevice(String),
 }
@@ -35,6 +37,7 @@ pub enum GpuUnavailable {
 impl Display for GpuUnavailable {
     fn fmt(&self, out: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NoSurface(reason) => write!(out, "a window opens no present surface: {reason}"),
             Self::NoAdapter(reason) => write!(out, "no graphics adapter: {reason}"),
             Self::NoDevice(reason) => write!(out, "the graphics adapter opens no device: {reason}"),
         }
@@ -51,7 +54,7 @@ struct State {
     tables: crate::table::TableCapacity,
     features: wgpu::Features,
     cache: Cache,
-    failure: Failure,
+    events: EventLog,
 }
 
 #[derive(Clone)]
@@ -64,7 +67,8 @@ pub struct Queue {
     device: Device,
 }
 
-pub(crate) type Recreate = Box<dyn Fn() -> wgpu::Surface<'static>>;
+pub(crate) type Recreate =
+    Box<dyn Fn() -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError>>;
 
 pub struct Gpu {
     device: Device,
@@ -99,7 +103,8 @@ impl Gpu {
         if let Some(state) = registry
             .iter()
             .filter(|(origin, _)| origin == request)
-            .find_map(|(_, state)| state.upgrade())
+            .filter_map(|(_, state)| state.upgrade())
+            .find(|state| !state.events.device_lost())
         {
             return Ok(Self {
                 device: Device { state },
@@ -122,7 +127,8 @@ impl Gpu {
     {
         let instance = instance();
         let held = target.clone();
-        let surface = crate::surface::create(instance, target);
+        let surface = crate::surface::create(instance, target)
+            .map_err(|error| GpuUnavailable::NoSurface(error.to_string()))?;
         let device = Device::open(request, Some(&surface))?;
         Ok(Self {
             device,
@@ -151,8 +157,8 @@ impl Gpu {
         self.device.features()
     }
 
-    pub fn failure(&self) -> Option<GpuFailure> {
-        self.device.failure()
+    pub fn events(&self) -> GpuEventCursor {
+        self.device.events()
     }
 
     pub fn surface(&self, width: u32, height: u32) -> Surface {
@@ -200,14 +206,14 @@ impl Device {
             ..Default::default()
         }))
         .map_err(|error| GpuUnavailable::NoDevice(error.to_string()))?;
-        let failure = Failure::new();
-        let lost = failure.clone();
+        let events = EventLog::default();
+        let lost = events.clone();
         device.set_device_lost_callback(move |reason, message| {
-            lost.raise(format!("the device is lost: {reason:?}: {message}"));
+            lost.emit(GpuEvent::DeviceLost { reason, message });
         });
-        let raised = failure.clone();
+        let raised = events.clone();
         device.on_uncaptured_error(Arc::new(move |error| {
-            raised.raise(format!("wgpu: {error}"));
+            raised.emit(GpuEvent::Fault(format!("wgpu: {error}")));
         }));
         Ok(Self {
             state: Arc::new(State {
@@ -218,7 +224,7 @@ impl Device {
                 tables,
                 features: offered & REQUIRED_FEATURES,
                 cache: Cache::default(),
-                failure,
+                events,
             }),
         })
     }
@@ -243,12 +249,26 @@ impl Device {
         self.state.features
     }
 
-    pub fn failure(&self) -> Option<GpuFailure> {
-        self.state.failure.take()
+    pub fn events(&self) -> GpuEventCursor {
+        self.state.events.cursor()
+    }
+
+    pub fn destroy(&self) {
+        self.state.device.destroy();
+        self.emit(GpuEvent::DeviceLost {
+            reason: wgpu::DeviceLostReason::Destroyed,
+            message: String::new(),
+        });
+    }
+
+    pub(crate) fn emit(&self, event: GpuEvent) {
+        self.state.events.emit(event);
     }
 
     pub(crate) fn raise(&self, message: impl Into<String>) -> GpuFailure {
-        self.state.failure.raise(message)
+        let message = message.into();
+        self.emit(GpuEvent::Fault(message.clone()));
+        GpuFailure::Fault(message)
     }
 
     pub fn binding_alignment(&self) -> u64 {

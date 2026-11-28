@@ -1,4 +1,5 @@
 use crate::context::Device;
+use crate::event::GpuEvent;
 use crate::failure::GpuFailure;
 use crate::texture::{Texture, TextureFormat, TextureUsages};
 use std::sync::Arc;
@@ -7,15 +8,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) fn create<W: Into<wgpu::SurfaceTarget<'static>>>(
     instance: &wgpu::Instance,
     target: W,
-) -> wgpu::Surface<'static> {
-    instance
-        .create_surface(target)
-        .unwrap_or_else(|error| panic!("a window opens its present surface: {error}"))
+) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
+    instance.create_surface(target)
 }
 
 pub struct Surface {
     device: Device,
-    native: wgpu::Surface<'static>,
+    native: Option<wgpu::Surface<'static>>,
     recreate: crate::context::Recreate,
     width: u32,
     height: u32,
@@ -56,14 +55,10 @@ impl Surface {
         width: u32,
         height: u32,
     ) -> Self {
-        assert!(
-            width > 0 && height > 0,
-            "a surface spans {width} by {height} texels"
-        );
         let format = select_format(&native, device.adapter());
         let surface = Self {
             device,
-            native,
+            native: Some(native),
             recreate,
             width,
             height,
@@ -87,8 +82,13 @@ impl Surface {
     }
 
     fn configure(&self) {
-        self.native
-            .configure(self.device.native(), &self.configuration());
+        let Some(native) = &self.native else {
+            return;
+        };
+        if self.width == 0 || self.height == 0 {
+            return;
+        }
+        native.configure(self.device.native(), &self.configuration());
     }
 
     fn configuration(&self) -> wgpu::SurfaceConfiguration {
@@ -106,9 +106,16 @@ impl Surface {
     }
 
     pub fn acquire(&mut self) -> Result<Option<SurfaceFrame>, GpuFailure> {
-        let mut attempts = 0;
+        if self.width == 0 || self.height == 0 {
+            return Ok(None);
+        }
+        let mut reconfigured = false;
+        let mut rebuilt = false;
         loop {
-            match self.native.get_current_texture() {
+            let Some(native) = &self.native else {
+                return Err(GpuFailure::SurfaceLost);
+            };
+            match native.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(frame)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                     let width = self.width;
@@ -133,22 +140,20 @@ impl Surface {
                     return Ok(None);
                 }
                 wgpu::CurrentSurfaceTexture::Outdated => {
-                    attempts += 1;
-                    if attempts > 1 {
-                        return Err(self
-                            .device
-                            .raise("the surface stays outdated after reconfiguring it"));
+                    self.device.emit(GpuEvent::SurfaceOutdated);
+                    if reconfigured {
+                        return Err(GpuFailure::SurfaceOutdated);
                     }
+                    reconfigured = true;
                     self.configure();
                 }
                 wgpu::CurrentSurfaceTexture::Lost => {
-                    attempts += 1;
-                    if attempts > 1 {
-                        return Err(self
-                            .device
-                            .raise("the surface stays lost after recreating it"));
+                    self.device.emit(GpuEvent::SurfaceLost);
+                    if rebuilt {
+                        return Err(GpuFailure::SurfaceLost);
                     }
-                    self.rebuild();
+                    rebuilt = true;
+                    self.rebuild()?;
                 }
                 wgpu::CurrentSurfaceTexture::Validation => {
                     return Err(self.device.raise("the surface fails validation"));
@@ -158,21 +163,23 @@ impl Surface {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        assert!(
-            width > 0 && height > 0,
-            "a surface spans {width} by {height} texels"
-        );
         self.width = width;
         self.height = height;
         self.configure();
         self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
-    fn rebuild(&mut self) {
-        self.native = (self.recreate)();
-        self.format = select_format(&self.native, self.device.adapter());
+    fn rebuild(&mut self) -> Result<(), GpuFailure> {
+        self.native = None;
+        let native = (self.recreate)().map_err(|error| {
+            self.device
+                .raise(format!("the present surface recreates itself: {error}"))
+        })?;
+        self.format = select_format(&native, self.device.adapter());
+        self.native = Some(native);
         self.configure();
         self.generation.fetch_add(1, Ordering::AcqRel);
+        Ok(())
     }
 }
 
@@ -192,6 +199,10 @@ fn select_format(surface: &wgpu::Surface<'_>, adapter: &wgpu::Adapter) -> Textur
 }
 
 impl SurfaceFrame {
+    pub fn discard(mut self) {
+        drop(self.surface.take());
+    }
+
     pub fn texture(&self) -> &Texture {
         &self.texture
     }

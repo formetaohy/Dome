@@ -3,6 +3,7 @@ mod buffer;
 mod cache;
 mod command;
 mod context;
+mod event;
 mod failure;
 mod identity;
 mod pipeline;
@@ -16,7 +17,8 @@ pub use binding::{BindGroup, BindGroupLayout, Binding, Resource};
 pub use buffer::{BufferBinding, BufferRange, BufferUsages, GpuBuffer};
 pub use command::{Count, DepthLoad, DepthOps, Draw, Pass, Scissor, Submission, Viewport};
 pub use context::{Device, Gpu, GpuRequest, GpuUnavailable, Queue};
-pub use failure::{Failure, GpuFailure};
+pub use event::{GpuEvent, GpuEventCursor};
+pub use failure::GpuFailure;
 pub use identity::ResourceId;
 pub use pipeline::{ComputePipeline, GraphicsPipeline, PipelineState};
 pub use sampler::{AddressMode, CompareFunction, FilterMode, Sampler, SamplerDesc};
@@ -29,6 +31,6 @@ pub use table::{
     SAMPLER_TABLE_CAPACITY, SamplerTable, TEXTURE_TABLE_CAPACITY, TableCapacity, TextureTable,
 };
 pub use texture::{Texture, TextureFormat, TextureFormatExt, TextureRegion, TextureUsages};
-pub use wgpu::SubmissionIndex;
+pub use wgpu::{DeviceLostReason, PowerPreference, SubmissionIndex};
 
 pub const READBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);

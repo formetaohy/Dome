@@ -1,18 +1,21 @@
 use crate::action::Action;
-use dome_gpu::{Gpu, Surface};
+use dome_gpu::{Gpu, GpuEventCursor, Surface};
 use dome_ui::{MemoryClipboard, Ui};
 
 pub(crate) struct Session {
     pub(crate) context: Gpu,
+    pub(crate) events: GpuEventCursor,
     pub(crate) surface: Surface,
     pub(crate) ui: Ui<Action>,
 }
 
 impl Session {
     pub(crate) fn new(context: Gpu, surface: Surface) -> Self {
+        let events = context.events();
         let ui = ui_of(&context, &surface);
         Self {
             context,
+            events,
             surface,
             ui,
         }

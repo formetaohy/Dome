@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use dome_animation::{Comparison, Parameter};
 use dome_asset::{Import, Watch};
 use dome_ecs::Entity;
-use dome_gpu::{Gpu, GpuRequest, Submission};
+use dome_gpu::{Gpu, GpuFailure, GpuRequest, Submission};
 use dome_math::{Quat, Rect, Transform, Vec2, Vec3};
 use dome_project::Project;
 use dome_scene::{Atmosphere, Delta, Node, ReferenceKind, Scene, Shape, Target, Value};
@@ -196,16 +196,21 @@ impl Editor {
         let context = Gpu::open_window(&GpuRequest::default(), window.target())
             .unwrap_or_else(|error| panic!("the editor opens its render device: {error}"));
         let (width, height) = window.size();
-        assert!(
-            width > 0 && height > 0,
-            "a window of {width} by {height} presents no surface"
-        );
         let surface = context.surface(width, height);
         let mut preview = Preview::new(&context, &self.scene, Arc::clone(&self.registry));
         preview.set_debug(self.debug);
         self.session = Some(Session::new(context, surface, preview, &self.scene));
         self.ime = false;
         self.sync_title(window);
+    }
+
+    fn rebuild(&mut self, window: &Window) {
+        self.viewport_texture = None;
+        self.viewport_rendered = None;
+        self.textures_at = None;
+        self.session = None;
+        self.open(window);
+        self.redraw = true;
     }
 
     fn fail(&mut self, text: impl Into<String>) {
@@ -1063,13 +1068,19 @@ impl Editor {
         if self.exiting {
             return Flow::Exit;
         }
-        if let Some(failure) = self
-            .session
-            .as_ref()
-            .and_then(|session| session.context.failure())
-        {
-            eprintln!("{failure}");
-            return Flow::Exit;
+        let lost = match self.session.as_mut() {
+            Some(session) => {
+                let events = session.events.poll();
+                if let Some(event) = events.iter().find(|event| event.fault().is_some()) {
+                    panic!("{event}");
+                }
+                events.iter().any(|event| event.device_lost())
+            }
+            None => false,
+        };
+        if lost {
+            self.rebuild(window);
+            return Flow::Continuous;
         }
         let now = Instant::now();
         let mut redraw = std::mem::take(&mut self.redraw) || self.ui_at.is_some_and(|at| at <= now);
@@ -1228,15 +1239,23 @@ impl Editor {
         }
         let frame = match session.surface.acquire() {
             Ok(frame) => frame,
-            Err(failure) => {
-                eprintln!("{failure}");
-                return Flow::Exit;
+            Err(
+                GpuFailure::SurfaceOutdated | GpuFailure::SurfaceLost | GpuFailure::SurfaceFormat,
+            ) => {
+                self.rebuild(window);
+                return Flow::Continuous;
             }
+            Err(GpuFailure::Fault(message)) => panic!("the graphics device fails: {message}"),
         };
         let Some(frame) = frame else {
             let wake = session.ui.finish();
             return self.pace(wake, busy);
         };
+        if frame.format() != session.ui.format() {
+            frame.discard();
+            self.rebuild(window);
+            return Flow::Continuous;
+        }
         let Session { context, ui, .. } = session;
         let mut submission = Submission::new(context.device(), "dome editor");
         ui.render(&mut submission, frame.texture(), Some(scene));
@@ -1485,9 +1504,6 @@ impl Editor {
         match event {
             Event::Modifiers(state) => self.modifiers = *state,
             Event::Resized { .. } | Event::ScaleFactorChanged { .. } => {
-                if size.0 == 0 || size.1 == 0 {
-                    return;
-                }
                 if let Some(session) = &mut self.session
                     && (session.surface.width() != size.0 || session.surface.height() != size.1)
                 {
